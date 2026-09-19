@@ -34,7 +34,7 @@ const ws = new WebSocket(URL);
 
 ws.onopen = () => {
   console.log(`Ligado. A pedir ${count} ticks de ${symbol}...`);
-  ws.send(JSON.stringify({ ticks_history: symbol, end: "latest", count, style: "ticks", subscribe: 0, req_id: 1 }));
+  ws.send(JSON.stringify({ ticks_history: symbol, end: "latest", count, style: "ticks", req_id: 1 }));
 };
 
 ws.onmessage = (event: MessageEvent) => {
