@@ -16,8 +16,8 @@ const returnA = Number(arg("return", "0.82"));
 const returnB = Number(arg("return-high", "8"));
 const fallbackPip = Number(arg("pip", "2"));
 
-if (!Number.isInteger(count) || count < 1500) {
-  console.error("--count tem de ser um inteiro >= 1500");
+if (!Number.isInteger(count) || count < 600) {
+  console.error("--count tem de ser um inteiro >= 600");
   process.exit(1);
 }
 if (!(returnA > 0) || !(returnB > 0)) {
@@ -57,10 +57,15 @@ ws.onmessage = (event: MessageEvent) => {
     console.warn(`Aviso: sem pip_size na resposta; a usar --pip ${fallbackPip}.`);
   }
   console.log(`Recebidos ${msg.prices.length} ticks (pip_size ${pip}).`);
+  if (msg.prices.length < count) {
+    console.warn(`Aviso: pediste ${count} ticks mas a Deriv devolveu ${msg.prices.length}. Amostra pequena: resultado só indicativo.`);
+  }
 
   try {
     const digits = digitsFromPrices(msg.prices, pip);
-    console.log(formatReport(runResearch(digits, { returnA, returnB })));
+    const trainSize = Math.min(1000, Math.floor(digits.length * 0.5));
+    const testSize = Math.min(500, Math.floor(digits.length * 0.25));
+    console.log(formatReport(runResearch(digits, { returnA, returnB, trainSize, testSize })));
     ws.close();
   } catch (e) {
     console.error(`Erro na pesquisa: ${e instanceof Error ? e.message : String(e)}`);
