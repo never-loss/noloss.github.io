@@ -1,0 +1,12 @@
+name: Pesquisa velas
+on: workflow_dispatch
+jobs:
+  pesquisa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node src/cli/research-candles.ts --candles 6000 --granularity 300
