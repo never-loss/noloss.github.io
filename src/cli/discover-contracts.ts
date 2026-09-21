@@ -55,8 +55,8 @@ async function main(): Promise<void> {
   });
   console.log("Ligado.\n");
 
-  let sampleSymbol: string | null = null;
-  let sampleMultiplier: number | null = null;
+  const samples: { symbol: string; multiplier: number }[] = [];
+  const wanted = new Set(["cryBTCUSD", "frxEURUSD", "frxXAUUSD"]);
 
   for (const sym of symbols) {
     try {
@@ -67,9 +67,8 @@ async function main(): Promise<void> {
         console.log(`  multiplicadores: ${m.multipliers.length > 0 ? m.multipliers.join(", ") : "nenhum reconhecido"}`);
         if (m.cancellation.length > 0) console.log(`  cancelamento do negócio: ${m.cancellation.join(", ")}`);
         if (m.multipliers.length === 0) console.log(`  chaves recebidas: ${m.keys.join(",")}\n  amostra: ${shorten(raw, 500)}`);
-        if (sampleSymbol === null && m.multipliers.length > 0) {
-          sampleSymbol = sym;
-          sampleMultiplier = m.multipliers[Math.min(1, m.multipliers.length - 1)]!;
+        if (wanted.has(sym) && m.multipliers.length > 0) {
+          samples.push({ symbol: sym, multiplier: m.multipliers.includes(200) ? 200 : m.multipliers[0]! });
         }
       } else if (m.kind === "error") {
         console.log(`${sym}: ERRO ${m.code} - ${m.message}`);
@@ -81,26 +80,31 @@ async function main(): Promise<void> {
     }
   }
 
-  // Pedido de preço de teste (sem comprar nada): mostra a resposta bruta, seja qual for.
-  if (sampleSymbol !== null && sampleMultiplier !== null) {
-    console.log(`\nPreço de teste (não compra nada): MULTUP em ${sampleSymbol}, stake 1 USD, multiplicador ${sampleMultiplier}`);
+  // Pedidos de preço de teste (não compram nada): mostram a resposta bruta, seja qual for.
+  for (const sample of samples) {
+    console.log(`\nPreço de teste (não compra nada): MULTUP em ${sample.symbol}, stake 1 USD, multiplicador ${sample.multiplier}`);
+    const base = {
+      proposal: 1,
+      contract_type: "MULTUP",
+      underlying_symbol: sample.symbol,
+      amount: 1,
+      basis: "stake",
+      currency: "USD",
+      multiplier: sample.multiplier,
+    };
     try {
-      const raw = await requestRaw({
-        proposal: 1,
-        contract_type: "MULTUP",
-        symbol: sampleSymbol,
-        amount: 1,
-        basis: "stake",
-        currency: "USD",
-        multiplier: sampleMultiplier,
-      });
+      let raw = await requestRaw({ ...base, duration_unit: "s" });
+      if (raw.includes('"error"')) {
+        console.log(`  1.ª tentativa (com duration_unit): ${shorten(raw, 600)}`);
+        raw = await requestRaw(base);
+        console.log("  2.ª tentativa (sem duration_unit):");
+      }
       console.log(shorten(raw, 1500));
     } catch (e) {
       console.log(`falhou (${e instanceof Error ? e.message : String(e)})`);
     }
-  } else {
-    console.log("\nNenhum multiplicador reconhecido: sem pedido de preço de teste.");
   }
+  if (samples.length === 0) console.log("\nNenhum multiplicador reconhecido: sem pedido de preço de teste.");
 }
 
 main()
