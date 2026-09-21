@@ -1,0 +1,12 @@
+name: Paper trading velas
+on: workflow_dispatch
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node src/cli/paper-candles.ts --symbol cryBTCUSD --granularity 300 --minutes 60
