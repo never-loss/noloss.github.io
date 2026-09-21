@@ -1,0 +1,17 @@
+name: Pesquisa executavel
+on: workflow_dispatch
+jobs:
+  pesquisa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Velas de 15 minutos
+        run: node src/cli/research-executable.ts --candles 6000 --granularity 900 --min-multiplier 100
+      - name: Velas de 1 hora
+        run: node src/cli/research-executable.ts --candles 6000 --granularity 3600 --min-multiplier 100
+      - name: Velas de 4 horas
+        run: node src/cli/research-executable.ts --candles 6000 --granularity 14400 --min-multiplier 100
