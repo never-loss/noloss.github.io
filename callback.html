@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<title>A ligar...</title>
+</head>
+<body style="background:#0a0e17;color:#e6e6e6;font-family:sans-serif;padding:24px;text-align:center;">
+<p id="msg">A concluir o login...</p>
+<script>
+const APP_ID = 'COLA_AQUI_O_TEU_APP_ID';
+const REDIRECT_URI = 'https://no-loss.no-loss.workers.dev/callback';
+
+async function run() {
+  const msgEl = document.getElementById('msg');
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const state = params.get('state');
+  const savedState = sessionStorage.getItem('nl_state');
+  const verifier = sessionStorage.getItem('nl_verifier');
+
+  if (!code || !state || state !== savedState || !verifier) {
+    msgEl.textContent = 'Falha de segurança (state não confere). Volta à página inicial e tenta de novo.';
+    return;
+  }
+  try {
+    const resp = await fetch('/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, code_verifier: verifier, client_id: APP_ID, redirect_uri: REDIRECT_URI }),
+    });
+    const data = await resp.json();
+    if (data.error || !data.access_token) {
+      msgEl.textContent = 'Erro na troca do código: ' + (data.error_description || data.error || JSON.stringify(data));
+      return;
+    }
+    sessionStorage.setItem('nl_access_token', data.access_token);
+    sessionStorage.removeItem('nl_verifier');
+    sessionStorage.removeItem('nl_state');
+    window.location.href = '/';
+  } catch (e) {
+    msgEl.textContent = 'Erro: ' + e.message;
+  }
+}
+run();
+</script>
+</body>
+</html>
