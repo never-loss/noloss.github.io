@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEVER LOSS</title>
+<style>
+  body { background:#0a0e17; color:#e6e6e6; font-family:sans-serif; padding:24px; text-align:center; }
+  button { background:#2563eb; color:#fff; border:none; padding:14px 24px; border-radius:10px; font-size:16px; }
+  .card { background:#111827; border-radius:12px; padding:16px; margin:12px 0; text-align:left; }
+  .warn { color:#f59e0b; font-size:13px; }
+</style>
+</head>
+<body>
+<h1>NEVER LOSS</h1>
+<p id="status">A verificar sessão...</p>
+<div id="login" style="display:none">
+  <button onclick="connectToDeriv()">Connect to Deriv</button>
+  <p class="warn">Plataforma de pesquisa e paper trading. Não garante lucros.</p>
+</div>
+<div id="app" style="display:none"></div>
+
+<script>
+// EDITA ESTA LINHA: cola o teu App ID (não é secreto, é só um número)
+const APP_ID = 'COLA_AQUI_O_TEU_APP_ID';
+const REDIRECT_URI = 'https://no-loss.no-loss.workers.dev/callback';
+const SCOPE = 'trade application_read';
+
+function randomString(len) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const arr = crypto.getRandomValues(new Uint8Array(len));
+  return Array.from(arr).map(v => chars[v % chars.length]).join('');
+}
+async function sha256Base64Url(text) {
+  const data = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  const bytes = new Uint8Array(hash);
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function connectToDeriv() {
+  const verifier = randomString(64);
+  const state = randomString(24);
+  sessionStorage.setItem('nl_verifier', verifier);
+  sessionStorage.setItem('nl_state', state);
+  const challenge = await sha256Base64Url(verifier);
+  const url = new URL('https://auth.deriv.com/oauth2/auth');
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', APP_ID);
+  url.searchParams.set('redirect_uri', REDIRECT_URI);
+  url.searchParams.set('scope', SCOPE);
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  window.location.href = url.toString();
+}
+
+function disconnect() {
+  sessionStorage.clear();
+  location.reload();
+}
+
+async function loadAccount() {
+  const token = sessionStorage.getItem('nl_access_token');
+  const statusEl = document.getElementById('status');
+  const loginEl = document.getElementById('login');
+  const appEl = document.getElementById('app');
+  if (!token) {
+    statusEl.textContent = 'Não ligado.';
+    loginEl.style.display = 'block';
+    return;
+  }
+  statusEl.textContent = 'Ligado. A carregar contas...';
+  try {
+    const ws = new WebSocket(`wss://api.derivws.com/trading/v1/options/ws/public?app_id=${APP_ID}`);
+    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.error) {
+        statusEl.textContent = 'Erro: ' + msg.error.code + ' - ' + msg.error.message;
+        loginEl.style.display = 'block';
+        return;
+      }
+      if (msg.msg_type === 'authorize') {
+        statusEl.textContent = 'Ligado à Deriv.';
+        const accounts = msg.authorize.account_list || [];
+        let html = '';
+        for (const acc of accounts) {
+          html += `<div class="card"><b>${acc.loginid}</b> ${acc.is_virtual ? '(DEMO)' : '(REAL)'}<br>Moeda: ${acc.currency}</div>`;
+        }
+        html += `<div class="card">Saldo atual: <b>${msg.authorize.balance} ${msg.authorize.currency}</b></div>`;
+        html += `<button onclick="disconnect()">Desligar</button>`;
+        appEl.innerHTML = html;
+        appEl.style.display = 'block';
+        ws.close();
+      }
+    };
+    ws.onerror = () => { statusEl.textContent = 'Erro de ligação ao WebSocket.'; };
+  } catch (e) {
+    statusEl.textContent = 'Erro: ' + e.message;
+  }
+}
+
+loadAccount();
+</script>
+</body>
+  </html>
