@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/callback",
+      "destination": "/callback.html"
+    }
+  ]
+}
