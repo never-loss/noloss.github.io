@@ -19,12 +19,11 @@
   <p class="warn">Plataforma de pesquisa e paper trading. Não garante lucros.</p>
 </div>
 <div id="app" style="display:none"></div>
-
 <script>
 // EDITA ESTA LINHA: cola o teu App ID (não é secreto, é só um número)
 const APP_ID = '34t836m5r3AO3f7xavbvL';
 const REDIRECT_URI = 'https://noloss-zeta.vercel.app/callback';
-const SCOPE = 'read trade';
+const SCOPE = 'trade';
 function randomString(len) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
   const arr = crypto.getRandomValues(new Uint8Array(len));
@@ -38,7 +37,6 @@ async function sha256Base64Url(text) {
   bytes.forEach(b => bin += String.fromCharCode(b));
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-
 async function connectToDeriv() {
   const verifier = randomString(64);
   const state = randomString(24);
@@ -55,12 +53,10 @@ async function connectToDeriv() {
   url.searchParams.set('code_challenge_method', 'S256');
   window.location.href = url.toString();
 }
-
 function disconnect() {
   sessionStorage.clear();
   location.reload();
 }
-
 async function loadAccount() {
   const token = sessionStorage.getItem('nl_access_token');
   const statusEl = document.getElementById('status');
@@ -101,8 +97,7 @@ async function loadAccount() {
     statusEl.textContent = 'Erro: ' + e.message;
   }
 }
-
 loadAccount();
 </script>
 </body>
-  </html>
+</html>
