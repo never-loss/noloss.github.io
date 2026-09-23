@@ -1,4 +1,4 @@
-eu// NEVER LOSS - Worker: serve o site estático e trata a troca do código OAuth (server-side, como a Deriv exige).
+// NEVER LOSS - Worker: serve o site estático e trata a troca do código OAuth (server-side, como a Deriv exige).
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
