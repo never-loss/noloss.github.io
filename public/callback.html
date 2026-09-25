@@ -15,9 +15,14 @@ async function run() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
   const state = params.get('state');
+  const oauthError = params.get('error');
   const savedState = sessionStorage.getItem('nl_state');
   const verifier = sessionStorage.getItem('nl_verifier');
 
+  if (oauthError) {
+    msgEl.textContent = 'Login cancelado ou recusado: ' + oauthError + (params.get('error_description') ? ' — ' + params.get('error_description') : '');
+    return;
+  }
   if (!code || !state || state !== savedState || !verifier) {
     msgEl.textContent = 'Falha de segurança (state não confere). Volta à página inicial e tenta de novo.';
     return;
@@ -34,6 +39,9 @@ async function run() {
       return;
     }
     sessionStorage.setItem('nl_access_token', data.access_token);
+    if (data.expires_in) {
+      sessionStorage.setItem('nl_token_expires_at', String(Date.now() + Number(data.expires_in) * 1000));
+    }
     sessionStorage.removeItem('nl_verifier');
     sessionStorage.removeItem('nl_state');
     window.location.href = '/';

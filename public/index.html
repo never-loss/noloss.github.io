@@ -6,9 +6,11 @@
 <title>NEVER LOSS</title>
 <style>
   body { background:#0a0e17; color:#e6e6e6; font-family:sans-serif; padding:24px; text-align:center; }
-  button { background:#2563eb; color:#fff; border:none; padding:14px 24px; border-radius:10px; font-size:16px; }
+  button { background:#2563eb; color:#fff; border:none; padding:14px 24px; border-radius:10px; font-size:16px; cursor:pointer; }
+  button.secondary { background:#374151; margin-left:8px; }
   .card { background:#111827; border-radius:12px; padding:16px; margin:12px 0; text-align:left; }
   .warn { color:#f59e0b; font-size:13px; }
+  .err { color:#f87171; font-size:13px; }
 </style>
 </head>
 <body>
@@ -20,10 +22,12 @@
 </div>
 <div id="app" style="display:none"></div>
 <script>
-// EDITA ESTA LINHA: cola o teu App ID (não é secreto, é só um número)
+// OAuth2 client_id from developers.deriv.com (also used as Deriv-App-ID for Options REST).
 const APP_ID = '34t836m5r3AO3f7xavbvL';
 const REDIRECT_URI = 'https://noloss-zeta.vercel.app/callback';
 const SCOPE = 'trade';
+const API_BASE = 'https://api.derivws.com';
+
 function randomString(len) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
   const arr = crypto.getRandomValues(new Uint8Array(len));
@@ -54,8 +58,27 @@ async function connectToDeriv() {
   window.location.href = url.toString();
 }
 function disconnect() {
-  sessionStorage.clear();
+  sessionStorage.removeItem('nl_access_token');
+  sessionStorage.removeItem('nl_verifier');
+  sessionStorage.removeItem('nl_state');
   location.reload();
+}
+function authHeaders(token) {
+  return {
+    'Authorization': 'Bearer ' + token,
+    'Deriv-App-ID': APP_ID,
+    'Content-Type': 'application/json',
+  };
+}
+function formatApiError(payload, status) {
+  if (payload && Array.isArray(payload.errors) && payload.errors[0]) {
+    const e = payload.errors[0];
+    return (e.code || 'error') + ' - ' + (e.message || status);
+  }
+  if (payload && (payload.error_description || payload.error)) {
+    return (payload.error || 'error') + ' - ' + (payload.error_description || status);
+  }
+  return 'HTTP ' + status;
 }
 async function loadAccount() {
   const token = sessionStorage.getItem('nl_access_token');
@@ -69,32 +92,45 @@ async function loadAccount() {
   }
   statusEl.textContent = 'Ligado. A carregar contas...';
   try {
-    const ws = new WebSocket(`wss://api.derivws.com/trading/v1/options/ws/public?app_id=${APP_ID}`);
-    ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.error) {
-        statusEl.textContent = 'Erro: ' + msg.error.code + ' - ' + msg.error.message;
-        loginEl.style.display = 'block';
-        return;
+    // Modern Options API: list accounts via REST Bearer token.
+    // Do NOT use public WS + { authorize: token } (legacy Binary WS flow).
+    const resp = await fetch(API_BASE + '/trading/v1/options/accounts', {
+      method: 'GET',
+      headers: authHeaders(token),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (resp.status === 401) {
+      sessionStorage.removeItem('nl_access_token');
+      statusEl.innerHTML = 'Sessão expirada. Liga novamente.<br><span class="err">' + formatApiError(payload, resp.status) + '</span>';
+      loginEl.style.display = 'block';
+      return;
+    }
+    if (!resp.ok) {
+      statusEl.innerHTML = 'Erro ao listar contas:<br><span class="err">' + formatApiError(payload, resp.status) + '</span>';
+      loginEl.style.display = 'block';
+      return;
+    }
+    const accounts = Array.isArray(payload.data) ? payload.data : [];
+    statusEl.textContent = 'Ligado à Deriv.';
+    let html = '';
+    if (accounts.length === 0) {
+      html += '<div class="card">Nenhuma conta Options encontrada nesta sessão. Completa o registo na Deriv ou cria uma conta demo no dashboard.</div>';
+    } else {
+      for (const acc of accounts) {
+        const kind = acc.account_type === 'demo' ? '(DEMO)' : '(REAL)';
+        const bal = (acc.balance != null ? acc.balance : '—') + ' ' + (acc.currency || '');
+        html += '<div class="card"><b>' + (acc.account_id || '?') + '</b> ' + kind +
+          '<br>Moeda: ' + (acc.currency || '—') +
+          '<br>Saldo: <b>' + bal + '</b>' +
+          '<br>Estado: ' + (acc.status || '—') + '</div>';
       }
-      if (msg.msg_type === 'authorize') {
-        statusEl.textContent = 'Ligado à Deriv.';
-        const accounts = msg.authorize.account_list || [];
-        let html = '';
-        for (const acc of accounts) {
-          html += `<div class="card"><b>${acc.loginid}</b> ${acc.is_virtual ? '(DEMO)' : '(REAL)'}<br>Moeda: ${acc.currency}</div>`;
-        }
-        html += `<div class="card">Saldo atual: <b>${msg.authorize.balance} ${msg.authorize.currency}</b></div>`;
-        html += `<button onclick="disconnect()">Desligar</button>`;
-        appEl.innerHTML = html;
-        appEl.style.display = 'block';
-        ws.close();
-      }
-    };
-    ws.onerror = () => { statusEl.textContent = 'Erro de ligação ao WebSocket.'; };
+    }
+    html += '<button onclick="disconnect()">Desligar</button>';
+    appEl.innerHTML = html;
+    appEl.style.display = 'block';
   } catch (e) {
     statusEl.textContent = 'Erro: ' + e.message;
+    loginEl.style.display = 'block';
   }
 }
 loadAccount();
