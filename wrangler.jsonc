@@ -3,8 +3,8 @@
   "compatibility_date": "2026-09-21",
   "main": "worker.js",
   "assets": {
-    "directory": "site",
+    "directory": ".",
     "binding": "ASSETS",
-    "run_worker_first": ["/callback"]
+    "run_worker_first": ["/callback", "/token"]
   }
 }

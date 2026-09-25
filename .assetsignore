@@ -1,0 +1,13 @@
+.git/
+.github/
+src/
+tests/
+node_modules/
+.wrangler/
+api/
+*.ts
+package.json
+wrangler.jsonc
+worker.js
+worker.js.map
+.assetsignore

@@ -3,6 +3,10 @@
     {
       "source": "/callback",
       "destination": "/callback.html"
+    },
+    {
+      "source": "/token",
+      "destination": "/api/token"
     }
   ]
 }
