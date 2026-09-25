@@ -10,6 +10,32 @@
 const APP_ID = '34t836m5r3AO3f7xavbvL';
 const REDIRECT_URI = 'https://noloss-zeta.vercel.app/callback';
 
+async function readJsonSafe(resp) {
+  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+  const text = await resp.text();
+  if (!text) return { ok: true, data: {} };
+  if (ct.includes('application/json') || text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) {
+    try {
+      return { ok: true, data: JSON.parse(text) };
+    } catch (e) {
+      return {
+        ok: false,
+        data: {
+          error: 'invalid_json',
+          error_description: 'Resposta JSON inválida (HTTP ' + resp.status + '): ' + text.slice(0, 120),
+        },
+      };
+    }
+  }
+  return {
+    ok: false,
+    data: {
+      error: 'non_json_response',
+      error_description: 'O servidor devolveu texto em vez de JSON (HTTP ' + resp.status + '): ' + text.slice(0, 120),
+    },
+  };
+}
+
 async function run() {
   const msgEl = document.getElementById('msg');
   const params = new URLSearchParams(window.location.search);
@@ -33,9 +59,11 @@ async function run() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, code_verifier: verifier, client_id: APP_ID, redirect_uri: REDIRECT_URI }),
     });
-    const data = await resp.json();
-    if (data.error || !data.access_token) {
-      msgEl.textContent = 'Erro na troca do código: ' + (data.error_description || data.error || JSON.stringify(data));
+    const parsed = await readJsonSafe(resp);
+    const data = parsed.data || {};
+    if (!resp.ok || data.error || !data.access_token) {
+      const detail = data.error_description || data.error || ('HTTP ' + resp.status);
+      msgEl.textContent = 'Erro na troca do código: ' + detail;
       return;
     }
     sessionStorage.setItem('nl_access_token', data.access_token);
@@ -46,7 +74,7 @@ async function run() {
     sessionStorage.removeItem('nl_state');
     window.location.href = '/';
   } catch (e) {
-    msgEl.textContent = 'Erro: ' + e.message;
+    msgEl.textContent = 'Erro de rede ao trocar o código: ' + (e && e.message ? e.message : String(e));
   }
 }
 run();
