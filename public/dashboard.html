@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NEVER LOSS — Painel</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+</head>
+<body>
+  <div class="scene">
+    <div class="deck">
+      <header class="glass header">
+        <div class="brand">
+          <h1>NEVER LOSS</h1>
+          <p>Paper trading · porta de evidência · stake fixa · máx. 3 h</p>
+        </div>
+        <div class="header-actions">
+          <span id="authPill" class="pill warn">A autenticar…</span>
+          <span id="wsPill" class="pill warn">WS…</span>
+          <button type="button" class="ghost" id="btnDisconnect">Desligar</button>
+        </div>
+      </header>
+
+      <div class="grid">
+        <section class="glass panel">
+          <h2>Contas (REST real)</h2>
+          <div id="accounts" class="accounts"><div class="loading">…</div></div>
+        </section>
+
+        <section class="glass panel">
+          <h2>Sessão paper</h2>
+          <div class="stats">
+            <div class="stat"><div class="k">Estado</div><div class="v" id="statStatus">—</div></div>
+            <div class="stat"><div class="k">PnL simulado</div><div class="v" id="statPnl">—</div></div>
+            <div class="stat"><div class="k">Fechadas / abertas</div><div class="v" id="statTrades">—</div></div>
+            <div class="stat"><div class="k">Pior queda</div><div class="v" id="statDd">—</div></div>
+          </div>
+          <div class="btn-row" style="margin-bottom:12px">
+            <button type="button" class="ctrl play" id="btnPlay">PLAY</button>
+            <button type="button" class="ctrl pause" id="btnPause">PAUSE</button>
+            <button type="button" class="ctrl stop" id="btnStop">STOP</button>
+          </div>
+          <p class="footer-note" style="margin:0;text-align:left">Sem martingale. Sem compras reais. NO TRADE é o normal.</p>
+        </section>
+      </div>
+
+      <section class="glass panel" style="margin-top:14px">
+        <h2>Mercados</h2>
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab" data-panel="digits">Dígitos</button>
+          <button type="button" class="tab" data-panel="forex">Forex</button>
+          <button type="button" class="tab active" data-panel="crypto">Cripto</button>
+        </div>
+        <p id="panelHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
+        <div class="controls">
+          <div class="field">
+            <label for="symbolSelect">Símbolo</label>
+            <select id="symbolSelect"></select>
+          </div>
+          <div class="field">
+            <label for="granularity">Vela (s)</label>
+            <select id="granularity">
+              <option value="60">60</option>
+              <option value="300" selected>300</option>
+              <option value="900">900</option>
+              <option value="3600">3600</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="stake">Stake fixa</label>
+            <input id="stake" type="number" min="0.5" step="0.5" value="1">
+          </div>
+          <div class="field">
+            <label for="minutes">Duração (min ≤180)</label>
+            <input id="minutes" type="number" min="1" max="180" value="60">
+          </div>
+          <div class="field">
+            <label for="minMultiplier">Mult. mín.</label>
+            <input id="minMultiplier" type="number" min="1" step="1" value="100">
+          </div>
+        </div>
+        <div class="symbols-strip" id="symbolChips"></div>
+      </section>
+
+      <div class="grid" style="margin-top:14px">
+        <section class="glass panel">
+          <h2>Porta de evidência</h2>
+          <div id="gateBox" class="gate-box closed">
+            <div class="gate-title">Estado em tempo real</div>
+            <div class="gate-state" id="gateState">NO TRADE</div>
+            <div class="gate-reason" id="gateReason">A aguardar…</div>
+          </div>
+        </section>
+        <section class="glass panel">
+          <h2>Histórico da sessão</h2>
+          <div id="history" class="history"></div>
+        </section>
+      </div>
+
+      <p class="footer-note">
+        Plataforma de pesquisa e paper trading. Não garante lucros.
+        Dados de mercado via WS público · saldos via REST autenticado.
+      </p>
+    </div>
+  </div>
+  <script src="/assets/nl-core.js"></script>
+  <script src="/assets/dashboard.js"></script>
+</body>
+</html>

@@ -125,9 +125,12 @@ async function loadAccount() {
           '<br>Estado: ' + (acc.status || '—') + '</div>';
       }
     }
+    html += '<p style="margin:16px 0"><a href="/dashboard.html" style="color:#38bdf8;font-weight:700">Abrir painel NEVER LOSS →</a></p>';
     html += '<button onclick="disconnect()">Desligar</button>';
     appEl.innerHTML = html;
     appEl.style.display = 'block';
+    // Após carregar contas com sucesso, ir ao painel (OAuth/PKCE intacto).
+    setTimeout(function () { window.location.href = '/dashboard.html'; }, 600);
   } catch (e) {
     statusEl.textContent = 'Erro: ' + e.message;
     loginEl.style.display = 'block';

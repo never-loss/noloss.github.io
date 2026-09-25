@@ -22,7 +22,7 @@ export const MARKET_ORDER: readonly MarketKind[] = ["forex", "metals", "crypto"]
 
 /** A que mercado pertence um símbolo da Deriv (null = outro, por exemplo índices sintéticos). */
 export function marketOf(symbol: string): MarketKind | null {
-  if (/^cry[A-Z0-9]{3,}$/.test(symbol)) return "crypto";
+  if (/^cry[A-Z0-9]+USD$/.test(symbol)) return "crypto";
   if (/^frx(XAU|XAG|XPD|XPT)[A-Z]{3}$/.test(symbol)) return "metals";
   if (/^frx[A-Z]{6}$/.test(symbol)) return "forex";
   return null;
@@ -60,4 +60,4 @@ export function marketStatus(
   const ageSeconds = nowMs / 1000 - lastCandleEpoch;
   if (ageSeconds <= 2 * granularity + 60) return "open";
   return isScheduledOpen(kind, new Date(nowMs)) ? "unknown" : "closed";
-           }
+}

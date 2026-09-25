@@ -41,6 +41,7 @@ function walk(seed: number, n: number): Candle[] {
 test("cada símbolo vai para o seu mercado: cripto NÃO é forex", () => {
   assert.equal(marketOf("cryBTCUSD"), "crypto");
   assert.equal(marketOf("cryETHUSD"), "crypto");
+  assert.equal(marketOf("crySOLUSD"), "crypto");
   assert.equal(marketOf("frxEURUSD"), "forex");
   assert.equal(marketOf("frxUSDJPY"), "forex");
   assert.equal(marketOf("frxXAUUSD"), "metals");
@@ -49,6 +50,8 @@ test("cada símbolo vai para o seu mercado: cripto NÃO é forex", () => {
   assert.equal(marketOf("R_100"), null);
   assert.equal(marketOf(""), null);
   assert.equal(marketOf("frxEUR"), null);
+  assert.equal(marketOf("cryBTC"), null); // sem USD
+  assert.equal(marketOf("crybtcusd"), null); // minúsculas
 });
 
 test("perfis: só a cripto opera sempre e tem o custo assumido mais alto", () => {

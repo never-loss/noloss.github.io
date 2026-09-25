@@ -2,9 +2,16 @@
   "name": "never-loss",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": ">=22.18.0" },
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "scripts": {
-    "test": "node --test \"tests/**/*.test.ts\"",
-    "listen": "node src/cli/listen.ts"
+    "test": "node --test tests/*.test.ts",
+    "listen": "node src/cli/listen.ts",
+    "build:web": "esbuild src/browser/nl-core-entry.ts --bundle --format=iife --global-name=NL --outfile=public/assets/nl-core.js --target=es2022 --legal-comments=none"
+  },
+  "type": "module",
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

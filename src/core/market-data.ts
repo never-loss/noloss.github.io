@@ -55,13 +55,26 @@ export function parseActiveSymbols(raw: string): SymbolsMessage {
       continue;
     }
     const e = entry as Record<string, unknown>;
-    if (typeof e.symbol !== "string" || typeof e.market !== "string") {
+    // Options WS moderno: underlying_symbol (+ nome); legado Binary: symbol (+ display_name).
+    const symbol =
+      typeof e.underlying_symbol === "string"
+        ? e.underlying_symbol
+        : typeof e.symbol === "string"
+          ? e.symbol
+          : null;
+    if (symbol === null || typeof e.market !== "string") {
       skipped += 1;
       continue;
     }
+    const displayName =
+      typeof e.underlying_symbol_name === "string"
+        ? e.underlying_symbol_name
+        : typeof e.display_name === "string"
+          ? e.display_name
+          : symbol;
     items.push({
-      symbol: e.symbol,
-      displayName: typeof e.display_name === "string" ? e.display_name : e.symbol,
+      symbol,
+      displayName,
       market: e.market,
       submarket: typeof e.submarket === "string" ? e.submarket : "",
       open: flag(e.exchange_is_open),
