@@ -2,7 +2,7 @@
 // Cada sinal no índice i usa só velas até i (nunca o futuro). Nenhuma estratégia garante lucro:
 // a porta de evidência decide quais servem, com dados fora da amostra e custos incluídos.
 
-import { ema, rsi, macd, bollinger, stochastic, adx } from "./indicators.ts";
+import { ema, rsi, macd, bollinger, stochastic, adx, atr } from "./indicators.ts";
 import type { Series } from "./indicators.ts";
 import type { Candle } from "./market-data.ts";
 
@@ -165,6 +165,53 @@ export function adxTrend(opts: { period: number; minAdx: number }): Strategy {
 }
 
 /**
+ * Tendência diária / breakout com ATR: rompe o máximo/mínimo das últimas `lookback` velas
+ * por pelo menos `atrMult` × ATR (movimentos mais fortes). Filtro ADX opcional.
+ * Nome em PT para o painel. Passa pela mesma porta de evidência — sem garantir lucro.
+ */
+export function dailyTrendAtrBreakout(opts: {
+  lookback: number;
+  atrPeriod: number;
+  atrMult: number;
+  minAdx?: number;
+}): Strategy {
+  if (!Number.isInteger(opts.lookback) || opts.lookback < 2) {
+    throw new RangeError(`lookback inválido: ${opts.lookback}`);
+  }
+  if (!(opts.atrMult > 0)) throw new RangeError(`atrMult inválido: ${opts.atrMult}`);
+  const minAdx = opts.minAdx;
+  return {
+    name: `tendência-diária breakout-ATR ${opts.lookback}×${opts.atrMult}` +
+      (minAdx != null ? ` adx${minAdx}` : ""),
+    signals(candles) {
+      const a = atr(candles, opts.atrPeriod);
+      const trend = minAdx != null ? adx(candles, 14) : null;
+      return build(candles.length, (i) => {
+        if (i < opts.lookback) return 0;
+        const atrV = level(a[i]);
+        if (atrV === null || atrV <= 0) return 0;
+        if (trend && minAdx != null) {
+          const adxV = level(trend.adx[i]);
+          if (adxV === null || adxV < minAdx) return 0;
+        }
+        let hi = -Infinity;
+        let lo = Infinity;
+        for (let j = i - opts.lookback; j < i; j++) {
+          const c = candles[j]!;
+          if (c.high > hi) hi = c.high;
+          if (c.low < lo) lo = c.low;
+        }
+        const close = candles[i]!.close;
+        const pad = opts.atrMult * atrV;
+        if (close > hi + pad) return 1;
+        if (close < lo - pad) return -1;
+        return 0;
+      });
+    },
+  };
+}
+
+/**
  * Confluência: só dá sinal quando pelo menos `minAgree` estratégias concordam na mesma direção
  * (cada uma conta durante `hold` velas depois de sinalizar) e nenhuma aponta para o lado oposto.
  */
@@ -209,6 +256,9 @@ export function strategyLibrary(): Strategy[] {
     adxTrend({ period: 14, minAdx: 20 }),
     adxTrend({ period: 14, minAdx: 25 }),
     bollingerBreakout({ period: 20, k: 2 }),
+    // Movimentos diários mais fortes (cripto): mesma porta de evidência.
+    dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 0.5, minAdx: 20 }),
+    dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
   ];
   const reversion = [
     rsiReversion({ period: 14, low: 30, high: 70 }),
@@ -233,4 +283,13 @@ export function strategyLibrary(): Strategy[] {
     }),
   ];
   return [...trend, ...reversion, ...combos];
-    }
+}
+
+/** Subconjunto: só tendência diária / breakout-ATR (ainda passa pela porta de evidência). */
+export function dailyTrendStrategySet(): Strategy[] {
+  return [
+    dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 0.5, minAdx: 20 }),
+    dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
+    dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 1.0 }),
+  ];
+}

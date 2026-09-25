@@ -5,6 +5,7 @@
   const APP_ID = "34t836m5r3AO3f7xavbvL";
   const API_BASE = "https://api.derivws.com";
   const PUBLIC_WS = "wss://api.derivws.com/trading/v1/options/ws/public";
+  const ACCOUNT_KEY = "nl_selected_account_id";
 
   const NL = window.NL;
   if (!NL) {
@@ -21,6 +22,8 @@
   const el = (id) => document.getElementById(id);
   const state = {
     accounts: [],
+    selectedAccountId: sessionStorage.getItem(ACCOUNT_KEY) || "",
+    selectedAccount: null,
     symbols: [],
     panel: "crypto",
     ws: null,
@@ -38,6 +41,7 @@
     stake: 1,
     minutes: 60,
     minMultiplier: 100,
+    strategySet: "all",
     revalidateEvery: 12,
   };
 
@@ -69,7 +73,8 @@
   function renderHistory() {
     const box = el("history");
     if (!state.historyLines.length) {
-      box.innerHTML = '<div class="empty">Sem eventos ainda. Só eventos reais da sessão paper.</div>';
+      box.innerHTML =
+        '<div class="empty">Sem eventos ainda. Só eventos reais da sessão paper / simulado.</div>';
       return;
     }
     box.innerHTML = state.historyLines
@@ -85,6 +90,116 @@
       .replace(/"/g, "&quot;");
   }
 
+  function accountKind(acc) {
+    return acc && acc.account_type === "demo" ? "DEMO" : "REAL";
+  }
+
+  function accountBalanceText(acc) {
+    if (!acc) return "—";
+    return (acc.balance != null ? acc.balance : "—") + " " + (acc.currency || "");
+  }
+
+  function resolveSelectedAccount() {
+    if (!state.selectedAccountId) {
+      state.selectedAccount = null;
+      return null;
+    }
+    const found = state.accounts.find((a) => a.account_id === state.selectedAccountId);
+    state.selectedAccount = found || null;
+    if (!found) {
+      state.selectedAccountId = "";
+      sessionStorage.removeItem(ACCOUNT_KEY);
+    }
+    return state.selectedAccount;
+  }
+
+  function renderAccountContext() {
+    const box = el("accountContext");
+    const mode = el("modePill");
+    mode.className = "pill mode";
+    mode.textContent = "PAPER / SIMULADO";
+    const acc = resolveSelectedAccount();
+    if (!acc) {
+      box.className = "account-context muted";
+      box.textContent = "Seleciona DEMO ou REAL abaixo antes de PLAY. Sessão sempre paper / simulado.";
+      return;
+    }
+    const kind = accountKind(acc);
+    box.className = "account-context ready";
+    box.innerHTML =
+      "Contexto <b>" +
+      escapeHtml(kind) +
+      "</b> · conta <b>" +
+      escapeHtml(acc.account_id || "?") +
+      "</b> · saldo Deriv <span class=\"bal\">" +
+      escapeHtml(accountBalanceText(acc)) +
+      '</span> <span class="sim-tag">PAPER / SIMULADO</span><br>' +
+      "<small>O saldo acima é real (REST). PnL da sessão é simulado — sem compras reais.</small>";
+  }
+
+  function selectAccount(accountId) {
+    state.selectedAccountId = accountId || "";
+    if (state.selectedAccountId) {
+      sessionStorage.setItem(ACCOUNT_KEY, state.selectedAccountId);
+    } else {
+      sessionStorage.removeItem(ACCOUNT_KEY);
+    }
+    resolveSelectedAccount();
+    renderAccounts();
+    renderAccountContext();
+    updateButtons();
+    if (state.selectedAccount) {
+      pushHistory(
+        "Conta selecionada: " +
+          accountKind(state.selectedAccount) +
+          " " +
+          state.selectedAccount.account_id +
+          " (contexto; sessão paper)",
+        "open",
+      );
+    }
+  }
+
+  function renderAccounts() {
+    const box = el("accounts");
+    if (!state.accounts.length) {
+      box.innerHTML =
+        '<div class="loading">Nenhuma conta Options nesta sessão. Cria uma conta demo na Deriv.</div>';
+      return;
+    }
+    box.innerHTML = "";
+    for (const acc of state.accounts) {
+      const kind = accountKind(acc);
+      const selected = acc.account_id === state.selectedAccountId;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "account-card" + (selected ? " selected" : "");
+      btn.setAttribute("data-account-id", acc.account_id || "");
+      btn.innerHTML =
+        '<span class="kind-badge ' +
+        (kind === "DEMO" ? "demo" : "real") +
+        '">' +
+        kind +
+        "</span>" +
+        "<b>" +
+        escapeHtml(acc.account_id || "?") +
+        "</b>" +
+        "Moeda: " +
+        escapeHtml(acc.currency || "—") +
+        '<br>Saldo Deriv: <span class="bal">' +
+        escapeHtml(accountBalanceText(acc)) +
+        "</span><br>Estado: " +
+        escapeHtml(acc.status || "—") +
+        '<div class="hint">' +
+        (selected
+          ? "✓ Selecionada — PLAY usa este contexto (paper)"
+          : "Clica para trabalhar com este saldo (paper)") +
+        "</div>";
+      btn.addEventListener("click", () => selectAccount(acc.account_id));
+      box.appendChild(btn);
+    }
+  }
+
   function setGateUI(result, isOpen) {
     const box = el("gateBox");
     const allowed = !!(result && result.allowed && isOpen);
@@ -94,11 +209,25 @@
     el("gateReason").textContent = result
       ? NL.formatCandleGate(result)
       : "A aguardar dados de mercado…";
+
+    el("gateLabel").textContent = result && result.label ? result.label : "—";
+    el("gateOos").textContent =
+      result && typeof result.oosTrades === "number" ? String(result.oosTrades) : "—";
+    el("gateMeanR").textContent =
+      result && typeof result.meanR === "number"
+        ? (result.meanR >= 0 ? "+" : "") + result.meanR.toFixed(3) + "R"
+        : "—";
+    el("gateP").textContent =
+      result && result.pValue != null && Number.isFinite(result.pValue)
+        ? result.pValue.toFixed(4)
+        : "—";
+    el("gateStrat").textContent =
+      result && result.strategy && result.strategy.name ? result.strategy.name : "—";
   }
 
   function setStats(summary) {
     el("statStatus").textContent = summary ? summary.status : "—";
-    el("statPnl").textContent = summary ? signed(summary.totalPnl) : "—";
+    el("statPnl").textContent = summary ? signed(summary.totalPnl) + " (sim)" : "—";
     el("statTrades").textContent = summary ? String(summary.closed) + " / " + summary.opened : "—";
     el("statDd").textContent = summary ? summary.maxDrawdown.toFixed(2) : "—";
   }
@@ -134,30 +263,10 @@
       state.accounts = accounts;
       el("authPill").className = "pill ok";
       el("authPill").textContent = "Ligado à Deriv";
-      if (accounts.length === 0) {
-        el("accounts").innerHTML =
-          '<div class="loading">Nenhuma conta Options nesta sessão. Cria uma conta demo na Deriv.</div>';
-        return;
-      }
-      el("accounts").innerHTML = accounts
-        .map((acc) => {
-          const kind = acc.account_type === "demo" ? "DEMO" : "REAL";
-          const bal = (acc.balance != null ? acc.balance : "—") + " " + (acc.currency || "");
-          return (
-            '<div class="account-card"><b>' +
-            escapeHtml(acc.account_id || "?") +
-            "</b> (" +
-            kind +
-            ")<br>Moeda: " +
-            escapeHtml(acc.currency || "—") +
-            '<br>Saldo: <span class="bal">' +
-            escapeHtml(String(bal)) +
-            "</span><br>Estado: " +
-            escapeHtml(acc.status || "—") +
-            "</div>"
-          );
-        })
-        .join("");
+      resolveSelectedAccount();
+      renderAccounts();
+      renderAccountContext();
+      updateButtons();
     } catch (e) {
       el("accounts").innerHTML = '<div class="err">Erro: ' + escapeHtml(e.message || String(e)) + "</div>";
     }
@@ -234,6 +343,8 @@
 
   function panelSymbols() {
     if (state.panel === "crypto") {
+      // Todos os cry*USD (lista dinâmica); chips mostram aberto/fechado.
+      if (typeof NL.listAllCryptoUsd === "function") return NL.listAllCryptoUsd(state.symbols);
       return NL.filterCryptoUsd(state.symbols);
     }
     if (state.panel === "forex") {
@@ -244,7 +355,6 @@
         })
         .sort((a, b) => a.symbol.localeCompare(b.symbol));
     }
-    // Digits / sintéticos
     return state.symbols
       .filter((it) => classifyPanel(it) === "digits")
       .sort((a, b) => a.symbol.localeCompare(b.symbol));
@@ -267,29 +377,56 @@
       const opt = document.createElement("option");
       opt.value = it.symbol;
       const flag = it.open && !it.suspended ? "●" : "○";
-      opt.textContent = flag + " " + it.symbol + (it.displayName && it.displayName !== it.symbol ? " — " + it.displayName : "");
+      opt.textContent =
+        flag +
+        " " +
+        it.symbol +
+        (it.displayName && it.displayName !== it.symbol ? " — " + it.displayName : "");
       sel.appendChild(opt);
     }
     if (list.some((i) => i.symbol === prev)) sel.value = prev;
-    else sel.value = list[0].symbol;
+    else {
+      const prefer =
+        typeof NL.filterCryptoUsd === "function" && state.panel === "crypto"
+          ? NL.filterCryptoUsd(list)
+          : list;
+      sel.value = (prefer[0] || list[0]).symbol;
+    }
     state.symbol = sel.value;
   }
 
   function renderChips() {
     const strip = el("symbolChips");
-    const list = panelSymbols().slice(0, 60);
-    strip.innerHTML = list
-      .map((it) => {
-        const on = it.open && !it.suspended;
-        return '<span class="chip ' + (on ? "on" : "off") + '">' + escapeHtml(it.symbol) + "</span>";
-      })
-      .join("");
+    const list = panelSymbols();
+    strip.innerHTML = "";
+    for (const it of list) {
+      const on = it.open && !it.suspended;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "chip " + (on ? "on" : "off") + (it.symbol === state.symbol ? " active" : "");
+      btn.textContent = it.symbol;
+      btn.title = (it.displayName || it.symbol) + (on ? " · aberto" : " · fechado/suspenso");
+      btn.addEventListener("click", () => {
+        state.symbol = it.symbol;
+        el("symbolSelect").value = it.symbol;
+        renderChips();
+      });
+      strip.appendChild(btn);
+    }
+    const n = list.length;
+    const openN = list.filter((i) => i.open && !i.suspended).length;
     el("panelHint").textContent =
       state.panel === "crypto"
-        ? "Lista dinâmica cry*USD via active_symbols (preferir abertos)."
+        ? "Cripto: " +
+          n +
+          " pares cry*USD via active_symbols (" +
+          openN +
+          " abertos). Porta CandleGate + estratégias (incl. tendência diária / breakout-ATR). Clica num par."
         : state.panel === "forex"
           ? "Forex e metais (frx*). Mercado fecha ao fim de semana."
           : "Índices sintéticos / dígitos. Paper em velas (mesma porta de evidência).";
+    updateStrategyHint();
   }
 
   function closedOnly(candles, granularity) {
@@ -327,20 +464,55 @@
     state.stake = Number(el("stake").value) || 1;
     state.minutes = Math.min(180, Math.max(1, Number(el("minutes").value) || 60));
     state.minMultiplier = Number(el("minMultiplier").value) || 100;
+    state.strategySet = el("strategySet").value || "all";
   }
 
   function updateButtons() {
+    const hasAccount = !!resolveSelectedAccount();
     const running = state.session && state.session.status === "RUNNING";
     const paused = state.session && state.session.status === "PAUSED";
     const stopped = !state.session || state.session.status === "STOPPED";
-    el("btnPlay").disabled = running;
+    el("btnPlay").disabled = !hasAccount || running;
+    el("btnPlay").title = hasAccount
+      ? "Iniciar sessão paper / simulado"
+      : "Seleciona DEMO ou REAL primeiro";
     el("btnPause").disabled = !running;
     el("btnStop").disabled = stopped && !state.running;
+    void paused;
+  }
+
+
+  function resolveStrategies() {
+    const raw =
+      state.strategySet === "daily" && typeof NL.dailyTrendStrategySet === "function"
+        ? NL.dailyTrendStrategySet()
+        : NL.strategyLibrary();
+    return raw.map((s) =>
+      NL.feasible(s, { slAtr: 1.5, maxStopFraction: 1 / state.minMultiplier }),
+    );
+  }
+
+  function updateStrategyHint() {
+    const hint = el("strategyHint");
+    if (!hint) return;
+    if (state.strategySet === "daily") {
+      hint.textContent =
+        "Conjunto: tendência diária / breakout-ATR. Ainda exige walk-forward, p-valor e NO TRADE se falhar. Sem martingale.";
+    } else {
+      const n = typeof NL.strategyLibrary === "function" ? NL.strategyLibrary().length : "?";
+      hint.textContent =
+        "Biblioteca completa (" +
+        n +
+        "): a porta escolhe a que passa no teste fora da amostra. Inclui tendência-diária breakout-ATR.";
+    }
   }
 
   async function startSession() {
-    if (state.panel === "digits") {
-      // Ainda paper em velas nos sintéticos (sem martingale / sem compras reais).
+    resolveSelectedAccount();
+    if (!state.selectedAccount) {
+      pushHistory("Seleciona uma conta DEMO ou REAL antes de PLAY.", "stop");
+      updateButtons();
+      return;
     }
     readForm();
     if (!state.symbol) {
@@ -362,6 +534,13 @@
     if (state.running) return;
 
     el("btnPlay").disabled = true;
+    const ctx =
+      accountKind(state.selectedAccount) +
+      " " +
+      state.selectedAccount.account_id +
+      " | saldo Deriv " +
+      accountBalanceText(state.selectedAccount);
+    pushHistory("PAPER / SIMULADO · contexto " + ctx, "open");
     pushHistory("A carregar histórico de " + state.symbol + "…", "");
     try {
       const kind = NL.marketOf(state.symbol);
@@ -369,7 +548,11 @@
       const history = await fetchHistory(state.symbol, state.granularity, 3500);
       const last = history[history.length - 1];
       if (!last || history.length < 1500) {
-        pushHistory("Histórico insuficiente (" + history.length + " velas)", "stop");
+        pushHistory("Histórico insuficiente (" + history.length + " velas) — NO TRADE", "stop");
+        setGateUI(
+          { allowed: false, reason: "histórico insuficiente (" + history.length + ")", label: "INSUFFICIENT", oosTrades: 0, meanR: 0, pValue: null, strategy: null },
+          false,
+        );
         updateButtons();
         return;
       }
@@ -377,7 +560,10 @@
         const st = NL.marketStatus(kind, last.epoch, Date.now(), state.granularity);
         if (st === "closed") {
           pushHistory("Mercado fechado agora — NO TRADE", "stop");
-          setGateUI({ allowed: false, reason: "mercado fechado", label: "INSUFFICIENT" }, false);
+          setGateUI(
+            { allowed: false, reason: "mercado fechado", label: "INSUFFICIENT", oosTrades: 0, meanR: 0, pValue: null, strategy: null },
+            false,
+          );
           updateButtons();
           return;
         }
@@ -389,9 +575,7 @@
       const slAtr = 1.5;
       const tpR = 2;
       const maxBars = 24;
-      const strategies = NL.strategyLibrary().map((s) =>
-        NL.feasible(s, { slAtr: slAtr, maxStopFraction: 1 / state.minMultiplier }),
-      );
+      const strategies = resolveStrategies();
       state.controller = new NL.CandleGateController({
         strategies: strategies,
         gate: {
@@ -425,6 +609,7 @@
       state.lastEpoch = last.epoch;
       state.running = true;
       state.historyLines = [];
+      pushHistory("PAPER / SIMULADO · contexto " + ctx, "open");
       for (const e of state.session.start(last.epoch * 1000)) {
         pushHistory(NL.formatCandleEvent(e), "open");
       }
@@ -437,7 +622,9 @@
           state.stake +
           " | máx " +
           state.minutes +
-          " min | " +
+          " min | contexto " +
+          accountKind(state.selectedAccount) +
+          " | " +
           NL.formatCandleGate(state.controller.result),
         "",
       );
@@ -533,6 +720,7 @@
     sessionStorage.removeItem("nl_access_token");
     sessionStorage.removeItem("nl_verifier");
     sessionStorage.removeItem("nl_state");
+    sessionStorage.removeItem(ACCOUNT_KEY);
     location.href = "/";
   }
 
@@ -548,6 +736,11 @@
     });
     el("symbolSelect").addEventListener("change", () => {
       state.symbol = el("symbolSelect").value;
+      renderChips();
+    });
+    el("strategySet").addEventListener("change", () => {
+      state.strategySet = el("strategySet").value || "all";
+      updateStrategyHint();
     });
     el("btnPlay").addEventListener("click", () => startSession());
     el("btnPause").addEventListener("click", () => pauseSession());
@@ -557,15 +750,20 @@
 
   async function boot() {
     bind();
+    updateStrategyHint();
     setGateUI(null, false);
     setStats(null);
     renderHistory();
+    renderAccountContext();
     updateButtons();
     await loadAccounts();
     try {
       await connectWs();
       await loadSymbols();
-      pushHistory("Pronto. Paper trading apenas — sem compras reais.", "");
+      pushHistory(
+        "Pronto. Escolhe DEMO ou REAL, depois PLAY. Paper trading apenas — sem compras reais.",
+        "",
+      );
     } catch (e) {
       pushHistory("Falha WS/símbolos: " + (e.message || String(e)), "stop");
     }

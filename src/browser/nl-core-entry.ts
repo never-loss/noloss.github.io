@@ -2,14 +2,18 @@
 export { MARKETS, MARKET_ORDER, marketOf, marketStatus, isScheduledOpen } from "../core/markets.ts";
 export type { MarketKind, MarketProfile, MarketStatus } from "../core/markets.ts";
 
-export { isCryptoUsd, filterCryptoUsd } from "../core/crypto-symbols.ts";
+export { isCryptoUsd, filterCryptoUsd, listAllCryptoUsd } from "../core/crypto-symbols.ts";
 
 export { parseActiveSymbols, parseCandlesMessage, summarizeMarkets } from "../core/market-data.ts";
 export type { SymbolInfo, Candle, SymbolsMessage, CandlesMessage } from "../core/market-data.ts";
 
 export { mergeCandlePages, nextCandleEnd } from "../core/candle-pages.ts";
 
-export { strategyLibrary } from "../core/strategies.ts";
+export {
+  strategyLibrary,
+  dailyTrendAtrBreakout,
+  dailyTrendStrategySet,
+} from "../core/strategies.ts";
 export type { Strategy, Signal } from "../core/strategies.ts";
 
 export { feasible, maxStopFromMultiplier } from "../core/feasible.ts";

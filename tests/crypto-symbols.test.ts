@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isCryptoUsd, filterCryptoUsd } from "../src/core/crypto-symbols.ts";
+import { isCryptoUsd, filterCryptoUsd, listAllCryptoUsd } from "../src/core/crypto-symbols.ts";
 import type { SymbolInfo } from "../src/core/market-data.ts";
 import { marketOf } from "../src/core/markets.ts";
 
@@ -55,5 +55,18 @@ test("filterCryptoUsd cai para todos os cry*USD se nenhum estiver aberto", () =>
   assert.deepEqual(
     filterCryptoUsd(items).map((i) => i.symbol),
     ["cryBTCUSD", "cryETHUSD", "crySOLUSD"],
+  );
+});
+
+test("listAllCryptoUsd devolve todos os cry*USD ordenados", () => {
+  const items = [
+    sym({ symbol: "cryETHUSD", open: false }),
+    sym({ symbol: "frxEURUSD", market: "forex" }),
+    sym({ symbol: "cryXRPUSD", open: true }),
+    sym({ symbol: "cryBTCUSD", open: false }),
+  ];
+  assert.deepEqual(
+    listAllCryptoUsd(items).map((i) => i.symbol),
+    ["cryBTCUSD", "cryETHUSD", "cryXRPUSD"],
   );
 });

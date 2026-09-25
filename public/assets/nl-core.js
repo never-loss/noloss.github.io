@@ -26,6 +26,8 @@ var NL = (() => {
     MARKET_ORDER: () => MARKET_ORDER,
     MAX_SESSION_MS: () => MAX_SESSION_MS,
     MIN_STAKE: () => MIN_STAKE,
+    dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
+    dailyTrendStrategySet: () => dailyTrendStrategySet,
     evaluateCandleGate: () => evaluateCandleGate,
     feasible: () => feasible,
     filterCryptoUsd: () => filterCryptoUsd,
@@ -34,6 +36,7 @@ var NL = (() => {
     formatCandleSummary: () => formatCandleSummary,
     isCryptoUsd: () => isCryptoUsd,
     isScheduledOpen: () => isScheduledOpen,
+    listAllCryptoUsd: () => listAllCryptoUsd,
     marketOf: () => marketOf,
     marketStatus: () => marketStatus,
     maxStopFromMultiplier: () => maxStopFromMultiplier,
@@ -80,11 +83,13 @@ var NL = (() => {
   function isCryptoUsd(symbol) {
     return /^cry[A-Z0-9]+USD$/.test(symbol);
   }
+  function listAllCryptoUsd(items) {
+    return items.filter((it) => isCryptoUsd(it.symbol)).slice().sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }
   function filterCryptoUsd(items) {
-    const all = items.filter((it) => isCryptoUsd(it.symbol));
+    const all = listAllCryptoUsd(items);
     const open = all.filter((it) => it.open && !it.suspended);
-    const chosen = open.length > 0 ? open : all;
-    return [...chosen].sort((a, b) => a.symbol.localeCompare(b.symbol));
+    return open.length > 0 ? open : all;
   }
 
   // src/core/market-data.ts
@@ -540,6 +545,41 @@ var NL = (() => {
       }
     };
   }
+  function dailyTrendAtrBreakout(opts) {
+    if (!Number.isInteger(opts.lookback) || opts.lookback < 2) {
+      throw new RangeError(`lookback inv\xE1lido: ${opts.lookback}`);
+    }
+    if (!(opts.atrMult > 0)) throw new RangeError(`atrMult inv\xE1lido: ${opts.atrMult}`);
+    const minAdx = opts.minAdx;
+    return {
+      name: `tend\xEAncia-di\xE1ria breakout-ATR ${opts.lookback}\xD7${opts.atrMult}` + (minAdx != null ? ` adx${minAdx}` : ""),
+      signals(candles) {
+        const a = atr(candles, opts.atrPeriod);
+        const trend = minAdx != null ? adx(candles, 14) : null;
+        return build(candles.length, (i) => {
+          if (i < opts.lookback) return 0;
+          const atrV = level(a[i]);
+          if (atrV === null || atrV <= 0) return 0;
+          if (trend && minAdx != null) {
+            const adxV = level(trend.adx[i]);
+            if (adxV === null || adxV < minAdx) return 0;
+          }
+          let hi = -Infinity;
+          let lo = Infinity;
+          for (let j = i - opts.lookback; j < i; j++) {
+            const c = candles[j];
+            if (c.high > hi) hi = c.high;
+            if (c.low < lo) lo = c.low;
+          }
+          const close = candles[i].close;
+          const pad = opts.atrMult * atrV;
+          if (close > hi + pad) return 1;
+          if (close < lo - pad) return -1;
+          return 0;
+        });
+      }
+    };
+  }
   function confluence(opts) {
     if (opts.strategies.length < 2) throw new RangeError("Precisas de pelo menos 2 estrat\xE9gias");
     if (!Number.isInteger(opts.minAgree) || opts.minAgree < 2 || opts.minAgree > opts.strategies.length) {
@@ -578,7 +618,10 @@ var NL = (() => {
       macdCross({ fast: 8, slow: 17, signal: 9 }),
       adxTrend({ period: 14, minAdx: 20 }),
       adxTrend({ period: 14, minAdx: 25 }),
-      bollingerBreakout({ period: 20, k: 2 })
+      bollingerBreakout({ period: 20, k: 2 }),
+      // Movimentos diários mais fortes (cripto): mesma porta de evidência.
+      dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 0.5, minAdx: 20 }),
+      dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 })
     ];
     const reversion = [
       rsiReversion({ period: 14, low: 30, high: 70 }),
@@ -603,6 +646,13 @@ var NL = (() => {
       })
     ];
     return [...trend, ...reversion, ...combos];
+  }
+  function dailyTrendStrategySet() {
+    return [
+      dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 0.5, minAdx: 20 }),
+      dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
+      dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 1 })
+    ];
   }
 
   // src/core/feasible.ts

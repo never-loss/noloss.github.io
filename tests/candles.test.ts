@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   emaCross,
+  dailyTrendAtrBreakout,
+  dailyTrendStrategySet,
   rsiReversion,
   confluence,
   strategyLibrary,
@@ -88,6 +90,25 @@ test("a biblioteca tem estratégias variadas e nomes únicos", () => {
   assert.ok(lib.length >= 15);
   assert.equal(new Set(lib.map((s) => s.name)).size, lib.length);
   assert.ok(lib.some((s) => s.name.startsWith("confluencia")));
+  assert.ok(lib.some((s) => s.name.startsWith("tendência-diária breakout-ATR")));
+});
+
+test("tendência-diária breakout-ATR: rompe canal com margem ATR", () => {
+  // Base flat then sharp breakout up beyond lookback high + pad.
+  const flat = Array.from({ length: 40 }, () => ({
+    epoch: 0, open: 100, high: 101, low: 99, close: 100,
+  }));
+  const boom = Array.from({ length: 5 }, (_, i) => ({
+    epoch: 0, open: 100, high: 100 + 20 + i, low: 99, close: 100 + 18 + i,
+  }));
+  const candles = [...flat, ...boom].map((c, i) => ({ ...c, epoch: i * 300 }));
+  const s = dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 0.5 });
+  const sig = s.signals(candles);
+  assert.ok(sig.some((x) => x === 1), "esperava sinal de compra no rompimento");
+  assert.ok(s.name.includes("tendência-diária"));
+  assert.throws(() => dailyTrendAtrBreakout({ lookback: 1, atrPeriod: 14, atrMult: 0.5 }), RangeError);
+  assert.ok(dailyTrendStrategySet().length >= 2);
+  assert.ok(dailyTrendStrategySet().every((x) => x.name.includes("tendência-diária")));
 });
 
 test("cruzamento de EMAs: compra na viragem para cima e vende na viragem para baixo", () => {
