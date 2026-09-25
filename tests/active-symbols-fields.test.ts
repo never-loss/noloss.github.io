@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseActiveSymbols } from "../src/core/market-data.ts";
-import { filterCryptoUsd } from "../src/core/crypto-symbols.ts";
+import { filterCryptoUsd, listAllCryptoUsd, isOptionsFeedOnly } from "../src/core/crypto-symbols.ts";
 
 test("active_symbols aceita underlying_symbol (Options WS moderno)", () => {
   const raw = JSON.stringify({
@@ -41,8 +41,22 @@ test("active_symbols aceita underlying_symbol (Options WS moderno)", () => {
     ["cryBTCUSD", "frxEURUSD", "cryETHUSD"],
   );
   assert.equal(msg.items[0]!.displayName, "BTC/USD");
+
+  const activeOnly = msg.items.filter((i) => i.symbol.startsWith("cry"));
   assert.deepEqual(
-    filterCryptoUsd(msg.items).map((i) => i.symbol),
+    activeOnly.map((i) => i.symbol),
     ["cryBTCUSD", "cryETHUSD"],
   );
+
+  // Painel/pesquisa: active + feed Options conhecido (não MT5).
+  const all = listAllCryptoUsd(msg.items).map((i) => i.symbol);
+  assert.ok(all.includes("cryBTCUSD") && all.includes("cryETHUSD"));
+  assert.ok(all.includes("crySOLUSD"));
+  assert.equal(isOptionsFeedOnly("crySOLUSD", msg.items), true);
+  assert.equal(isOptionsFeedOnly("cryBTCUSD", msg.items), false);
+
+  const filtered = filterCryptoUsd(msg.items).map((i) => i.symbol);
+  assert.ok(filtered.includes("cryBTCUSD"));
+  assert.ok(filtered.includes("cryETHUSD"));
+  assert.ok(filtered.includes("cryLTCUSD"));
 });

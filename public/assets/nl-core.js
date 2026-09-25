@@ -22,10 +22,14 @@ var NL = (() => {
   __export(nl_core_entry_exports, {
     CandleGateController: () => CandleGateController,
     CandlePaperSession: () => CandlePaperSession,
+    KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
     MARKETS: () => MARKETS,
     MARKET_ORDER: () => MARKET_ORDER,
     MAX_SESSION_MS: () => MAX_SESSION_MS,
     MIN_STAKE: () => MIN_STAKE,
+    MT5_CRYPTO_STATUS: () => MT5_CRYPTO_STATUS,
+    cryptoBaseLabel: () => cryptoBaseLabel,
+    cryptoSourceOf: () => cryptoSourceOf,
     dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
     dailyTrendStrategySet: () => dailyTrendStrategySet,
     evaluateCandleGate: () => evaluateCandleGate,
@@ -34,13 +38,16 @@ var NL = (() => {
     formatCandleEvent: () => formatCandleEvent,
     formatCandleGate: () => formatCandleGate,
     formatCandleSummary: () => formatCandleSummary,
+    formatMt5StatusBlock: () => formatMt5StatusBlock,
     isCryptoUsd: () => isCryptoUsd,
+    isOptionsFeedOnly: () => isOptionsFeedOnly,
     isScheduledOpen: () => isScheduledOpen,
     listAllCryptoUsd: () => listAllCryptoUsd,
     marketOf: () => marketOf,
     marketStatus: () => marketStatus,
     maxStopFromMultiplier: () => maxStopFromMultiplier,
     mergeCandlePages: () => mergeCandlePages,
+    mergeCryptoUsdListings: () => mergeCryptoUsdListings,
     nextCandleEnd: () => nextCandleEnd,
     parseActiveSymbols: () => parseActiveSymbols,
     parseCandlesMessage: () => parseCandlesMessage,
@@ -80,16 +87,105 @@ var NL = (() => {
   }
 
   // src/core/crypto-symbols.ts
+  var KNOWN_OPTIONS_CRYPTO_FEED = [
+    "cryBTCUSD",
+    "cryETHUSD",
+    "cryLTCUSD",
+    "cryXRPUSD",
+    "cryBCHUSD",
+    "cryADAUSD",
+    "crySOLUSD",
+    "cryBNBUSD",
+    "cryXLMUSD",
+    "cryTRXUSD",
+    "cryNEOUSD",
+    "cryZECUSD",
+    "cryUSDCUSD",
+    "cryXMRUSD",
+    "cryIOTUSD",
+    "cryDSHUSD"
+  ];
   function isCryptoUsd(symbol) {
     return /^cry[A-Z0-9]+USD$/.test(symbol);
   }
+  function cryptoBaseLabel(symbol) {
+    const m = /^cry([A-Z0-9]+)USD$/.exec(symbol);
+    return m ? m[1] : symbol;
+  }
+  function feedStub(symbol) {
+    const base = cryptoBaseLabel(symbol);
+    return {
+      symbol,
+      displayName: `${base}/USD (feed Options)`,
+      market: "cryptocurrency",
+      submarket: "crypto_usd_feed",
+      open: true,
+      suspended: false
+    };
+  }
+  function mergeCryptoUsdListings(activeItems) {
+    const bySym = /* @__PURE__ */ new Map();
+    for (const it of activeItems) {
+      if (isCryptoUsd(it.symbol)) bySym.set(it.symbol, it);
+    }
+    for (const sym of KNOWN_OPTIONS_CRYPTO_FEED) {
+      if (!bySym.has(sym)) bySym.set(sym, feedStub(sym));
+    }
+    return [...bySym.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }
   function listAllCryptoUsd(items) {
-    return items.filter((it) => isCryptoUsd(it.symbol)).slice().sort((a, b) => a.symbol.localeCompare(b.symbol));
+    return mergeCryptoUsdListings(items);
   }
   function filterCryptoUsd(items) {
     const all = listAllCryptoUsd(items);
     const open = all.filter((it) => it.open && !it.suspended);
     return open.length > 0 ? open : all;
+  }
+  function isOptionsFeedOnly(symbol, activeItems) {
+    if (!isCryptoUsd(symbol)) return false;
+    return !activeItems.some((it) => it.symbol === symbol);
+  }
+  function cryptoSourceOf(symbol, activeItems) {
+    if (!isCryptoUsd(symbol)) return null;
+    return isOptionsFeedOnly(symbol, activeItems) ? "options_feed" : "options_active";
+  }
+
+  // src/core/mt5-status.ts
+  var MT5_CRYPTO_STATUS = {
+    status: "blocked_no_public_api",
+    title: "MT5 / CFD cripto \u2014 sem API p\xFAblica de mercado",
+    summary: "A Deriv exp\xF5e APIs MT5 s\xF3 para gest\xE3o de conta (lista, passwords, dep\xF3sito/levantamento). Trading e s\xEDmbolos CFD/MT5 n\xE3o est\xE3o dispon\xEDveis via API \u2014 s\xF3 na app Deriv MT5. O login OAuth Options (JWT) n\xE3o cobre listagem nem ticks/velas dos pares CFD (ex.: BTCUSD, AAVUSD). No WS Options esses c\xF3digos devolvem InvalidSymbol.",
+    needed: [
+      "API oficial Deriv de market data CFD/MT5 (lista de s\xEDmbolos + ticks/candles), ou",
+      "Credenciais/terminal MetaTrader 5 com feed export\xE1vel (fora do \xE2mbito desta app), ou",
+      "Produto Deriv documentado que exponha CFD no mesmo WS Options (hoje n\xE3o existe)."
+    ],
+    optionsPath: "Paper/pesquisa cripto usa o feed Options cry*USD (active_symbols + cat\xE1logo de velas p\xFAblico). Mesmas estrat\xE9gias e CandleGate. Sem saldos inventados e sem trades sem evid\xEAncia.",
+    exampleMt5Codes: [
+      "AAVUSD",
+      "ADAUSD",
+      "BNBUSD",
+      "BTCUSD",
+      "ETHUSD",
+      "BTCETH"
+    ],
+    docsUrl: "https://developers.deriv.com/docs/mt5"
+  };
+  function formatMt5StatusBlock(info = MT5_CRYPTO_STATUS) {
+    const need = info.needed.map((n, i) => `${i + 1}. ${n}`).join("\n");
+    return [
+      info.title,
+      "",
+      info.summary,
+      "",
+      "Para integrar MT5/CFD de verdade seria preciso:",
+      need,
+      "",
+      "Entretanto: " + info.optionsPath,
+      "",
+      "Exemplos de c\xF3digos CFD/MT5 (site Deriv, n\xE3o negoci\xE1veis aqui): " + info.exampleMt5Codes.join(", "),
+      "Docs: " + info.docsUrl
+    ].join("\n");
   }
 
   // src/core/market-data.ts

@@ -25,6 +25,7 @@
     selectedAccountId: sessionStorage.getItem(ACCOUNT_KEY) || "",
     selectedAccount: null,
     symbols: [],
+    activeCrypto: [],
     panel: "crypto",
     ws: null,
     nextId: 1,
@@ -337,8 +338,14 @@
       throw new Error("active_symbols: " + why);
     }
     state.symbols = msg.items;
+    state.activeCrypto = msg.items.filter(function (it) {
+      return typeof NL.isCryptoUsd === "function"
+        ? NL.isCryptoUsd(it.symbol)
+        : /^cry[A-Z0-9]+USD$/.test(it.symbol);
+    });
     renderSymbolSelect();
     renderChips();
+    renderMt5Panel();
   }
 
   function panelSymbols() {
@@ -403,10 +410,20 @@
       const on = it.open && !it.suspended;
       const btn = document.createElement("button");
       btn.type = "button";
+      var feedOnly =
+        state.panel === "crypto" &&
+        typeof NL.isOptionsFeedOnly === "function" &&
+        NL.isOptionsFeedOnly(it.symbol, state.activeCrypto);
       btn.className =
-        "chip " + (on ? "on" : "off") + (it.symbol === state.symbol ? " active" : "");
+        "chip " +
+        (on ? "on" : "off") +
+        (feedOnly ? " feed" : "") +
+        (it.symbol === state.symbol ? " active" : "");
       btn.textContent = it.symbol;
-      btn.title = (it.displayName || it.symbol) + (on ? " · aberto" : " · fechado/suspenso");
+      btn.title =
+        (it.displayName || it.symbol) +
+        (on ? " · aberto" : " · fechado/suspenso") +
+        (feedOnly ? " · feed Options (não em active_symbols)" : " · Options active");
       btn.addEventListener("click", () => {
         state.symbol = it.symbol;
         el("symbolSelect").value = it.symbol;
@@ -416,13 +433,19 @@
     }
     const n = list.length;
     const openN = list.filter((i) => i.open && !i.suspended).length;
+    var activeN = state.activeCrypto.length;
+    var feedN = Math.max(0, n - activeN);
     el("panelHint").textContent =
       state.panel === "crypto"
-        ? "Cripto: " +
+        ? "Cripto Options: " +
           n +
-          " pares cry*USD via active_symbols (" +
+          " pares cry*USD (" +
+          activeN +
+          " em active_symbols, " +
+          feedN +
+          " só no feed de velas). " +
           openN +
-          " abertos). Porta CandleGate + estratégias (incl. tendência diária / breakout-ATR). Clica num par."
+          " abertos. Paper + CandleGate. Tracejado = feed-only. MT5/CFD: ver secção abaixo (sem API)."
         : state.panel === "forex"
           ? "Forex e metais (frx*). Mercado fecha ao fim de semana."
           : "Índices sintéticos / dígitos. Paper em velas (mesma porta de evidência).";
@@ -748,6 +771,32 @@
     el("btnDisconnect").addEventListener("click", () => disconnect());
   }
 
+
+  function renderMt5Panel() {
+    var info = typeof NL.MT5_CRYPTO_STATUS === "object" ? NL.MT5_CRYPTO_STATUS : null;
+    var sum = el("mt5Summary");
+    var path = el("mt5OptionsPath");
+    var need = el("mt5Needed");
+    var ex = el("mt5Examples");
+    var docs = el("mt5Docs");
+    if (!sum || !info) return;
+    sum.textContent = info.summary;
+    if (path) path.textContent = info.optionsPath;
+    if (need) {
+      need.innerHTML = "";
+      (info.needed || []).forEach(function (line) {
+        var li = document.createElement("li");
+        li.textContent = line;
+        need.appendChild(li);
+      });
+    }
+    if (ex) ex.textContent = (info.exampleMt5Codes || []).join(", ");
+    if (docs) {
+      docs.href = info.docsUrl || "https://developers.deriv.com/docs/mt5";
+      docs.textContent = info.docsUrl || "Deriv MT5 API";
+    }
+  }
+
   async function boot() {
     bind();
     updateStrategyHint();
@@ -755,6 +804,7 @@
     setStats(null);
     renderHistory();
     renderAccountContext();
+    renderMt5Panel();
     updateButtons();
     await loadAccounts();
     try {

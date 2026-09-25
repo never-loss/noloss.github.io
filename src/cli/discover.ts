@@ -2,7 +2,7 @@
 // Uso: node src/cli/discover.ts --symbols frxEURUSD,cryBTCUSD --granularity 300 --count 500
 //      node src/cli/discover.ts --all-crypto
 import { parseActiveSymbols, parseCandlesMessage, summarizeMarkets } from "../core/market-data.ts";
-import { filterCryptoUsd } from "../core/crypto-symbols.ts";
+import { filterCryptoUsd, listAllCryptoUsd } from "../core/crypto-symbols.ts";
 import { connectPublicWs } from "./ws-client.ts";
 
 function hasFlag(name: string): boolean {
@@ -42,8 +42,15 @@ async function main(): Promise<void> {
       const open = s.items.filter((i) => i.market === market && i.open && !i.suspended).map((i) => i.symbol);
       console.log(`Abertos em ${market} (${open.length}): ${open.slice(0, 40).join(" ")}`);
     }
+    const cryptoAll = listAllCryptoUsd(s.items);
     const crypto = filterCryptoUsd(s.items);
-    console.log(`Cripto USD (filtro cry*USD, preferir abertos): ${crypto.length} -> ${crypto.map((c) => c.symbol).join(" ")}`);
+    const activeCry = s.items.filter((i) => /^cry[A-Z0-9]+USD$/.test(i.symbol));
+    console.log(
+      `Cripto USD Options: ${cryptoAll.length} total (active_symbols=${activeCry.length}, feed-only=${cryptoAll.length - activeCry.length})`,
+    );
+    console.log(`  active: ${activeCry.map((c) => c.symbol).join(" ") || "(nenhum)"}`);
+    console.log(`  preferidos abertos p/ velas: ${crypto.length} -> ${crypto.map((c) => c.symbol).join(" ")}`);
+    console.log("  Nota: MT5/CFD cripto não está na API pública (só gestão de conta MT5).");
     if (allCrypto) {
       symbols = crypto.map((c) => c.symbol);
     }

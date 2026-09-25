@@ -2,7 +2,20 @@
 export { MARKETS, MARKET_ORDER, marketOf, marketStatus, isScheduledOpen } from "../core/markets.ts";
 export type { MarketKind, MarketProfile, MarketStatus } from "../core/markets.ts";
 
-export { isCryptoUsd, filterCryptoUsd, listAllCryptoUsd } from "../core/crypto-symbols.ts";
+export {
+  isCryptoUsd,
+  filterCryptoUsd,
+  listAllCryptoUsd,
+  mergeCryptoUsdListings,
+  KNOWN_OPTIONS_CRYPTO_FEED,
+  cryptoSourceOf,
+  isOptionsFeedOnly,
+  cryptoBaseLabel,
+} from "../core/crypto-symbols.ts";
+export type { CryptoSource } from "../core/crypto-symbols.ts";
+
+export { MT5_CRYPTO_STATUS, formatMt5StatusBlock } from "../core/mt5-status.ts";
+export type { Mt5StatusInfo, Mt5IntegrationStatus } from "../core/mt5-status.ts";
 
 export { parseActiveSymbols, parseCandlesMessage, summarizeMarkets } from "../core/market-data.ts";
 export type { SymbolInfo, Candle, SymbolsMessage, CandlesMessage } from "../core/market-data.ts";

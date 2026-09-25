@@ -68,7 +68,8 @@
         </section>
       </div>
 
-      <section class="glass panel" style="margin-top:14px">
+      
+<section class="glass panel" style="margin-top:14px">
         <h2>Mercados</h2>
         <div class="tabs" role="tablist">
           <button type="button" class="tab" data-panel="digits">Dígitos</button>
@@ -112,6 +113,19 @@
         </div>
         <p id="strategyHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
         <div class="symbols-grid" id="symbolChips"></div>
+      </section>
+
+      <section class="glass panel mt5-panel" style="margin-top:14px" id="mt5Panel">
+        <h2>MT5 / CFD cripto</h2>
+        <div class="mt5-box">
+          <div class="mt5-badge">BLOQUEADO — sem API pública</div>
+          <p id="mt5Summary" class="mt5-summary"></p>
+          <p class="mt5-sub"><strong>Options (disponível):</strong> <span id="mt5OptionsPath"></span></p>
+          <p class="mt5-sub"><strong>Para desbloquear MT5/CFD seria preciso:</strong></p>
+          <ul id="mt5Needed" class="mt5-needed"></ul>
+          <p class="mt5-sub muted">Exemplos CFD/MT5 no site Deriv (não negociáveis nem cotados aqui): <span id="mt5Examples"></span></p>
+          <p class="mt5-sub muted">Docs: <a id="mt5Docs" href="#" target="_blank" rel="noopener">Deriv MT5 API</a></p>
+        </div>
       </section>
 
       <section class="glass panel" style="margin-top:14px">

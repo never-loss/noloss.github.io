@@ -8,7 +8,7 @@ import { mergeCandlePages, nextCandleEnd } from "../core/candle-pages.ts";
 import { runExecutableResearch, formatShares } from "../core/executable-research.ts";
 import { formatMarketReport } from "../core/market-research.ts";
 import { marketOf, marketStatus, MARKETS } from "../core/markets.ts";
-import { filterCryptoUsd } from "../core/crypto-symbols.ts";
+import { filterCryptoUsd, listAllCryptoUsd } from "../core/crypto-symbols.ts";
 import { connectPublicWs, mapPool } from "./ws-client.ts";
 
 function hasFlag(name: string): boolean {
@@ -70,10 +70,14 @@ async function resolveSymbols(): Promise<string[]> {
     const why = msg.kind === "error" ? `${msg.code} - ${msg.message}` : msg.kind === "invalid" ? msg.reason : msg.kind;
     throw new Error(`active_symbols falhou: ${why}`);
   }
+  const all = listAllCryptoUsd(msg.items);
   const filtered = filterCryptoUsd(msg.items);
-  if (filtered.length === 0) throw new Error("Nenhum símbolo cry*USD na lista active_symbols");
+  if (all.length === 0) throw new Error("Nenhum símbolo cry*USD (active_symbols + feed Options)");
+  const activeN = msg.items.filter((i) => /^cry[A-Z0-9]+USD$/.test(i.symbol)).length;
   const openN = filtered.filter((i) => i.open && !i.suspended).length;
-  console.log(`Cripto USD: ${filtered.length} símbolos (${openN} abertos preferidos).`);
+  console.log(
+    `Cripto USD Options: ${all.length} (active_symbols=${activeN}, feed extra=${all.length - activeN}; ${openN} preferidos abertos). MT5/CFD sem API.`,
+  );
   return filtered.map((i) => i.symbol);
 }
 

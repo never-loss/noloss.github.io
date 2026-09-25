@@ -404,3 +404,48 @@ button.ghost:hover { color: var(--text); }
 
 .loading { color: var(--muted); }
 .err { color: var(--bad); }
+
+
+/* MT5 / CFD blocker (honest limitation) */
+.mt5-panel .mt5-box {
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(120, 53, 15, 0.18);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.mt5-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin-bottom: 8px;
+}
+.mt5-summary {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.mt5-sub {
+  margin: 6px 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+.mt5-sub.muted { color: var(--muted); }
+.mt5-needed {
+  margin: 4px 0 10px 18px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.mt5-panel a { color: var(--accent); }
+.chip.feed {
+  border-style: dashed;
+  opacity: 0.95;
+}
