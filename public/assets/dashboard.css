@@ -1071,15 +1071,14 @@ button.ctrl.analyze:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--bad);
   font-size: 0.88rem;
 }
-body.world-bybit .account-panel#derivAccountPanel { display: none; }
-body.world-bybit #marketStrategyPanel .tabs,
-body.world-bybit #marketStrategyPanel #panelHint,
-body.world-bybit #marketStrategyPanel .source-toggle,
-body.world-bybit #marketStrategyPanel #sourceHint,
-body.world-bybit #marketStrategyPanel #tradingModeToggle,
-body.world-bybit #marketStrategyPanel #tradingModeHint {
-  /* Mercado section still has shared symbol/strategy/analyze — hide duplicate when Bybit panel owns them */
-}
-body.world-bybit #marketStrategyPanel { display: none; }
-body.world-bybit #mt5Panel { display: none; }
+/* World isolation: each world owns its Operar controls; shared hero keeps PAUSE/STOP. */
+body.world-bybit .account-panel#derivAccountPanel { display: none !important; }
+body.world-bybit #marketStrategyPanel { display: none !important; }
+body.world-bybit #mt5Panel { display: none !important; }
+/* Bybit panel has its own PLAY — avoid two PLAY buttons */
+body.world-bybit #btnPlay { display: none !important; }
+body.world-bybit .btn-row-hero { grid-template-columns: 1fr 1fr; }
 body.world-deriv #bybitWorldPanel { display: none !important; }
+/* Deriv world: hero PLAY is the start control (Bybit panel hidden) */
+body.world-deriv #btnBybitPlay,
+body.world-deriv #btnBybitAnalyze { display: none !important; }

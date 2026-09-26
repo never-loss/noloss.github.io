@@ -45,7 +45,7 @@
     bybitKeysConfigured: false,
     bybitRealAvailable: false,
     /** "deriv" | "bybit" — Bybit world shows wallet + futures; Deriv keeps OAuth accounts. */
-    world: sessionStorage.getItem(WORLD_KEY) === "bybit" ? "bybit" : "deriv",
+    world: sessionStorage.getItem(WORLD_KEY) === "deriv" ? "deriv" : "bybit",
     bybitBalance: null,
     bybitBalanceError: null,
     bybitLeverageInfo: null,
@@ -337,27 +337,34 @@
     const hasStrategy = !!(el("strategySet") && el("strategySet").value) || !!(el("bybitStrategy") && el("bybitStrategy").value);
     const running = state.session && state.session.status === "RUNNING";
     const paused = state.session && state.session.status === "PAUSED";
+    const bybit = isBybitWorld();
     if (running) {
       box.textContent = "Sessão a correr · usa PAUSE ou STOP quando quiseres";
       return;
     }
     if (paused) {
-      box.textContent = "Em pausa · PLAY para continuar ou STOP para terminar";
+      box.textContent = bybit
+        ? "Em pausa · PLAY (painel Bybit) para continuar ou STOP"
+        : "Em pausa · PLAY para continuar ou STOP para terminar";
       return;
     }
     if (!hasAccount) {
-      box.textContent = "1 Conta · 2 Estratégia · 3 Analisar · 4 PLAY";
+      box.textContent = "1 Conta Deriv · 2 Estratégia · 3 Analisar · 4 PLAY";
       return;
     }
     if (!hasStrategy) {
-      box.textContent = "2 Escolhe a estratégia · 3 Analisar · 4 PLAY";
+      box.textContent = bybit
+        ? "Bybit · 1 Escolhe estratégia · 2 Analisar · 3 PLAY"
+        : "2 Escolhe a estratégia · 3 Analisar · 4 PLAY";
       return;
     }
     if (!state.prePlayOk) {
-      box.textContent = "3 Analisar (aba Análise ou Operar) · 4 PLAY se a porta abrir";
+      box.textContent = bybit
+        ? "Bybit · 2 Analisar (porta) · 3 PLAY no painel Bybit se abrir"
+        : "3 Analisar (aba Análise ou Operar) · 4 PLAY se a porta abrir";
       return;
     }
-    box.textContent = "4 Pronto — clica PLAY";
+    box.textContent = bybit ? "Bybit · pronto — PLAY no painel Bybit" : "4 Pronto — clica PLAY";
   }
 
   function updateModeBanner() {
@@ -370,9 +377,15 @@
       banner.classList.toggle("real", real);
     }
     if (sub) {
-      sub.textContent = real
-        ? "ATENÇÃO: modo REAL — ordens com dinheiro."
-        : "Modo simulado — sem dinheiro real.";
+      if (isBybitWorld()) {
+        sub.textContent = real
+          ? "Bybit REAL — ordens futures USDT com dinheiro."
+          : "Bybit PAPER — simulado. Saldo acima = carteira real (só leitura).";
+      } else {
+        sub.textContent = real
+          ? "ATENÇÃO: modo REAL — ordens com dinheiro."
+          : "Deriv · modo simulado — dígitos/forex. Sem dinheiro real neste modo.";
+      }
     }
   }
 
@@ -724,11 +737,29 @@
     }
     const panel = el("bybitWorldPanel");
     if (panel) panel.hidden = !onBybit;
+    const derivPanel = el("derivAccountPanel");
+    if (derivPanel) derivPanel.hidden = onBybit;
+    const mkt = el("marketStrategyPanel");
+    if (mkt) mkt.hidden = onBybit;
+    const mt5 = el("mt5Panel");
+    if (mt5) mt5.hidden = onBybit;
     const hint = el("worldHint");
     if (hint) {
       hint.textContent = onBybit
-        ? "Mundo Bybit: saldo real (só leitura), futures USDT, alavancagem do par, Analisar + PLAY. PAPER por omissão."
-        : "Mundo Deriv: dígitos/forex via OAuth. Conta DEMO/REAL = contexto. Cripto usa o botão Bybit.";
+        ? "Mundo Bybit: saldo real (só leitura), futures USDT, alavancagem, Analisar + PLAY. PAPER por omissão. (Deriv escondido.)"
+        : "Mundo Deriv: dígitos/forex via OAuth. Conta DEMO/REAL = contexto. Para cripto futures usa o botão Bybit.";
+    }
+    const aTitle = el("analiseTitle");
+    const aNote = el("analiseNote");
+    if (aTitle) {
+      aTitle.textContent = onBybit
+        ? "Análise · Bybit (paper)"
+        : "Análise · Deriv (paper)";
+    }
+    if (aNote) {
+      aNote.textContent = onBybit
+        ? "Simulado (paper) com velas Bybit. REAL só em Operar → modo Bybit REAL + confirmação."
+        : "Isto é simulado (paper). REAL só no separador Operar, à mão.";
     }
     updateTradingModeUI();
     updateModeBanner();
@@ -1615,10 +1646,12 @@
     if (btnRun) {
       btnRun.disabled = !hasAccount || !hasStrategy || running;
       btnRun.title = !hasAccount
-        ? "Seleciona conta em Operar primeiro"
+        ? (isBybitWorld() ? "Mundo Bybit — escolhe estratégia" : "Seleciona conta em Operar primeiro")
         : !hasStrategy
           ? "Escolhe estratégia"
-          : "Analisar mercado simulado (paper) — sem ordens";
+          : (isBybitWorld()
+            ? "Analisar Bybit (paper/gate) — sem ordens"
+            : "Analisar mercado simulado (paper) — sem ordens");
     }
     if (btnGo) {
       btnGo.disabled = !state.prePlayOk;
@@ -2374,14 +2407,16 @@
         syncBybitFormFromState();
       }
       pushHistory(
-        "Pronto · Bybit Linear USDT (" +
+        "Pronto · mundo " +
+          state.world +
+          " · Bybit Linear USDT (" +
           state.bybitSymbols.length +
           " perpetual). Modo " +
           state.tradingMode +
           (state.bybitRealAvailable && state.bybitKeysConfigured
             ? " · chaves servidor OK (REAL disponível)"
-            : " · PAPER (sem chaves / REAL off)") +
-          ". Usa o botão Bybit (abaixo) para saldo real + futures. Deriv = dígitos/forex.",
+            : " · PAPER (saldo precisa permissão Wallet na chave)") +
+          ". Alterna Deriv/Bybit no topo.",
         "",
       );
       updateSourceUI();

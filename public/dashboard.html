@@ -28,11 +28,11 @@
       </div>
 
       <nav class="glass world-nav" id="worldNav" role="tablist" aria-label="Mundo Deriv ou Bybit">
-        <button type="button" class="world-btn active" role="tab" aria-selected="true" data-world="deriv" id="worldDeriv">Deriv</button>
-        <button type="button" class="world-btn bybit" role="tab" aria-selected="false" data-world="bybit" id="worldBybit">Bybit</button>
+        <button type="button" class="world-btn" role="tab" aria-selected="false" data-world="deriv" id="worldDeriv">Deriv</button>
+        <button type="button" class="world-btn bybit active" role="tab" aria-selected="true" data-world="bybit" id="worldBybit">Bybit</button>
       </nav>
       <p id="worldHint" class="footer-note" style="margin:0 0 10px;text-align:left">
-        Deriv = dígitos/forex (OAuth). Bybit = cripto futures USDT (saldo real + paper/REAL).
+        Mundo Bybit: saldo (só leitura), futures USDT, Analisar + PLAY. PAPER por omissão. Deriv = dígitos/forex (OAuth).
       </p>
 
       <nav class="glass view-nav" id="viewTabs" role="tablist" aria-label="Secções">
@@ -45,8 +45,8 @@
       <!-- ========== ANÁLISE (paper / simulado only) ========== -->
       <div id="view-analise" class="view-pane" role="tabpanel" aria-labelledby="tabAnalise" hidden>
         <section class="glass panel">
-          <h2>Análise · mercado simulado</h2>
-          <p class="footer-note" style="margin:0 0 12px;text-align:left">
+          <h2 id="analiseTitle">Análise · mercado simulado</h2>
+          <p class="footer-note" id="analiseNote" style="margin:0 0 12px;text-align:left">
             Isto é simulado (paper). REAL só no separador Operar, à mão.
           </p>
 
