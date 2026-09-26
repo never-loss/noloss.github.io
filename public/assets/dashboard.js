@@ -292,10 +292,10 @@
   }
 
   function setActiveView(view) {
-    const allowed = { operar: 1, livros: 1, perfas: 1 };
+    const allowed = { analise: 1, operar: 1, livros: 1, perfas: 1 };
     if (!allowed[view]) view = "operar";
     state.activeView = view;
-    ["operar", "livros", "perfas"].forEach(function (v) {
+    ["analise", "operar", "livros", "perfas"].forEach(function (v) {
       const pane = el("view-" + v);
       if (pane) pane.hidden = v !== view;
     });
@@ -304,6 +304,10 @@
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
     });
+    if (view === "analise") {
+      syncFormToAnalise();
+      updateAnaliseButtons();
+    }
     if (view === "livros") renderTradeJournal();
     if (view === "perfas") renderPerfas();
   }
@@ -341,7 +345,7 @@
       return;
     }
     if (!state.prePlayOk) {
-      box.textContent = "3 Clica Analisar · 4 PLAY se a porta abrir";
+      box.textContent = "3 Analisar (aba Análise ou Operar) · 4 PLAY se a porta abrir";
       return;
     }
     box.textContent = "4 Pronto — clica PLAY";
@@ -977,6 +981,17 @@
       sel.value = (prefer[0] || list[0]).symbol;
     }
     state.symbol = sel.value;
+    // Keep Análise tab symbol list in sync (paper preview uses same universe).
+    const aSym = el("analiseSymbol");
+    if (aSym) {
+      const keep = aSym.value || state.symbol;
+      aSym.innerHTML = sel.innerHTML;
+      if (keep && Array.from(aSym.options).some(function (o) { return o.value === keep; })) {
+        aSym.value = keep;
+      } else {
+        aSym.value = state.symbol;
+      }
+    }
   }
 
   function renderChips() {
@@ -1093,6 +1108,7 @@
     el("btnStop").disabled = stopped && !state.running;
     void paused;
     updateNextStep();
+    updateAnaliseButtons();
   }
 
 
@@ -1162,6 +1178,8 @@
         statusText ||
         "Escolhe conta DEMO/REAL e uma estratégia (ex.: Lucro rápido ou Loss zero), depois Analisar. Sem martingale · stake fixa · paper.";
       if (metrics) metrics.hidden = true;
+      setAnaliseUI(null, statusText);
+      updateAnaliseButtons();
       return;
     }
     status.classList.add(result.allowed ? "open" : "closed");
@@ -1184,6 +1202,170 @@
       el("prePlayStrat").textContent =
         result.strategy && result.strategy.name ? result.strategy.name : "—";
     }
+    setAnaliseUI(result, statusText);
+    updateAnaliseButtons();
+  }
+
+  /** Mirror Operar form → Análise selects (and vice-versa). */
+  function syncFormToAnalise() {
+    const aSym = el("analiseSymbol");
+    const aStrat = el("analiseStrategy");
+    const sym = el("symbolSelect");
+    const strat = el("strategySet");
+    if (aSym && sym && sym.options.length) {
+      // Rebuild options if empty or count differs
+      if (!aSym.options.length || aSym.options.length !== sym.options.length) {
+        aSym.innerHTML = sym.innerHTML;
+      }
+      if (sym.value) aSym.value = sym.value;
+    }
+    if (aStrat && strat && strat.value) aStrat.value = strat.value;
+  }
+
+  function syncAnaliseToForm() {
+    const aSym = el("analiseSymbol");
+    const aStrat = el("analiseStrategy");
+    const sym = el("symbolSelect");
+    const strat = el("strategySet");
+    if (aSym && sym && aSym.value) {
+      sym.value = aSym.value;
+      state.symbol = aSym.value;
+    }
+    if (aStrat && strat && aStrat.value) {
+      strat.value = aStrat.value;
+      state.strategySet = aStrat.value;
+      updateStrategyHint();
+    }
+  }
+
+  function setAnaliseUI(result, statusText) {
+    const box = el("analiseResultBox");
+    const verdict = el("analiseVerdict");
+    const reason = el("analiseReason");
+    const stratName = el("analiseStratName");
+    const metrics = el("analiseMetrics");
+    if (!box || !verdict || !reason) return;
+    box.classList.remove("open", "closed");
+    if (!result) {
+      verdict.textContent = "—";
+      if (stratName) stratName.textContent = "Estratégia: —";
+      reason.textContent =
+        statusText || "Escolhe símbolo e estratégia, depois Analisar.";
+      if (metrics) metrics.hidden = true;
+      return;
+    }
+    box.classList.add(result.allowed ? "open" : "closed");
+    verdict.textContent = result.allowed ? "PODE OPERAR" : "NÃO OPERAR";
+    const sName =
+      result.strategy && result.strategy.name
+        ? result.strategy.name
+        : currentPreset()
+          ? currentPreset().label
+          : state.strategySet || "—";
+    if (stratName) stratName.textContent = "Estratégia: " + sName;
+    reason.textContent =
+      statusText ||
+      (result.reason
+        ? result.reason
+        : result.allowed
+          ? "Porta aberta — podes ir a Operar e carregar PLAY."
+          : "Porta fechada — não abras PLAY.");
+    if (metrics) {
+      metrics.hidden = false;
+      const lab = el("analiseLabel");
+      const oos = el("analiseOos");
+      const meanR = el("analiseMeanR");
+      const p = el("analiseP");
+      if (lab) lab.textContent = result.label || "—";
+      if (oos) oos.textContent = String(result.oosTrades != null ? result.oosTrades : "—");
+      if (meanR)
+        meanR.textContent =
+          result.meanR != null
+            ? (result.meanR >= 0 ? "+" : "") + Number(result.meanR).toFixed(3) + "R"
+            : "—";
+      if (p) p.textContent = result.pValue != null ? Number(result.pValue).toFixed(4) : "—";
+    }
+  }
+
+  function updateAnaliseButtons() {
+    const hasAccount = !!resolveSelectedAccount();
+    const aStrat = el("analiseStrategy");
+    const hasStrategy = !!(aStrat && aStrat.value) || !!(el("strategySet") && el("strategySet").value);
+    const running = state.session && state.session.status === "RUNNING";
+    const btnRun = el("btnAnaliseRun");
+    const btnGo = el("btnAnaliseGoOperar");
+    const btnPlay = el("btnAnalisePlay");
+    if (btnRun) {
+      btnRun.disabled = !hasAccount || !hasStrategy || running;
+      btnRun.title = !hasAccount
+        ? "Seleciona conta em Operar primeiro"
+        : !hasStrategy
+          ? "Escolhe estratégia"
+          : "Analisar mercado simulado (paper) — sem ordens";
+    }
+    if (btnGo) {
+      btnGo.disabled = !state.prePlayOk;
+      btnGo.title = state.prePlayOk
+        ? "Leva símbolo/estratégia para Operar — PLAY à mão"
+        : "Só depois de Analisar com porta aberta";
+    }
+    if (btnPlay) {
+      // PLAY from Análise only in PAPER — never starts REAL from this tab.
+      const paperOk = state.prePlayOk && !isRealTradingMode() && !running && hasAccount && hasStrategy;
+      btnPlay.disabled = !paperOk;
+      btnPlay.title = isRealTradingMode()
+        ? "Modo REAL activo — PLAY só no separador Operar"
+        : paperOk
+          ? "Iniciar sessão PAPER com esta análise"
+          : "Só em PAPER após PODE OPERAR";
+    }
+  }
+
+  /**
+   * Análise tab: always uses public candle history (paper path).
+   * Never places orders. Temporarily treats trading as PAPER for the fetch/gate only;
+   * does not change the user's saved PAPER/REAL preference on Operar.
+   */
+  async function runAnaliseFromTab() {
+    syncAnaliseToForm();
+    const savedMode = state.tradingMode;
+    state.tradingMode = "PAPER";
+    const btnRun = el("btnAnaliseRun");
+    if (btnRun) btnRun.disabled = true;
+    setAnaliseUI(null, "A analisar mercado simulado (paper)…");
+    try {
+      const result = await runPrePlayAnalysis();
+      // setPrePlayUI already refreshed Análise UI
+      if (!result) {
+        setAnaliseUI(null, el("prePlayStatus") ? el("prePlayStatus").textContent : "Análise incompleta.");
+      }
+      return result;
+    } finally {
+      state.tradingMode = savedMode;
+      updateSourceUI();
+      updateModeBanner();
+      updateButtons();
+      updateAnaliseButtons();
+    }
+  }
+
+  function goOperarFromAnalise() {
+    syncAnaliseToForm();
+    renderChips();
+    setActiveView("operar");
+    updateNextStep();
+  }
+
+  async function playFromAnalise() {
+    // Hard guard: never start REAL from Análise tab.
+    if (isRealTradingMode()) {
+      pushHistory("Análise só inicia PLAY em PAPER. Vai a Operar para REAL.", "stop");
+      goOperarFromAnalise();
+      return;
+    }
+    syncAnaliseToForm();
+    setActiveView("operar");
+    await startSession();
   }
 
   async function runPrePlayAnalysis() {
@@ -1647,10 +1829,43 @@
       state.prePlayGate = null;
       updateStrategyHint();
       setPrePlayUI(null);
+      const aStrat = el("analiseStrategy");
+      if (aStrat && state.strategySet) aStrat.value = state.strategySet;
       updateButtons();
     });
+    const analiseStrategy = el("analiseStrategy");
+    if (analiseStrategy) {
+      analiseStrategy.addEventListener("change", function () {
+        state.strategySet = analiseStrategy.value || "";
+        state.prePlayOk = false;
+        state.prePlayGate = null;
+        const main = el("strategySet");
+        if (main && state.strategySet) main.value = state.strategySet;
+        updateStrategyHint();
+        setPrePlayUI(null);
+        updateButtons();
+      });
+    }
+    const analiseSymbol = el("analiseSymbol");
+    if (analiseSymbol) {
+      analiseSymbol.addEventListener("change", function () {
+        state.symbol = analiseSymbol.value;
+        const main = el("symbolSelect");
+        if (main && state.symbol) main.value = state.symbol;
+        state.prePlayOk = false;
+        state.prePlayGate = null;
+        setPrePlayUI(null);
+        updateAnaliseButtons();
+      });
+    }
     const btnAnalyze = el("btnAnalyze");
     if (btnAnalyze) btnAnalyze.addEventListener("click", () => runPrePlayAnalysis());
+    const btnAnaliseRun = el("btnAnaliseRun");
+    if (btnAnaliseRun) btnAnaliseRun.addEventListener("click", () => runAnaliseFromTab());
+    const btnAnaliseGo = el("btnAnaliseGoOperar");
+    if (btnAnaliseGo) btnAnaliseGo.addEventListener("click", () => goOperarFromAnalise());
+    const btnAnalisePlay = el("btnAnalisePlay");
+    if (btnAnalisePlay) btnAnalisePlay.addEventListener("click", () => playFromAnalise());
     el("btnPlay").addEventListener("click", () => startSession());
     el("btnPause").addEventListener("click", () => pauseSession());
     el("btnStop").addEventListener("click", () => stopSession());

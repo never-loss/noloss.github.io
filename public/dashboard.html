@@ -28,10 +28,59 @@
       </div>
 
       <nav class="glass view-nav" id="viewTabs" role="tablist" aria-label="Secções">
+        <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="analise" id="tabAnalise">Análise</button>
         <button type="button" class="view-tab active" role="tab" aria-selected="true" data-view="operar" id="tabOperar">Operar</button>
         <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="livros" id="tabLivros">Livros</button>
         <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="perfas" id="tabPerfas">Perfas</button>
       </nav>
+
+      <!-- ========== ANÁLISE (paper / simulado only) ========== -->
+      <div id="view-analise" class="view-pane" role="tabpanel" aria-labelledby="tabAnalise" hidden>
+        <section class="glass panel">
+          <h2>Análise · mercado simulado</h2>
+          <p class="footer-note" style="margin:0 0 12px;text-align:left">
+            Isto é simulado (paper). REAL só no separador Operar, à mão.
+          </p>
+
+          <div class="controls controls-primary">
+            <div class="field">
+              <label for="analiseSymbol">Símbolo</label>
+              <select id="analiseSymbol"></select>
+            </div>
+            <div class="field required">
+              <label for="analiseStrategy">Estratégia</label>
+              <select id="analiseStrategy" required>
+                <option value="" selected disabled>— Escolhe —</option>
+                <option value="lucro_rapido">Lucro rápido</option>
+                <option value="loss_zero">Loss zero</option>
+                <option value="tendencia_diaria">Tendência diária</option>
+                <option value="biblioteca">Biblioteca</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="btn-row btn-row-analise" style="margin-top:14px">
+            <button type="button" class="ctrl analyze" id="btnAnaliseRun" disabled title="Escolhe conta + estratégia">Analisar</button>
+          </div>
+
+          <div id="analiseResultBox" class="analise-result" aria-live="polite">
+            <div class="analise-verdict" id="analiseVerdict">—</div>
+            <div class="analise-strat" id="analiseStratName">Estratégia: —</div>
+            <div class="analise-reason" id="analiseReason">Escolhe símbolo e estratégia, depois Analisar.</div>
+            <div class="analise-metrics" id="analiseMetrics" hidden>
+              <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="analiseLabel">—</span></div>
+              <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="analiseOos">—</span></div>
+              <div class="gm"><span class="gk">Média R</span><span class="gv" id="analiseMeanR">—</span></div>
+              <div class="gm"><span class="gk">p-valor</span><span class="gv" id="analiseP">—</span></div>
+            </div>
+          </div>
+
+          <div class="btn-row btn-row-analise two-col" style="margin-top:14px">
+            <button type="button" class="ctrl play" id="btnAnaliseGoOperar" disabled>Ir para Operar</button>
+            <button type="button" class="ctrl play" id="btnAnalisePlay" disabled title="Só em PAPER após porta aberta">PLAY (paper)</button>
+          </div>
+        </section>
+      </div>
 
       <!-- ========== OPERAR ========== -->
       <div id="view-operar" class="view-pane" role="tabpanel" aria-labelledby="tabOperar">
