@@ -7,9 +7,9 @@ import {
   cancelCloudArmJob,
   publicCloudArmJob,
   CLOUD_ARM_WARMUP,
-} from "./_lib/nl-cloud.mjs";
-import { saveArmJob, getArmJob, listArmJobs, armStoreInfo } from "./_lib/arm-store.js";
-import { fetchArmCandleHistory } from "./_lib/arm-klines.js";
+} from "../lib/nl-cloud.mjs";
+import { saveArmJob, getArmJob, listArmJobs, armStoreInfo } from "../lib/arm-store.js";
+import { fetchArmCandleHistory } from "../lib/arm-klines.js";
 
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
