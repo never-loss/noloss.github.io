@@ -138,9 +138,14 @@ export default async function handler(req, res) {
     res.setHeader("Cache-Control", "no-store");
     if (!parsed.ok) {
       const status = upstream.status >= 400 ? upstream.status : 502;
+      let hint = parsed.message;
+      if (parsed.code === "10005" || /permission denied/i.test(String(parsed.message || ""))) {
+        hint =
+          "Permissão negada (Bybit 10005). Na Bybit → API Management, edita a chave e activa leitura de Account/Wallet (Unified). Nunca partilhes o secret.";
+      }
       return res.status(status).json({
         error: "bybit_balance_failed",
-        error_description: parsed.message,
+        error_description: hint,
         code: parsed.code,
         keysConfigured: true,
         exchange: "bybit",
