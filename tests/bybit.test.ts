@@ -15,6 +15,8 @@ import {
   BYBIT_PREFERRED_USDT,
   BYBIT_PATH_INSTRUMENTS,
   BYBIT_PATH_KLINE,
+  parseBybitLeverageInfo,
+  clampBybitLeverage,
 } from "../src/core/bybit.ts";
 import { marketOf } from "../src/core/markets.ts";
 
@@ -307,4 +309,35 @@ test("fetchBybitCandleHistory rejeita granularity/símbolo inválidos", async ()
 test("paths Bybit documentados", () => {
   assert.equal(BYBIT_PATH_INSTRUMENTS, "/v5/market/instruments-info");
   assert.equal(BYBIT_PATH_KLINE, "/v5/market/kline");
+});
+
+test("parseBybitLeverageInfo lê leverageFilter", () => {
+  const raw = JSON.stringify({
+    retCode: 0,
+    retMsg: "OK",
+    result: {
+      list: [
+        {
+          symbol: "BTCUSDT",
+          contractType: "LinearPerpetual",
+          status: "Trading",
+          leverageFilter: { minLeverage: "1", maxLeverage: "100", leverageStep: "0.01" },
+        },
+      ],
+    },
+  });
+  const parsed = parseBybitLeverageInfo(raw, "BTCUSDT");
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.info.minLeverage, 1);
+  assert.equal(parsed.info.maxLeverage, 100);
+  assert.equal(parsed.info.defaultLeverage, 1);
+});
+
+test("clampBybitLeverage respeita min/max/step", () => {
+  const info = { minLeverage: 1, maxLeverage: 50, leverageStep: 1 };
+  assert.equal(clampBybitLeverage(1, info), 1);
+  assert.equal(clampBybitLeverage(100, info), 50);
+  assert.equal(clampBybitLeverage(0.5, info), 1);
+  assert.equal(clampBybitLeverage(7.4, info), 7);
 });

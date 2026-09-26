@@ -44,6 +44,7 @@ var NL = (() => {
     bybitBaseAsset: () => bybitBaseAsset,
     bybitFetch: () => bybitFetch,
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
+    clampBybitLeverage: () => clampBybitLeverage,
     cryptoBaseLabel: () => cryptoBaseLabel,
     cryptoSourceOf: () => cryptoSourceOf,
     dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
@@ -87,6 +88,7 @@ var NL = (() => {
     parseBinanceKlines: () => parseBinanceKlines,
     parseBybitInstrumentsPage: () => parseBybitInstrumentsPage,
     parseBybitKlines: () => parseBybitKlines,
+    parseBybitLeverageInfo: () => parseBybitLeverageInfo,
     parseCandlesMessage: () => parseCandlesMessage,
     sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
     sortBybitUsdtPreferred: () => sortBybitUsdtPreferred,
@@ -893,6 +895,74 @@ var NL = (() => {
     const nowSec = nowMs / 1e3;
     const closed2 = [...byEpoch.values()].filter((c) => c.epoch + granularitySec <= nowSec).sort((a, b) => a.epoch - b.epoch);
     return closed2.slice(-target);
+  }
+  function parseBybitLeverageInfo(raw, symbol) {
+    if (!isBybitUsdtSymbol(symbol)) {
+      return { ok: false, code: "invalid_symbol", message: `S\xEDmbolo inv\xE1lido: ${symbol}` };
+    }
+    const obj = parseObject3(raw);
+    if (typeof obj === "string") return { ok: false, code: "invalid_json", message: obj };
+    const err = bybitError(obj);
+    if (err) return { ok: false, code: err.code, message: err.message };
+    const result = obj.result;
+    if (typeof result !== "object" || result === null || Array.isArray(result)) {
+      return { ok: false, code: "invalid_result", message: "result em falta" };
+    }
+    const list = result.list;
+    if (!Array.isArray(list) || list.length === 0) {
+      return { ok: false, code: "empty_list", message: "Instrumento n\xE3o encontrado" };
+    }
+    let entry = null;
+    for (const row of list) {
+      if (typeof row !== "object" || row === null) continue;
+      const e = row;
+      if (e.symbol === symbol) {
+        entry = e;
+        break;
+      }
+    }
+    if (!entry) entry = list[0];
+    if (entry.symbol !== symbol && list.length > 1) {
+      return { ok: false, code: "symbol_mismatch", message: `Esperado ${symbol}` };
+    }
+    const lf = entry.leverageFilter;
+    if (typeof lf !== "object" || lf === null) {
+      return { ok: false, code: "no_leverage_filter", message: "leverageFilter em falta" };
+    }
+    const f = lf;
+    const minLeverage = num3(f.minLeverage);
+    const maxLeverage = num3(f.maxLeverage);
+    const leverageStep = num3(f.leverageStep);
+    if (minLeverage === null || maxLeverage === null || leverageStep === null) {
+      return { ok: false, code: "bad_leverage_filter", message: "leverageFilter inv\xE1lido" };
+    }
+    if (minLeverage <= 0 || maxLeverage < minLeverage || leverageStep <= 0) {
+      return { ok: false, code: "bad_leverage_filter", message: "limites de alavancagem incoerentes" };
+    }
+    const defaultLeverage = Math.max(minLeverage, Math.min(1, maxLeverage));
+    return {
+      ok: true,
+      info: {
+        symbol: typeof entry.symbol === "string" ? entry.symbol : symbol,
+        minLeverage,
+        maxLeverage,
+        leverageStep,
+        defaultLeverage,
+        contractType: typeof entry.contractType === "string" ? entry.contractType : null,
+        status: typeof entry.status === "string" ? entry.status : null
+      }
+    };
+  }
+  function clampBybitLeverage(value, info) {
+    if (!Number.isFinite(value)) return info.minLeverage;
+    let v = Math.min(info.maxLeverage, Math.max(info.minLeverage, value));
+    if (info.leverageStep > 0) {
+      const steps = Math.round((v - info.minLeverage) / info.leverageStep);
+      v = info.minLeverage + steps * info.leverageStep;
+      v = Math.min(info.maxLeverage, Math.max(info.minLeverage, v));
+      v = Math.round(v * 1e8) / 1e8;
+    }
+    return v;
   }
 
   // src/core/candle-pages.ts

@@ -62,8 +62,10 @@ export {
   fetchBybitUsdtSymbols,
   fetchBybitKlinesPage,
   fetchBybitCandleHistory,
+  parseBybitLeverageInfo,
+  clampBybitLeverage,
 } from "../core/bybit.ts";
-export type { BybitInterval, BybitSymbolsMessage, BybitKlinesMessage } from "../core/bybit.ts";
+export type { BybitInterval, BybitSymbolsMessage, BybitKlinesMessage, BybitLeverageInfo } from "../core/bybit.ts";
 
 
 

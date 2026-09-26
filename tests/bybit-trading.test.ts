@@ -14,6 +14,9 @@ import {
   bybitBaseUrl,
   DEFAULT_TRADING_MODE,
   BYBIT_ENV_KEY_NAMES,
+  bybitQueryString,
+  buildSignedGet,
+  parseBybitWalletBalance,
 } from "../src/core/bybit-trading.ts";
 import { MAX_SESSION_MS, MIN_STAKE } from "../src/core/paper.ts";
 
@@ -235,4 +238,82 @@ test("buildPlaceMarketOrder reduceOnly fecha sem evidence / sessão", () => {
   const parsed = JSON.parse(built.body);
   assert.equal(parsed.reduceOnly, true);
   assert.equal(parsed.side, "Sell");
+});
+
+test("bybitQueryString ordena chaves", () => {
+  assert.equal(bybitQueryString({ coin: "USDT", accountType: "UNIFIED" }), "accountType=UNIFIED&coin=USDT");
+  assert.equal(bybitQueryString({ b: 1, a: 2, empty: "" }), "a=2&b=1");
+});
+
+test("buildSignedGet assina query (não body)", () => {
+  const built = buildSignedGet(
+    "/v5/account/wallet-balance",
+    { accountType: "UNIFIED", coin: "USDT" },
+    FAKE_KEY,
+    FAKE_SECRET,
+    1_700_000_000_000,
+    5000,
+  );
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  assert.equal(built.method, "GET");
+  assert.equal(built.query, "accountType=UNIFIED&coin=USDT");
+  const expectSign = signBybitV5(
+    "1700000000000",
+    FAKE_KEY,
+    "5000",
+    built.query,
+    FAKE_SECRET,
+  );
+  assert.equal(built.headers["X-BAPI-SIGN"], expectSign);
+  assert.equal(built.headers["X-BAPI-API-KEY"], FAKE_KEY);
+  // headers must not leak secret as value of a weird key
+  assert.equal(Object.values(built.headers).includes(FAKE_SECRET), false);
+});
+
+test("buildSignedGet rejeita keys em falta", () => {
+  const bad = buildSignedGet("/v5/account/wallet-balance", { accountType: "UNIFIED" }, "short", "short");
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.code, "keys_missing");
+});
+
+test("parseBybitWalletBalance extrai USDT sem secrets", () => {
+  const raw = JSON.stringify({
+    retCode: 0,
+    retMsg: "OK",
+    result: {
+      list: [
+        {
+          accountType: "UNIFIED",
+          totalEquity: "100.5",
+          totalWalletBalance: "100",
+          totalAvailableBalance: "90",
+          totalPerpUPL: "0.5",
+          totalMarginBalance: "100.5",
+          coin: [
+            {
+              coin: "USDT",
+              walletBalance: "100",
+              equity: "100.5",
+              usdValue: "100.5",
+              unrealisedPnl: "0.5",
+            },
+          ],
+        },
+      ],
+    },
+  });
+  const parsed = parseBybitWalletBalance(raw);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.summary.usdtWalletBalance, "100");
+  assert.equal(parsed.summary.usdtEquity, "100.5");
+  assert.equal(parsed.summary.totalAvailableBalance, "90");
+  assert.equal(parsed.summary.coins.length, 1);
+});
+
+test("parseBybitWalletBalance propaga retCode", () => {
+  const parsed = parseBybitWalletBalance(JSON.stringify({ retCode: 10001, retMsg: "no auth" }));
+  assert.equal(parsed.ok, false);
+  if (!parsed.ok) assert.equal(parsed.code, "10001");
 });

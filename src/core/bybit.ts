@@ -425,3 +425,98 @@ export async function fetchBybitCandleHistory(
     .sort((a, b) => a.epoch - b.epoch);
   return closed.slice(-target);
 }
+
+/** Leverage range from instruments-info leverageFilter (public). */
+export interface BybitLeverageInfo {
+  symbol: string;
+  minLeverage: number;
+  maxLeverage: number;
+  leverageStep: number;
+  /** Conservative default for UI (1x or min, whichever is higher). */
+  defaultLeverage: number;
+  contractType: string | null;
+  status: string | null;
+}
+
+/**
+ * Parse leverageFilter from a single-symbol instruments-info response
+ * (or full page containing the symbol).
+ */
+export function parseBybitLeverageInfo(
+  raw: string,
+  symbol: string,
+): { ok: true; info: BybitLeverageInfo } | { ok: false; code: string; message: string } {
+  if (!isBybitUsdtSymbol(symbol)) {
+    return { ok: false, code: "invalid_symbol", message: `Símbolo inválido: ${symbol}` };
+  }
+  const obj = parseObject(raw);
+  if (typeof obj === "string") return { ok: false, code: "invalid_json", message: obj };
+  const err = bybitError(obj);
+  if (err) return { ok: false, code: err.code, message: err.message };
+  const result = obj.result;
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return { ok: false, code: "invalid_result", message: "result em falta" };
+  }
+  const list = (result as Record<string, unknown>).list;
+  if (!Array.isArray(list) || list.length === 0) {
+    return { ok: false, code: "empty_list", message: "Instrumento não encontrado" };
+  }
+  let entry: Record<string, unknown> | null = null;
+  for (const row of list) {
+    if (typeof row !== "object" || row === null) continue;
+    const e = row as Record<string, unknown>;
+    if (e.symbol === symbol) {
+      entry = e;
+      break;
+    }
+  }
+  if (!entry) entry = list[0] as Record<string, unknown>;
+  if (entry.symbol !== symbol && list.length > 1) {
+    return { ok: false, code: "symbol_mismatch", message: `Esperado ${symbol}` };
+  }
+  const lf = entry.leverageFilter;
+  if (typeof lf !== "object" || lf === null) {
+    return { ok: false, code: "no_leverage_filter", message: "leverageFilter em falta" };
+  }
+  const f = lf as Record<string, unknown>;
+  const minLeverage = num(f.minLeverage);
+  const maxLeverage = num(f.maxLeverage);
+  const leverageStep = num(f.leverageStep);
+  if (minLeverage === null || maxLeverage === null || leverageStep === null) {
+    return { ok: false, code: "bad_leverage_filter", message: "leverageFilter inválido" };
+  }
+  if (minLeverage <= 0 || maxLeverage < minLeverage || leverageStep <= 0) {
+    return { ok: false, code: "bad_leverage_filter", message: "limites de alavancagem incoerentes" };
+  }
+  // Conservative default: 1x if allowed, else min.
+  const defaultLeverage = Math.max(minLeverage, Math.min(1, maxLeverage));
+  return {
+    ok: true,
+    info: {
+      symbol: typeof entry.symbol === "string" ? entry.symbol : symbol,
+      minLeverage,
+      maxLeverage,
+      leverageStep,
+      defaultLeverage,
+      contractType: typeof entry.contractType === "string" ? entry.contractType : null,
+      status: typeof entry.status === "string" ? entry.status : null,
+    },
+  };
+}
+
+/** Clamp user leverage choice into [min, max] on step; never invent above max. */
+export function clampBybitLeverage(
+  value: number,
+  info: Pick<BybitLeverageInfo, "minLeverage" | "maxLeverage" | "leverageStep">,
+): number {
+  if (!Number.isFinite(value)) return info.minLeverage;
+  let v = Math.min(info.maxLeverage, Math.max(info.minLeverage, value));
+  if (info.leverageStep > 0) {
+    const steps = Math.round((v - info.minLeverage) / info.leverageStep);
+    v = info.minLeverage + steps * info.leverageStep;
+    v = Math.min(info.maxLeverage, Math.max(info.minLeverage, v));
+    // Avoid float noise
+    v = Math.round(v * 1e8) / 1e8;
+  }
+  return v;
+}

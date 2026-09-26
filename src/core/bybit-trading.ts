@@ -284,3 +284,161 @@ export async function executeSignedBybitRequest(
   });
   return { status: res.status, text: await res.text() };
 }
+
+/** Build alphabetical query string for Bybit v5 signed GET. */
+export function bybitQueryString(params: Record<string, string | number | undefined | null>): string {
+  const parts: string[] = [];
+  for (const key of Object.keys(params).sort()) {
+    const v = params[key];
+    if (v === undefined || v === null || v === "") continue;
+    parts.push(`${key}=${v}`);
+  }
+  return parts.join("&");
+}
+
+export type BybitSignedGetResult =
+  | {
+      ok: true;
+      path: string;
+      method: "GET";
+      query: string;
+      headers: Record<string, string>;
+      timestamp: string;
+      recvWindow: string;
+    }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Signed GET (wallet balance, positions, etc.). Never include secrets in returned object beyond headers
+ * for server-side fetch — callers must not log headers.
+ */
+export function buildSignedGet(
+  path: string,
+  params: Record<string, string | number | undefined | null>,
+  apiKey: string,
+  apiSecret: string,
+  timestampMs: number = Date.now(),
+  recvWindow: number = 5000,
+): BybitSignedGetResult {
+  if (!path || !path.startsWith("/")) {
+    return { ok: false, code: "invalid_path", message: "path Bybit inválido" };
+  }
+  if (!apiKey || apiKey.length <= 8 || !apiSecret || apiSecret.length <= 8) {
+    return { ok: false, code: "keys_missing", message: "BYBIT_API_KEY / BYBIT_API_SECRET em falta" };
+  }
+  const query = bybitQueryString(params);
+  const auth = buildAuthHeaders(apiKey, apiSecret, query, timestampMs, recvWindow);
+  return {
+    ok: true,
+    path,
+    method: "GET",
+    query,
+    headers: {
+      "X-BAPI-API-KEY": auth.headers["X-BAPI-API-KEY"]!,
+      "X-BAPI-TIMESTAMP": auth.headers["X-BAPI-TIMESTAMP"]!,
+      "X-BAPI-SIGN": auth.headers["X-BAPI-SIGN"]!,
+      "X-BAPI-RECV-WINDOW": auth.headers["X-BAPI-RECV-WINDOW"]!,
+    },
+    timestamp: auth.timestamp,
+    recvWindow: auth.recvWindow,
+  };
+}
+
+export async function executeSignedBybitGet(
+  built: Extract<BybitSignedGetResult, { ok: true }>,
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ status: number; text: string }> {
+  const url = built.query ? `${baseUrl}${built.path}?${built.query}` : `${baseUrl}${built.path}`;
+  const res = await fetchImpl(url, { method: "GET", headers: built.headers });
+  return { status: res.status, text: await res.text() };
+}
+
+export interface BybitWalletCoinSummary {
+  coin: string;
+  walletBalance: string;
+  equity: string;
+  usdValue: string;
+  unrealisedPnl: string;
+}
+
+export interface BybitWalletSummary {
+  accountType: string;
+  totalEquity: string;
+  totalWalletBalance: string;
+  totalAvailableBalance: string;
+  totalPerpUPL: string;
+  totalMarginBalance: string;
+  coins: BybitWalletCoinSummary[];
+  /** Primary USDT (or first) wallet balance for UI. */
+  usdtWalletBalance: string | null;
+  usdtEquity: string | null;
+}
+
+/**
+ * Parse Bybit GET /v5/account/wallet-balance JSON into a safe summary (no secrets).
+ */
+export function parseBybitWalletBalance(raw: string):
+  | { ok: true; summary: BybitWalletSummary }
+  | { ok: false; code: string; message: string } {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return { ok: false, code: "invalid_json", message: "JSON inválido" };
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return { ok: false, code: "invalid_json", message: "Resposta não é objeto" };
+  }
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.retCode === "number" && obj.retCode !== 0) {
+    const msg = typeof obj.retMsg === "string" ? obj.retMsg : "Bybit error";
+    return { ok: false, code: String(obj.retCode), message: msg };
+  }
+  const result = obj.result;
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return { ok: false, code: "invalid_result", message: "result em falta" };
+  }
+  const list = (result as Record<string, unknown>).list;
+  if (!Array.isArray(list) || list.length === 0) {
+    return { ok: false, code: "empty_list", message: "Sem contas na carteira Bybit" };
+  }
+  const row = list[0] as Record<string, unknown>;
+  const coinsRaw = Array.isArray(row.coin) ? row.coin : [];
+  const coins: BybitWalletCoinSummary[] = [];
+  let usdtWalletBalance: string | null = null;
+  let usdtEquity: string | null = null;
+  for (const c of coinsRaw) {
+    if (typeof c !== "object" || c === null) continue;
+    const coin = c as Record<string, unknown>;
+    const name = typeof coin.coin === "string" ? coin.coin : "";
+    if (!name) continue;
+    const entry: BybitWalletCoinSummary = {
+      coin: name,
+      walletBalance: typeof coin.walletBalance === "string" ? coin.walletBalance : String(coin.walletBalance ?? "0"),
+      equity: typeof coin.equity === "string" ? coin.equity : String(coin.equity ?? "0"),
+      usdValue: typeof coin.usdValue === "string" ? coin.usdValue : String(coin.usdValue ?? "0"),
+      unrealisedPnl: typeof coin.unrealisedPnl === "string" ? coin.unrealisedPnl : String(coin.unrealisedPnl ?? "0"),
+    };
+    coins.push(entry);
+    if (name === "USDT") {
+      usdtWalletBalance = entry.walletBalance;
+      usdtEquity = entry.equity;
+    }
+  }
+  const str = (v: unknown) => (typeof v === "string" ? v : v != null ? String(v) : "0");
+  return {
+    ok: true,
+    summary: {
+      accountType: str(row.accountType || "UNIFIED"),
+      totalEquity: str(row.totalEquity),
+      totalWalletBalance: str(row.totalWalletBalance),
+      totalAvailableBalance: str(row.totalAvailableBalance),
+      totalPerpUPL: str(row.totalPerpUPL),
+      totalMarginBalance: str(row.totalMarginBalance),
+      coins,
+      usdtWalletBalance,
+      usdtEquity,
+    },
+  };
+}
