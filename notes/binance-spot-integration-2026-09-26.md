@@ -27,3 +27,8 @@
 - Fonte segue o painel: Cripto → Binance Spot (*USDT); Dígitos/Forex → Deriv Options.
 - UI PT: «Cripto = Binance Spot»; botão Deriv oculto em Cripto; Binance oculto em Dígitos/Forex.
 - Estratégias, porta de evidência, paper, stake fixa, sem martingale e OAuth Deriv mantidos.
+
+
+## Superseded 2026-09-26
+
+Cripto moved to **Binance Futures USDT-M** (see `binance-futures-usdtm-2026-09-26.md`). Spot proxies reexport Futures.
