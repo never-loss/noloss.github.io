@@ -190,3 +190,9 @@ test("trade path: sessionSymbol pinned; REAL order uses tradeSymbol()", () => {
   assert.match(sw, /syncSymbolSelectToState/);
   assert.match(sw, /Sessão armada/);
 });
+
+test("chart light: CHART_HISTORY 96 + clear series on symbol load", () => {
+  assert.match(bybitJs, /CHART_HISTORY = 96/);
+  assert.match(bybitJs, /wsProxTick/);
+  assert.match(bybitJs, /setData\(\[\]\)/);
+});

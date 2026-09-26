@@ -265,13 +265,25 @@
               </div>
               <div class="btn-row btn-row-actions" style="margin-top:12px">
                 <button type="button" class="ctrl analyze" id="btnBybitAnalyze" disabled title="Escolhe estratégia">Analisar</button>
-                <button type="button" class="ctrl play" id="btnBybitPlay" disabled title="Escolhe estratégia">ARMAR</button>
+                <button type="button" class="ctrl play" id="btnBybitPlay" disabled title="Armar neste ecrã (browser)">ARMAR neste ecrã</button>
                 <button type="button" class="ctrl pause" id="btnBybitPause" disabled>PAUSE</button>
                 <button type="button" class="ctrl stop" id="btnBybitStop" disabled>STOP</button>
               </div>
+              <div class="cloud-arm-row" id="cloudArmRow">
+                <button type="button" class="ctrl cloud" id="btnCloudArm" disabled title="PAPER na nuvem — podes sair da página">Armar na nuvem (PAPER)</button>
+                <button type="button" class="ctrl stop cloud-stop" id="btnCloudStop" disabled title="Cancelar job na nuvem">STOP nuvem</button>
+              </div>
               <p id="bybitActionHint" class="footer-note" style="margin:10px 0 0;text-align:left">
-                Controlo compacto · ligado à estratégia activa. ARMAR = à espera do alvo (porta + sinal).
+                <strong>Neste ecrã</strong> = browser aberto. <strong>Na nuvem</strong> = PAPER com tempo (Duração) — podes sair; ao voltar vês se operou. Sem ordens REAL na nuvem (v1).
               </p>
+              <div id="cloudArmBox" class="cloud-arm-box" role="status" aria-live="polite" hidden>
+                <div class="cloud-arm-top">
+                  <strong id="cloudArmTitle">Nuvem · inactivo</strong>
+                  <span class="pill" id="cloudArmPill">—</span>
+                </div>
+                <p class="cloud-arm-reason" id="cloudArmReason">Escolhe par, estratégia e duração · Armar na nuvem (PAPER).</p>
+                <div class="cloud-arm-meta" id="cloudArmMeta"></div>
+              </div>
               <div id="bybitLinkingNote" class="bybit-linking" hidden>Bybit: ainda em ligação…</div>
               <p id="prePlayStatus" class="preplay-status muted" style="margin:10px 0 0">Escolhe perpetual e estratégia.</p>
             </section>

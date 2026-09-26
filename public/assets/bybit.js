@@ -10,11 +10,14 @@
   var BYBIT_LEVERAGE_URL = "/api/bybit-leverage";
   var BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear";
   var TRADING_MODE_KEY = "nl_crypto_trading_mode";
+  var CLOUD_ARM_CLIENT_KEY = "nl_cloud_arm_client";
+  var CLOUD_ARM_JOB_KEY = "nl_cloud_arm_job";
+  var BYBIT_ARM_JOBS_URL = "/api/bybit-arm";
   var POLL_CHART_MS = 2000;
   var GATE_REEVAL_MS = 30000;
-  var LIVE_PROX_MS = 700;
-  var LIVE_PROX_CANDLES = 160;
-  var CHART_HISTORY = 200;
+  var LIVE_PROX_MS = 1200;
+  var LIVE_PROX_CANDLES = 96;
+  var CHART_HISTORY = 96;
   var GATE_HISTORY = 3500;
   var RADAR_BATCH = 3;
   var RADAR_GAP_MS = 400;
@@ -79,6 +82,9 @@
     liveProxRunning: false,
     lastLiveProxAt: 0,
     gateHeavyRunning: false,
+    cloudJob: null,
+    cloudPollTimer: null,
+    wsProxTick: 0,
     radar: {
       gen: 0,
       paused: false,
@@ -511,8 +517,12 @@
     if (![candle.open, candle.high, candle.low, candle.close].every(Number.isFinite)) return;
     state.chartCandles = mergeCandle(state.chartCandles, candle);
     try { updateLastBar(candle); } catch (_u) { try { scheduleRender(); } catch (_r) {} }
-    try { scheduleLiveProximity(); } catch (_p) {}
     var confirmed = raw.confirm === true || raw.confirm === "true";
+    // Light chart path: proximity only on closed candle or every 8th tick — no heavy work per WS tick.
+    state.wsProxTick = (state.wsProxTick || 0) + 1;
+    if (confirmed || state.wsProxTick % 8 === 0) {
+      try { scheduleLiveProximity(); } catch (_p) {}
+    }
     if (confirmed) {
       var closed = { epoch: candle.epoch, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
       if (!state.gateCandles.length || closed.epoch > state.gateCandles[state.gateCandles.length - 1].epoch) {
@@ -591,9 +601,16 @@
       try {
         var raw = await fetchKlinesRaw(state.symbol, state.granularity, CHART_HISTORY);
         if (!raw.length) return;
-        state.chartCandles = raw.slice(-CHART_HISTORY);
-        scheduleRender();
-        updateLastBar(state.chartCandles[state.chartCandles.length - 1]);
+        var next = raw.slice(-CHART_HISTORY);
+        var prevLast = state.chartCandles.length ? state.chartCandles[state.chartCandles.length - 1] : null;
+        var nextLast = next[next.length - 1];
+        state.chartCandles = next;
+        if (prevLast && nextLast && prevLast.epoch === nextLast.epoch && state.candleSeries) {
+          updateLastBar(nextLast);
+        } else {
+          scheduleRender();
+          updateLastBar(nextLast);
+        }
       } catch (e) {
         setFeedMode("err");
         var status = el("chartStatus");
@@ -670,6 +687,9 @@
     state.gateCandles = [];
     updateLivePrice(null);
     ensureChart(false);
+    if (state.candleSeries) {
+      try { state.candleSeries.setData([]); } catch (_clr) {}
+    }
     try {
       // Fast path: chart + WS first (CHART_HISTORY), then heavy gate history.
       var raw = await fetchKlinesRaw(sym, gran, CHART_HISTORY);
@@ -1393,7 +1413,7 @@
     if (btnA) btnA.disabled = !hasStrategy || !!running;
     if (btnP) {
       btnP.disabled = !hasStrategy || (!!running && !paused);
-      btnP.textContent = running ? "ARMADO" : paused ? "RETOMAR" : "ARMAR";
+      btnP.textContent = running ? "ARMADO neste ecrã" : paused ? "RETOMAR" : "ARMAR neste ecrã";
       btnP.title = !hasStrategy
         ? "Escolhe Lucro rápido ou Loss zero"
         : running
@@ -1403,6 +1423,11 @@
     }
     if (btnPause) btnPause.disabled = !running;
     if (btnStop) btnStop.disabled = !(running || paused || state.session);
+    var btnCloud = el("btnCloudArm");
+    var btnCloudStop = el("btnCloudStop");
+    var cloudRunning = !!(state.cloudJob && state.cloudJob.status === "RUNNING");
+    if (btnCloud) btnCloud.disabled = !state.strategySet || cloudRunning || !state.symbol;
+    if (btnCloudStop) btnCloudStop.disabled = !cloudRunning;
     var next = el("nextStepText");
     if (next) {
       if (running && state.session && state.session.hasOpenPosition) next.textContent = "ENTROU — posição aberta · PAUSE/STOP";
@@ -2056,6 +2081,193 @@
     state.radar.timer = setTimeout(tick, 300);
   }
 
+
+  function cloudClientId() {
+    try {
+      var id = localStorage.getItem(CLOUD_ARM_CLIENT_KEY);
+      if (id && /^[a-zA-Z0-9_-]{8,64}$/.test(id)) return id;
+      id = "c_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem(CLOUD_ARM_CLIENT_KEY, id);
+      return id;
+    } catch (_e) {
+      return "c_anon_" + String(Date.now());
+    }
+  }
+
+  function rememberCloudJobId(id) {
+    try {
+      if (id) localStorage.setItem(CLOUD_ARM_JOB_KEY, id);
+      else localStorage.removeItem(CLOUD_ARM_JOB_KEY);
+    } catch (_e) {}
+  }
+
+  function rememberedCloudJobId() {
+    try { return localStorage.getItem(CLOUD_ARM_JOB_KEY) || ""; } catch (_e) { return ""; }
+  }
+
+  function formatRemain(ms) {
+    if (!(ms > 0)) return "0m";
+    var m = Math.ceil(ms / 60000);
+    if (m >= 60) return Math.floor(m / 60) + "h " + (m % 60) + "m";
+    return m + "m";
+  }
+
+  function renderCloudArmBox(job, store) {
+    var box = el("cloudArmBox");
+    var title = el("cloudArmTitle");
+    var pill = el("cloudArmPill");
+    var reason = el("cloudArmReason");
+    var meta = el("cloudArmMeta");
+    if (!box) return;
+    state.cloudJob = job || null;
+    if (!job) {
+      box.hidden = true;
+      updateButtons();
+      return;
+    }
+    box.hidden = false;
+    var st = job.status || "—";
+    if (title) title.textContent = "Nuvem · " + job.symbol + " · " + (job.strategyPreset || "");
+    if (pill) {
+      pill.textContent = st + " · PAPER";
+      pill.className = "pill " + (st === "RUNNING" ? "live-ok" : st === "CANCELLED" ? "warn" : "live-poll");
+    }
+    var sum = job.summary || {};
+    var gate = job.gate;
+    var lines = [];
+    if (st === "RUNNING") {
+      lines.push("Armado na nuvem — podes sair. Resta " + formatRemain(job.remainingMs || (job.endsAt - Date.now())) + ".");
+    } else if (st === "CANCELLED") {
+      lines.push("Cancelado na nuvem.");
+    } else {
+      lines.push("Terminou" + (job.stopReason ? " (" + job.stopReason + ")" : "") + ".");
+    }
+    if (gate) {
+      lines.push(gate.allowed ? ("Porta: aberta — " + (gate.reason || "")) : ("Porta: NO TRADE — " + (gate.reason || "")));
+    }
+    if (reason) reason.textContent = lines.join(" ");
+    if (meta) {
+      meta.textContent = "Ops " + (sum.closed || 0) + "/" + (sum.opened || 0) +
+        " · PnL " + signed(sum.totalPnl || 0) +
+        " · Queda " + Number(sum.maxDrawdown || 0).toFixed(2) +
+        (sum.hasOpenPosition ? " · posição aberta" : "") +
+        (store && store.backend ? " · store " + store.backend : "");
+    }
+    updateButtons();
+  }
+
+  async function refreshCloudArmStatus() {
+    var id = (state.cloudJob && state.cloudJob.id) || rememberedCloudJobId();
+    if (!id) {
+      // list latest for this client
+      try {
+        var resL = await fetch(BYBIT_ARM_JOBS_URL + "?clientId=" + encodeURIComponent(cloudClientId()));
+        var dataL = await resL.json();
+        if (dataL && dataL.jobs && dataL.jobs.length) {
+          var latest = dataL.jobs[0];
+          rememberCloudJobId(latest.id);
+          renderCloudArmBox(latest, dataL.store);
+          if (latest.status === "RUNNING") scheduleCloudPoll();
+        }
+      } catch (_e) {}
+      return;
+    }
+    try {
+      var res = await fetch(BYBIT_ARM_JOBS_URL + "?id=" + encodeURIComponent(id) +
+        "&clientId=" + encodeURIComponent(cloudClientId()));
+      var data = await res.json();
+      if (!res.ok || !data.job) {
+        if (res.status === 404) rememberCloudJobId("");
+        return;
+      }
+      renderCloudArmBox(data.job, data.store);
+      if (data.store && data.store.warning && data.job.status === "RUNNING") {
+        pushHistory("Nuvem store: " + data.store.warning, "stop");
+      }
+      if (data.job.status === "RUNNING") scheduleCloudPoll();
+      else if (state.cloudPollTimer) { clearTimeout(state.cloudPollTimer); state.cloudPollTimer = null; }
+    } catch (e) {
+      pushHistory("Nuvem status: " + (e.message || String(e)), "stop");
+    }
+  }
+
+  function scheduleCloudPoll() {
+    if (state.cloudPollTimer) clearTimeout(state.cloudPollTimer);
+    state.cloudPollTimer = setTimeout(function () {
+      state.cloudPollTimer = null;
+      refreshCloudArmStatus();
+    }, 60000);
+  }
+
+  async function startCloudArm() {
+    readForm();
+    assertSelectMatchesTradeSymbol();
+    if (!state.symbol || !/^[A-Z0-9]{2,20}USDT$/.test(state.symbol)) {
+      pushHistory("Escolhe um perpetual USDT antes de armar na nuvem.", "stop");
+      return;
+    }
+    if (!state.strategySet) {
+      pushHistory("Escolhe uma estratégia antes de armar na nuvem.", "stop");
+      return;
+    }
+    if (state.stake < NL.MIN_STAKE) {
+      pushHistory("Stake mínima é " + NL.MIN_STAKE, "stop");
+      return;
+    }
+    var mins = Math.min(180, Math.max(1, Number(state.minutes) || 60));
+    var btn = el("btnCloudArm");
+    if (btn) btn.disabled = true;
+    pushHistory("A armar na nuvem (PAPER) · " + state.symbol + " · " + state.strategySet + " · " + mins + " min…", "");
+    try {
+      var res = await fetch(BYBIT_ARM_JOBS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: state.symbol,
+          strategyPreset: state.strategySet,
+          stake: state.stake,
+          leverage: state.bybitLeverage || 1,
+          granularity: state.granularity,
+          durationMinutes: mins,
+          clientId: cloudClientId(),
+          mode: "PAPER",
+        }),
+      });
+      var data = await res.json();
+      if (!res.ok || !data.job) throw new Error(data.error || ("HTTP " + res.status));
+      rememberCloudJobId(data.job.id);
+      renderCloudArmBox(data.job, data.store);
+      pushHistory("Nuvem PAPER armada · " + data.job.symbol + " até " +
+        new Date(data.job.endsAt).toLocaleTimeString("pt-PT") +
+        " — podes sair da página.", "open");
+      if (data.store && !data.store.durable) {
+        pushHistory("Aviso: store em memória no servidor — configura Upstash Redis para jobs duráveis entre instâncias.", "stop");
+      }
+      scheduleCloudPoll();
+    } catch (e) {
+      pushHistory("Falha a armar na nuvem: " + (e.message || String(e)), "stop");
+    }
+    updateButtons();
+  }
+
+  async function stopCloudArm() {
+    var id = (state.cloudJob && state.cloudJob.id) || rememberedCloudJobId();
+    if (!id) return;
+    try {
+      var res = await fetch(BYBIT_ARM_JOBS_URL + "?id=" + encodeURIComponent(id) +
+        "&clientId=" + encodeURIComponent(cloudClientId()), { method: "DELETE" });
+      var data = await res.json();
+      if (!res.ok || !data.job) throw new Error(data.error || ("HTTP " + res.status));
+      renderCloudArmBox(data.job, data.store);
+      pushHistory("Nuvem: STOP pedido.", "stop");
+      if (state.cloudPollTimer) { clearTimeout(state.cloudPollTimer); state.cloudPollTimer = null; }
+    } catch (e) {
+      pushHistory("Falha STOP nuvem: " + (e.message || String(e)), "stop");
+    }
+    updateButtons();
+  }
+
+
   function bind() {
     var btnBal = el("btnBybitRefreshBal");
     if (btnBal) btnBal.addEventListener("click", function () { loadBybitBalance(); });
@@ -2102,6 +2314,10 @@
     if (btnA) btnA.addEventListener("click", function () { runAnalyze(); });
     var btnP = el("btnBybitPlay");
     if (btnP) btnP.addEventListener("click", function () { startSession(); });
+    var btnCloud = el("btnCloudArm");
+    if (btnCloud) btnCloud.addEventListener("click", function () { startCloudArm(); });
+    var btnCloudStop = el("btnCloudStop");
+    if (btnCloudStop) btnCloudStop.addEventListener("click", function () { stopCloudArm(); });
     var btnPause = el("btnBybitPause");
     if (btnPause) btnPause.addEventListener("click", function () { pauseSession(); });
     var btnStop = el("btnBybitStop");
@@ -2172,6 +2388,7 @@
     scheduleLiveProximity();
     syncArmUi();
     updateButtons();
+    try { await refreshCloudArmStatus(); } catch (_c) {}
   }
 
   boot();
