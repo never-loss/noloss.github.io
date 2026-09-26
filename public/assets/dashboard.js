@@ -54,6 +54,15 @@
     realOpenQty: null,
     realOpenSide: null,
     panel: "digits",
+    digitWindow: 25,
+    digitTickWindow: null,
+    digitSubId: null,
+    digitPipSize: null,
+    digitLast: null,
+    digitTickCount: 0,
+    lcChart: null,
+    lcSeries: null,
+    lcRo: null,
     chartCandles: [],
     ws: null,
     nextId: 1,
@@ -180,6 +189,7 @@
     if (state.tradeJournal.length > JOURNAL_MAX) state.tradeJournal.length = JOURNAL_MAX;
     saveJournal();
     renderTradeJournal();
+    renderTraderLog();
     renderPerfas();
   }
 
@@ -442,7 +452,7 @@
     const acc = resolveSelectedAccount();
     if (!acc) {
       box.className = "account-context muted";
-      box.textContent = "Escolhe DEMO ou REAL abaixo. Depois mercado → estratégia → Analisar → PLAY.";
+      box.textContent = "Escolhe Conta Real ou Conta Demo. Depois mercado → estratégia → Analisar → PLAY.";
       return;
     }
     const kind = accountKind(acc);
@@ -455,7 +465,7 @@
       ' · <span class="bal">' +
       escapeHtml(accountBalanceText(acc)) +
       '</span> <span class="sim-tag">contexto</span><br>' +
-      "<small>Saldo Deriv (REST). O modo Cripto PAPER/REAL está no banner acima.</small>";
+      "<small>Saldo Deriv da conta seleccionada. Sessão neste painel = paper / simulado (honest labels).</small>";
   }
 
   function selectAccount(accountId) {
@@ -468,6 +478,8 @@
     resolveSelectedAccount();
     renderAccounts();
     renderAccountContext();
+    const ats = el("accountTypeSelect");
+    if (ats && state.selectedAccountId) ats.value = state.selectedAccountId;
     updateButtons();
     if (state.selectedAccount) {
       pushHistory(
@@ -482,42 +494,49 @@
   }
 
   function renderAccounts() {
+    const sel = el("accountTypeSelect");
     const box = el("accounts");
     if (!state.accounts.length) {
-      box.innerHTML =
-        '<div class="loading">Nenhuma conta Options nesta sessão. Cria uma conta demo na Deriv.</div>';
+      if (box) {
+        box.innerHTML =
+          '<div class="loading">Nenhuma conta Options nesta sessão. Cria uma conta demo na Deriv.</div>';
+      }
+      if (sel) {
+        sel.innerHTML = '<option value="" selected disabled>— Sem contas —</option>';
+      }
+      renderHeroBalances();
       return;
     }
-    box.innerHTML = "";
-    for (const acc of state.accounts) {
-      const kind = accountKind(acc);
-      const selected = acc.account_id === state.selectedAccountId;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "account-card" + (selected ? " selected" : "");
-      btn.setAttribute("data-account-id", acc.account_id || "");
-      btn.innerHTML =
-        '<span class="kind-badge ' +
-        (kind === "DEMO" ? "demo" : "real") +
-        '">' +
-        kind +
-        "</span>" +
-        "<b>" +
-        escapeHtml(acc.account_id || "?") +
-        "</b>" +
-        "Moeda: " +
-        escapeHtml(acc.currency || "—") +
-        '<br>Saldo Deriv: <span class="bal">' +
-        escapeHtml(accountBalanceText(acc)) +
-        "</span><br>Estado: " +
-        escapeHtml(acc.status || "—") +
-        '<div class="hint">' +
-        (selected
-          ? "✓ Selecionada — PLAY usa este contexto (paper)"
-          : "Clica para trabalhar com este saldo (paper)") +
-        "</div>";
-      btn.addEventListener("click", () => selectAccount(acc.account_id));
-      box.appendChild(btn);
+    // Prefer classic dropdown; keep #accounts empty/hidden to avoid duplicate balance cards
+    if (box) box.innerHTML = "";
+    if (sel) {
+      const prev = state.selectedAccountId || sel.value || "";
+      sel.innerHTML = "";
+      const ph = document.createElement("option");
+      ph.value = "";
+      ph.disabled = true;
+      ph.textContent = "— Conta Real / Conta Demo —";
+      sel.appendChild(ph);
+      for (const acc of state.accounts) {
+        const kind = accountKind(acc);
+        const opt = document.createElement("option");
+        opt.value = acc.account_id || "";
+        opt.textContent =
+          (kind === "DEMO" ? "Conta Demo" : "Conta Real") +
+          " · " +
+          (acc.account_id || "?") +
+          " · " +
+          accountBalanceText(acc);
+        opt.setAttribute("data-kind", kind);
+        sel.appendChild(opt);
+      }
+      if (prev && Array.from(sel.options).some(function (o) { return o.value === prev; })) {
+        sel.value = prev;
+        ph.selected = false;
+      } else {
+        ph.selected = true;
+        sel.value = "";
+      }
     }
     renderHeroBalances();
   }
@@ -527,7 +546,6 @@
     const demoEl = el("heroBalDemo");
     const realMeta = el("heroBalRealMeta");
     const demoMeta = el("heroBalDemoMeta");
-    if (!realEl || !demoEl) return;
     let realAcc = null;
     let demoAcc = null;
     for (const acc of state.accounts) {
@@ -537,20 +555,47 @@
         realAcc = acc;
       }
     }
-    if (realAcc) {
-      realEl.textContent = accountBalanceText(realAcc);
-      realEl.classList.toggle("pos", Number(realAcc.balance) >= 0);
-      if (realMeta) realMeta.textContent = (realAcc.account_id || "REAL") + " · Deriv";
-    } else {
-      realEl.textContent = "—";
-      if (realMeta) realMeta.textContent = "Sem conta REAL nesta sessão";
+    if (realEl) {
+      if (realAcc) {
+        realEl.textContent = accountBalanceText(realAcc);
+        if (realMeta) realMeta.textContent = (realAcc.account_id || "REAL") + " · Deriv";
+      } else {
+        realEl.textContent = "—";
+        if (realMeta) realMeta.textContent = "Sem conta REAL nesta sessão";
+      }
     }
-    if (demoAcc) {
-      demoEl.textContent = accountBalanceText(demoAcc);
-      if (demoMeta) demoMeta.textContent = (demoAcc.account_id || "DEMO") + " · Deriv";
-    } else {
-      demoEl.textContent = "—";
-      if (demoMeta) demoMeta.textContent = "Sem conta DEMO nesta sessão";
+    if (demoEl) {
+      if (demoAcc) {
+        demoEl.textContent = accountBalanceText(demoAcc);
+        if (demoMeta) demoMeta.textContent = (demoAcc.account_id || "DEMO") + " · Deriv";
+      } else {
+        demoEl.textContent = "—";
+        if (demoMeta) demoMeta.textContent = "Sem conta DEMO nesta sessão";
+      }
+    }
+    // Single working balance in classic strip (selected account only — no fake numbers)
+    const termSaldo = el("termSaldo");
+    const termMeta = el("termSaldoMeta");
+    const acc = resolveSelectedAccount();
+    if (termSaldo) {
+      if (acc) {
+        const bal = acc.balance != null ? Number(acc.balance) : null;
+        const cur = acc.currency || "USD";
+        termSaldo.textContent =
+          bal != null && Number.isFinite(bal)
+            ? "$ " + bal.toFixed(2) + " " + cur
+            : accountBalanceText(acc);
+        if (termMeta) {
+          termMeta.textContent =
+            (accountKind(acc) === "DEMO" ? "Conta Demo" : "Conta Real") +
+            " · " +
+            (acc.account_id || "?") +
+            " · Deriv";
+        }
+      } else {
+        termSaldo.textContent = "—";
+        if (termMeta) termMeta.textContent = "Escolhe Conta Real ou Conta Demo";
+      }
     }
   }
 
@@ -655,6 +700,11 @@
     syncMarketCardsActive();
     updateSourceUI();
     updateButtons();
+    if (panel === "digits") {
+      startDigitTickFeed(state.symbol);
+    } else {
+      forgetDigitSub();
+    }
     return true;
   }
 
@@ -714,15 +764,368 @@
     return out;
   }
 
+
+  /* ——— Dígitos live (ticks reais) + status rail + trader log + LC chart ——— */
+
+  function ensureDigitWindow() {
+    if (!state.digitTickWindow && typeof NL.TickWindow === "function") {
+      state.digitTickWindow = new NL.TickWindow(500);
+    }
+    return state.digitTickWindow;
+  }
+
+  function initDigitBarsDom() {
+    const host = el("digitBars");
+    if (!host || host.childElementCount) return;
+    for (let d = 0; d <= 9; d++) {
+      const col = document.createElement("div");
+      col.className = "digit-col";
+      col.innerHTML =
+        '<div class="digit-pct" data-pct="' + d + '">—</div>' +
+        '<div class="digit-bar-track"><div class="digit-bar mid" data-bar="' + d + '" style="height:2%"></div></div>' +
+        '<div class="digit-num">' + d + "</div>";
+      host.appendChild(col);
+    }
+  }
+
+  function renderDigitBars() {
+    initDigitBarsDom();
+    const win = ensureDigitWindow();
+    const note = el("digitFeedNote");
+    const lastEl = el("digitLastShown");
+    if (lastEl) lastEl.textContent = state.digitLast == null ? "—" : String(state.digitLast);
+    if (!win || typeof NL.percentages !== "function") {
+      if (note) note.textContent = "nl-core sem módulo de dígitos.";
+      return;
+    }
+    const w = state.digitWindow || 25;
+    const stats = win.stats(w);
+    const pcts = stats.percentages || [];
+    const maxPct = Math.max(10, ...pcts, 0.001);
+    for (let d = 0; d <= 9; d++) {
+      const pct = pcts[d] || 0;
+      const bar = document.querySelector('.digit-bar[data-bar="' + d + '"]');
+      const lab = document.querySelector('.digit-pct[data-pct="' + d + '"]');
+      if (lab) lab.textContent = stats.total ? pct.toFixed(0) + "%" : "—";
+      if (bar) {
+        const h = stats.total ? Math.max(2, (pct / maxPct) * 100) : 2;
+        bar.style.height = h + "%";
+        bar.classList.remove("high", "low", "mid");
+        // Verde = acima de 10% esperado; vermelho = abaixo; cinza = ~10%
+        let cls = "mid";
+        if (stats.total) {
+          if (typeof NL.deviationColor === "function") {
+            const c = NL.deviationColor((stats.deviations && stats.deviations[d]) || pct - 10);
+            cls = c === "blue" ? "high" : c === "red" ? "low" : "mid";
+          } else if (pct > 10.5) cls = "high";
+          else if (pct < 9.5) cls = "low";
+        }
+        bar.classList.add(cls);
+        if (state.digitLast === d) {
+          bar.classList.add("flash");
+          setTimeout(function () { bar.classList.remove("flash"); }, 280);
+        }
+      }
+    }
+    if (note) {
+      note.textContent = stats.total
+        ? ("Ticks reais: " + stats.total + (stats.ready ? "" : " (a encher janela de " + w + ")") +
+          (state.digitPipSize != null ? " · pip " + state.digitPipSize : ""))
+        : "Aguardando ticks reais do símbolo…";
+    }
+  }
+
+  function forgetDigitSub() {
+    if (state.digitSubId != null && state.ws && state.ws.readyState === 1) {
+      try {
+        state.ws.send(JSON.stringify({ forget: state.digitSubId }));
+      } catch (_e) {}
+    }
+    state.digitSubId = null;
+  }
+
+  async function startDigitTickFeed(symbol) {
+    if (!symbol || !state.ws || state.ws.readyState !== 1) return;
+    if (state.panel !== "digits") {
+      forgetDigitSub();
+      return;
+    }
+    forgetDigitSub();
+    const win = ensureDigitWindow();
+    if (win && typeof win === "object") {
+      // reset buffer on symbol change
+      state.digitTickWindow = new NL.TickWindow(500);
+    }
+    state.digitLast = null;
+    state.digitPipSize = null;
+    state.digitTickCount = 0;
+    renderDigitBars();
+    const note = el("digitFeedNote");
+    try {
+      const count = Math.min(500, Math.max(state.digitWindow || 25, 25));
+      const raw = await requestRaw({
+        ticks_history: symbol,
+        end: "latest",
+        count: count,
+        style: "ticks",
+        subscribe: 1,
+      });
+      const obj = JSON.parse(raw);
+      if (obj.error) throw new Error(obj.error.message || String(obj.error.code || "tick error"));
+      // History seed
+      const hist = obj.history;
+      const prices = hist && Array.isArray(hist.prices) ? hist.prices : [];
+      const pip =
+        typeof obj.pip_size === "number"
+          ? obj.pip_size
+          : obj.echo_req && typeof obj.echo_req.pip_size === "number"
+            ? obj.echo_req.pip_size
+            : null;
+      // subscription id
+      const sub =
+        (obj.subscription && obj.subscription.id) ||
+        (typeof obj.subscription === "object" && obj.subscription && obj.subscription.id) ||
+        null;
+      if (sub) state.digitSubId = sub;
+
+      // Se a resposta já trouxe um tick único
+      if (obj.tick && typeof obj.tick.quote !== "undefined") {
+        ingestDigitTick(obj.tick.symbol || symbol, obj.tick.quote, obj.tick.pip_size != null ? obj.tick.pip_size : pip);
+      }
+
+      // Seed a partir do histórico (quotes)
+      if (prices.length && typeof NL.lastDigit === "function") {
+        // pip_size: tentar do payload; fallback 2 (comum em synthetics) só se histórico existir
+        let usePip = typeof pip === "number" && Number.isInteger(pip) ? pip : null;
+        if (usePip == null && prices.length) {
+          // Inferir casas a partir da string do último preço — sem inventar estatísticas
+          const last = String(prices[prices.length - 1]);
+          const dot = last.indexOf(".");
+          usePip = dot >= 0 ? last.length - dot - 1 : 0;
+          if (usePip > 8) usePip = 2;
+        }
+        if (usePip != null) state.digitPipSize = usePip;
+        const tw = ensureDigitWindow();
+        for (let i = 0; i < prices.length; i++) {
+          const q = Number(prices[i]);
+          if (!Number.isFinite(q) || state.digitPipSize == null) continue;
+          try {
+            const d = NL.lastDigit(q, state.digitPipSize);
+            tw.push(d);
+            state.digitLast = d;
+            state.digitTickCount += 1;
+          } catch (_e) {}
+        }
+        renderDigitBars();
+      }
+      if (note && !state.digitTickCount) note.textContent = "Subscrição activa — à espera do próximo tick…";
+    } catch (e) {
+      if (note) note.textContent = "Feed dígitos: " + (e.message || String(e));
+    }
+  }
+
+  function ingestDigitTick(symbol, quote, pipSize) {
+    if (state.panel !== "digits") return;
+    if (symbol && state.symbol && symbol !== state.symbol) return;
+    if (typeof NL.lastDigit !== "function") return;
+    let pip = typeof pipSize === "number" && Number.isInteger(pipSize) ? pipSize : state.digitPipSize;
+    if (pip == null) return; // não inventar pip
+    state.digitPipSize = pip;
+    const q = typeof quote === "string" ? Number(quote) : quote;
+    if (!Number.isFinite(q)) return;
+    try {
+      const d = NL.lastDigit(q, pip);
+      ensureDigitWindow().push(d);
+      state.digitLast = d;
+      state.digitTickCount += 1;
+      renderDigitBars();
+    } catch (_e) {}
+  }
+
+  function handleDigitStreamMessage(raw, parsed) {
+    if (!parsed || state.panel !== "digits") return;
+    if (typeof NL.parseTickMessage === "function") {
+      const m = NL.parseTickMessage(raw);
+      if (m.kind === "tick") {
+        ingestDigitTick(m.symbol, m.quote, m.pipSize);
+        return;
+      }
+    }
+    if (parsed.msg_type === "tick" && parsed.tick) {
+      const t = parsed.tick;
+      ingestDigitTick(t.symbol, t.quote, t.pip_size);
+    }
+  }
+
+  function updateStatusRail(summary) {
+    const steps = {
+      analisando: el("railAnalisando"),
+      aberto: el("railAberto"),
+      fechado: el("railFechado"),
+    };
+    const fill = el("statusRailFill");
+    Object.keys(steps).forEach(function (k) {
+      if (steps[k]) steps[k].classList.remove("active", "done");
+    });
+    let phase = "analisando";
+    const running = state.session && state.session.status === "RUNNING";
+    const paused = state.session && state.session.status === "PAUSED";
+    const hasOpen = !!(state.session && state.session.hasOpenPosition);
+    const closed = summary && summary.closed > 0;
+    if (hasOpen && (running || paused)) phase = "aberto";
+    else if (closed && state.session && state.session.status === "STOPPED") phase = "fechado";
+    else if (running || paused) phase = hasOpen ? "aberto" : "analisando";
+    else if (state.prePlayOk || (state.prePlayGate && state.prePlayGate.allowed)) phase = "analisando";
+
+    if (phase === "analisando") {
+      if (steps.analisando) steps.analisando.classList.add("active");
+      if (fill) fill.style.width = "16%";
+    } else if (phase === "aberto") {
+      if (steps.analisando) steps.analisando.classList.add("done");
+      if (steps.aberto) steps.aberto.classList.add("active");
+      if (fill) fill.style.width = "50%";
+    } else {
+      if (steps.analisando) steps.analisando.classList.add("done");
+      if (steps.aberto) steps.aberto.classList.add("done");
+      if (steps.fechado) steps.fechado.classList.add("active");
+      if (fill) fill.style.width = "100%";
+    }
+  }
+
+  function renderTraderLog() {
+    const body = el("traderLogBody");
+    if (!body) return;
+    const rows = (state.tradeJournal || []).filter(function (t) {
+      return t && (t.kind === "open" || t.kind === "close");
+    }).slice(0, 40);
+    if (!rows.length) {
+      body.innerHTML = '<tr class="empty-row"><td colspan="4">Sem operações ainda — PLAY com porta aberta.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows
+      .map(function (t) {
+        const tipo = (t.direction || "—") + (t.kind === "open" ? " · ABRE" : " · FECHA");
+        const ponto = t.exit != null ? t.exit : t.entry != null ? t.entry : "—";
+        const preco = t.stake != null ? Number(t.stake).toFixed(2) : "—";
+        let res = "—";
+        let cls = "";
+        if (t.pnl != null) {
+          res = signed(t.pnl);
+          cls = t.pnl >= 0 ? "pnl-pos" : "pnl-neg";
+        } else if (t.kind === "open") {
+          res = "aberto";
+        }
+        return (
+          "<tr><td>" +
+          escapeHtml(String(tipo)) +
+          "</td><td>" +
+          escapeHtml(String(ponto)) +
+          "</td><td>" +
+          escapeHtml(String(preco)) +
+          '</td><td class="' +
+          cls +
+          '">' +
+          escapeHtml(String(res)) +
+          "</td></tr>"
+        );
+      })
+      .join("");
+  }
+
+  function destroyLcChart() {
+    if (state.lcRo) {
+      try { state.lcRo.disconnect(); } catch (_e) {}
+      state.lcRo = null;
+    }
+    if (state.lcChart) {
+      try { state.lcChart.remove(); } catch (_e) {}
+    }
+    state.lcChart = null;
+    state.lcSeries = null;
+  }
+
+  function ensureLcChart() {
+    const host = el("derivChart");
+    if (!host) return false;
+    if (state.lcChart && state.lcSeries) return true;
+    if (typeof window.LightweightCharts === "undefined") return false;
+    destroyLcChart();
+    const w = Math.max(host.clientWidth || 320, 280);
+    const h = Math.max(host.clientHeight || 240, 200);
+    const chart = window.LightweightCharts.createChart(host, {
+      layout: { background: { type: "solid", color: "#071224" }, textColor: "#8ba0b8", fontSize: 11 },
+      grid: {
+        vertLines: { color: "rgba(100,140,200,0.08)" },
+        horzLines: { color: "rgba(100,140,200,0.08)" },
+      },
+      rightPriceScale: { borderColor: "rgba(100,140,200,0.25)" },
+      timeScale: { borderColor: "rgba(100,140,200,0.25)", timeVisible: true, secondsVisible: false },
+      crosshair: { mode: window.LightweightCharts.CrosshairMode.Normal },
+      localization: { locale: "pt-PT" },
+      width: w,
+      height: h,
+    });
+    const series = chart.addCandlestickSeries({
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+    });
+    state.lcChart = chart;
+    state.lcSeries = series;
+    if (typeof ResizeObserver !== "undefined") {
+      state.lcRo = new ResizeObserver(function () {
+        if (!state.lcChart || !host) return;
+        const nw = host.clientWidth;
+        const nh = host.clientHeight;
+        if (!(nw > 40) || !(nh > 40)) return;
+        try { state.lcChart.applyOptions({ width: nw, height: nh || 240 }); } catch (_e) {}
+      });
+      state.lcRo.observe(host);
+    }
+    return true;
+  }
+
+
   function renderChart(candles) {
     const canvas = el("chartCanvas");
     const empty = el("chartEmpty");
     const status = el("chartStatus");
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
     const list = (candles || state.chartCandles || []).slice(-80);
     state.chartCandles = list;
+    // Prefer lightweight-charts (mesmo lib que Bybit) quando disponível
+    if (ensureLcChart() && state.lcSeries) {
+      if (canvas) canvas.hidden = true;
+      if (!list.length) {
+        try { state.lcSeries.setData([]); } catch (_e) {}
+        if (empty) empty.hidden = false;
+        if (status) {
+          status.className = "pill warn";
+          status.textContent = "A carregar…";
+        }
+        return;
+      }
+      if (empty) empty.hidden = true;
+      if (status) {
+        status.className = "pill ok";
+        status.textContent = list.length + " velas · " + (state.symbol || "");
+      }
+      try {
+        state.lcSeries.setData(
+          list.map(function (c) {
+            return { time: c.epoch, open: c.open, high: c.high, low: c.low, close: c.close };
+          }),
+        );
+        if (state.lcChart) state.lcChart.timeScale().fitContent();
+      } catch (_e) {}
+      return;
+    }
+    if (!canvas) return;
+    canvas.hidden = false;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth || 640;
     const cssH = 200;
@@ -882,12 +1285,29 @@
   }
 
   function setStats(summary) {
-    el("statStatus").textContent = summary ? summary.status : "—";
-    el("statPnl").textContent = summary
+    if (el("statStatus")) el("statStatus").textContent = summary ? summary.status : "—";
+    const pnlText = summary
       ? signed(summary.totalPnl) + (isRealTradingMode() ? " (REAL)" : " (sim)")
       : "—";
-    el("statTrades").textContent = summary ? String(summary.closed) + " / " + summary.opened : "—";
-    el("statDd").textContent = summary ? summary.maxDrawdown.toFixed(2) : "—";
+    if (el("statPnl")) el("statPnl").textContent = pnlText;
+    const tradesText = summary ? String(summary.closed) + " / " + summary.opened : "—";
+    if (el("statTrades")) el("statTrades").textContent = tradesText;
+    if (el("statDd")) el("statDd").textContent = summary ? summary.maxDrawdown.toFixed(2) : "—";
+    // Classic terminal strip
+    const termPnl = el("termPnl");
+    if (termPnl) {
+      if (!summary) {
+        termPnl.textContent = "—";
+        termPnl.classList.remove("neg");
+      } else {
+        const raw = summary.totalPnl;
+        termPnl.textContent = (raw >= 0 ? "$ " : "-$ ") + Math.abs(raw).toFixed(2);
+        termPnl.classList.toggle("neg", raw < 0);
+      }
+    }
+    if (el("termTrades")) el("termTrades").textContent = tradesText;
+    updateStatusRail(summary);
+    renderTraderLog();
     renderPerfas();
   }
 
@@ -952,12 +1372,15 @@
       ws.onmessage = (event) => {
         const raw = String(event.data);
         try {
-          const id = JSON.parse(raw).req_id;
+          const parsed = JSON.parse(raw);
+          const id = parsed.req_id;
           if (typeof id === "number" && state.waiting.has(id)) {
             const done = state.waiting.get(id);
             state.waiting.delete(id);
             done(raw);
           }
+          // Stream de ticks (dígitos) — fora do mapa waiting
+          handleDigitStreamMessage(raw, parsed);
         } catch (_) {
           /* ignore */
         }
@@ -2621,6 +3044,8 @@
         activateMarketPanel(nextPanel);
         await applyPanelSource();
         refreshChartPreview();
+        if (state.panel === "digits") startDigitTickFeed(state.symbol);
+        else forgetDigitSub();
       });
     });
 
@@ -2640,6 +3065,8 @@
         setPrePlayUI(null);
         updateButtons();
         refreshChartPreview();
+        if (p === "digits") startDigitTickFeed(state.symbol);
+        else forgetDigitSub();
       });
     });
     document.querySelectorAll(".mkt-strat").forEach(function (sel) {
@@ -2759,6 +3186,24 @@
     const btnStop = el("btnStop");
     if (btnStop) btnStop.addEventListener("click", () => stopSession());
     el("btnDisconnect").addEventListener("click", () => disconnect());
+    const accountTypeSelect = el("accountTypeSelect");
+    if (accountTypeSelect) {
+      accountTypeSelect.addEventListener("change", function () {
+        selectAccount(accountTypeSelect.value || "");
+      });
+    }
+    const digitWindowSelect = el("digitWindowSelect");
+    if (digitWindowSelect) {
+      digitWindowSelect.addEventListener("change", function () {
+        const n = Number(digitWindowSelect.value) || 25;
+        state.digitWindow = n;
+        renderDigitBars();
+      });
+    }
+    initDigitBarsDom();
+    renderDigitBars();
+    renderTraderLog();
+    updateStatusRail(null);
     const modePaper = el("modePaper");
     const modeReal = el("modeReal");
     if (modePaper) modePaper.addEventListener("click", () => setTradingMode("PAPER"));
@@ -2890,6 +3335,10 @@
       updateSourceUI();
       updateButtons();
       refreshChartPreview();
+      syncSharedFormFromPanel(state.panel);
+      if (state.panel === "digits") startDigitTickFeed(state.symbol);
+      renderTraderLog();
+      updateStatusRail(null);
     } catch (e) {
       pushHistory("Falha WS/símbolos: " + (e.message || String(e)), "stop");
     }
