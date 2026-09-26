@@ -109,5 +109,6 @@ export {
   evaluateLiveEntry,
   proximityForStrategyName,
   combineGateAndLive,
+  LIVE_ENTRY_MAX_CANDLES,
 } from "../core/strategy-live.ts";
 export type { LiveEntryMetrics } from "../core/strategy-live.ts";

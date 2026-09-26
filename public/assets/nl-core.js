@@ -32,6 +32,7 @@ var NL = (() => {
     CandleGateController: () => CandleGateController,
     CandlePaperSession: () => CandlePaperSession,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
+    LIVE_ENTRY_MAX_CANDLES: () => LIVE_ENTRY_MAX_CANDLES,
     MARKETS: () => MARKETS,
     MARKET_ORDER: () => MARKET_ORDER,
     MAX_SESSION_MS: () => MAX_SESSION_MS,
@@ -2246,8 +2247,14 @@ var NL = (() => {
     const best = Math.min(Math.max(upDist, 0), Math.max(dnDist, 0));
     return nearZero(best, pad + atrV * 0.5);
   }
+  var LIVE_ENTRY_MAX_CANDLES = 160;
+  function windowCandles(candles, max = LIVE_ENTRY_MAX_CANDLES) {
+    if (candles.length <= max) return candles;
+    return candles.slice(-max);
+  }
   function proximityForStrategyName(name, candles) {
     if (candles.length < 30) return 0;
+    candles = windowCandles(candles);
     let m;
     m = /^ema-cruza (\d+)\/(\d+)$/.exec(name);
     if (m) return proxEmaCross(candles, Number(m[1]), Number(m[2]));
@@ -2274,21 +2281,23 @@ var NL = (() => {
     return 0;
   }
   function signalStats(strategies, candles, hold) {
-    const n = candles.length;
+    const win = windowCandles(candles);
+    const n = win.length;
     let lastSignal = 0;
     let barsSince = Infinity;
     let agreeingLong = 0;
     let agreeingShort = 0;
     let maxProx = 0;
     const details = [];
+    const sinceScan = Math.min(24, n);
     for (const s of strategies) {
-      const sigs = s.signals(candles);
+      const sigs = s.signals(win);
       const last = sigs[n - 1] ?? 0;
       if (last !== 0) {
         lastSignal = last;
         barsSince = 0;
       } else if (barsSince > 0) {
-        for (let j = n - 1; j >= 0 && j >= n - 40; j--) {
+        for (let j = n - 1; j >= 0 && j >= n - sinceScan; j--) {
           if (sigs[j] !== 0) {
             barsSince = Math.min(barsSince, n - 1 - j);
             break;
@@ -2309,7 +2318,7 @@ var NL = (() => {
       else if (s.name.startsWith("confluencia(")) {
         p = Math.max(agreeingLong, agreeingShort) / Math.max(1, strategies.length);
       } else {
-        p = proximityForStrategyName(s.name, candles);
+        p = proximityForStrategyName(s.name, win);
       }
       if (p > maxProx) {
         maxProx = p;
