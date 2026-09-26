@@ -177,6 +177,7 @@
     if (empty) empty.hidden = true;
     if (state.candleSeries) {
       try {
+        applySeriesPriceFormat(list);
         state.candleSeries.setData(list.map(toLcBar));
         if (fit && state.chart) {
           try { state.chart.timeScale().fitContent(); } catch (_e2) {}
@@ -186,7 +187,10 @@
         destroyChart();
         ensureChart(true);
         if (state.candleSeries) {
-          try { state.candleSeries.setData(list.map(toLcBar)); } catch (_e3) {}
+          try {
+            applySeriesPriceFormat(list);
+            state.candleSeries.setData(list.map(toLcBar));
+          } catch (_e3) {}
         }
       }
       return;
@@ -274,6 +278,24 @@
 
   function toLcBar(c) {
     return { time: c.epoch, open: c.open, high: c.high, low: c.low, close: c.close };
+  }
+
+  /** Adapt tick size so alts (SOL/PEPE/…) aren’t invisible after BTC scale. */
+  function applySeriesPriceFormat(candles) {
+    if (!state.candleSeries || !candles || !candles.length) return;
+    var px = Number(candles[candles.length - 1].close);
+    if (!(px > 0) || !Number.isFinite(px)) return;
+    var precision, minMove;
+    if (px >= 1000) { precision = 2; minMove = 0.1; }
+    else if (px >= 100) { precision = 2; minMove = 0.01; }
+    else if (px >= 1) { precision = 4; minMove = 0.0001; }
+    else if (px >= 0.01) { precision = 6; minMove = 0.000001; }
+    else { precision = 8; minMove = 0.00000001; }
+    try {
+      state.candleSeries.applyOptions({
+        priceFormat: { type: "price", precision: precision, minMove: minMove },
+      });
+    } catch (_e) {}
   }
 
   function scheduleRender() {
@@ -423,7 +445,15 @@
   }
 
   function stopFeed() {
-    if (state.ws) { try { state.ws.close(); } catch (_e) {} state.ws = null; }
+    // Invalidate in-flight WS/poll handlers before closing.
+    state.feedGen += 1;
+    if (state.ws) {
+      if (state.wsTopic && state.ws.readyState === 1) {
+        try { state.ws.send(JSON.stringify({ op: "unsubscribe", args: [state.wsTopic] })); } catch (_u) {}
+      }
+      try { state.ws.close(); } catch (_e) {}
+      state.ws = null;
+    }
     state.wsTopic = null;
     if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
   }
@@ -604,18 +634,16 @@
     var status = el("chartStatus");
     if (status) { status.className = "pill warn"; status.textContent = "A carregar " + sym + "…"; }
     setStratLoading();
+    // Drop previous symbol candles immediately so BTC doesn’t linger while ETH loads.
+    state.chartCandles = [];
+    state.gateCandles = [];
+    updateLivePrice(null);
     ensureChart(false);
     try {
-      var hist = await fetchBybitHistory(sym, gran, GATE_HISTORY);
+      // Fast path: chart + WS first (CHART_HISTORY), then heavy gate history.
+      var raw = await fetchKlinesRaw(sym, gran, CHART_HISTORY);
       if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
-      state.gateCandles = hist.slice();
-      var recent = hist.slice(-CHART_HISTORY);
-      try {
-        var raw = await fetchKlinesRaw(sym, gran, CHART_HISTORY);
-        if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
-        if (raw.length) recent = raw.slice(-CHART_HISTORY);
-      } catch (_e) {}
-      if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
+      var recent = raw.length ? raw.slice(-CHART_HISTORY) : [];
       state.chartCandles = recent;
       ensureChart(false);
       paintChartFromState(true);
@@ -623,6 +651,16 @@
       startWsFeed();
       startGateTimer();
       scheduleLiveProximity();
+
+      var hist = recent.slice();
+      try {
+        hist = await fetchBybitHistory(sym, gran, GATE_HISTORY);
+      } catch (_h) {
+        // Chart already live — gate history soft-fails; proximity still works on chartCandles.
+        hist = recent.slice();
+      }
+      if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
+      state.gateCandles = hist.slice();
       // Heavy gate deferred so chart/WS never stutter on symbol switch
       scheduleGateReeval();
     } catch (e) {
@@ -1094,6 +1132,15 @@
     if (!sel) return;
     var items = state.bybitSymbols.slice();
     var prev = state.symbol;
+    // Sticky: keep the live chart symbol visible even when the search filter excludes it.
+    // Never mutate state.symbol here — that orphaned BTC chart while select showed ETH.
+    if (prev && !items.some(function (it) { return it.symbol === prev; })) {
+      var sticky = null;
+      for (var s = 0; s < state.bybitSymbolsAll.length; s++) {
+        if (state.bybitSymbolsAll[s].symbol === prev) { sticky = state.bybitSymbolsAll[s]; break; }
+      }
+      if (sticky) items = [sticky].concat(items);
+    }
     sel.innerHTML = "";
     if (!items.length) {
       var o = document.createElement("option");
@@ -1110,7 +1157,6 @@
     }
     if (prev && items.some(function (it) { return it.symbol === prev; })) sel.value = prev;
     else sel.value = items[0].symbol;
-    state.symbol = sel.value;
   }
 
   function filterSymbols(q) {
@@ -1347,13 +1393,12 @@
   }
 
   function readForm() {
-    var sym = el("bybitSymbolSelect");
     var strat = el("bybitStrategy");
     var stake = el("bybitStake");
     var lev = el("bybitLeverage");
     var mins = el("minutes");
     var iv = el("bybitInterval");
-    if (sym && sym.value) state.symbol = sym.value;
+    // Symbol only via switchSymbol / boot — never orphan chart from select filter.
     if (strat) state.strategySet = strat.value || "";
     if (stake) state.stake = Number(stake.value) || 1;
     if (mins) state.minutes = Math.min(180, Math.max(1, Number(mins.value) || 60));
@@ -1367,15 +1412,25 @@
     }
   }
 
-  async function switchSymbol(sym) {
+  async function switchSymbol(sym, opts) {
     if (state.running) {
       pushHistory("Para a sessão antes de mudar o par.", "stop");
-      var sel = el("bybitSymbolSelect");
-      if (sel) sel.value = state.symbol;
+      var selBusy = el("bybitSymbolSelect");
+      if (selBusy) selBusy.value = state.symbol;
       return;
     }
-    if (!sym || sym === state.symbol) return;
-    state.symbol = sym;
+    var next = String(sym || "").trim().toUpperCase();
+    if (!next) return;
+    var force = opts && opts.force;
+    if (next === state.symbol && !force) return;
+    state.symbol = next;
+    var sel = el("bybitSymbolSelect");
+    if (sel) {
+      if (![].some.call(sel.options, function (o) { return o.value === next; })) {
+        filterSymbols("");
+      }
+      sel.value = next;
+    }
     state.prePlayOk = false;
     state.prePlayGate = null;
     state.liveProx = { lucro_rapido: null, loss_zero: null };
@@ -1385,7 +1440,7 @@
     stopFeed();
     // Keep chart mounted — never destroy on symbol change; only resubscribe WS + reload klines.
     ensureChart(false);
-    await loadBybitLeverage(state.symbol);
+    try { await loadBybitLeverage(state.symbol); } catch (_lev) {}
     await loadChartAndGates();
     renderRadarList();
     scheduleLiveProximity();
@@ -1847,16 +1902,8 @@
       box.querySelectorAll(".radar-row").forEach(function (row) {
         row.addEventListener("click", function () {
           var sym = row.getAttribute("data-symbol");
-          if (!sym || sym === state.symbol) return;
-          var sel = el("bybitSymbolSelect");
-          if (sel) {
-            // ensure option exists
-            if (![].some.call(sel.options, function (o) { return o.value === sym; })) {
-              filterSymbols("");
-              if (sel.querySelector) { /* refreshed */ }
-            }
-            sel.value = sym;
-          }
+          if (!sym) return;
+          // Same path as select: unsubscribe old WS, load klines, paint, live prox.
           switchSymbol(sym);
         });
       });
@@ -1945,9 +1992,19 @@
     var btnBal = el("btnBybitRefreshBal");
     if (btnBal) btnBal.addEventListener("click", function () { loadBybitBalance(); });
     var search = el("bybitSymbolSearch");
-    if (search) search.addEventListener("input", function () { filterSymbols(search.value); });
+    if (search) {
+      search.addEventListener("input", function () { filterSymbols(search.value); });
+      search.addEventListener("keydown", function (ev) {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        var pick = el("bybitSymbolSelect");
+        if (pick && pick.value) switchSymbol(pick.value);
+      });
+    }
     var bybitSym = el("bybitSymbolSelect");
-    if (bybitSym) bybitSym.addEventListener("change", function () { switchSymbol(bybitSym.value); });
+    if (bybitSym) {
+      bybitSym.addEventListener("change", function () { switchSymbol(bybitSym.value); });
+    }
     var iv = el("bybitInterval");
     if (iv) iv.addEventListener("change", function () { switchInterval(iv.value); });
     var bybitStrat = el("bybitStrategy");
@@ -2031,6 +2088,8 @@
     try {
       await loadBybitSymbols();
       renderBybitSymbolSelect();
+      var bootSel = el("bybitSymbolSelect");
+      if (bootSel && bootSel.value) state.symbol = bootSel.value;
       pushHistory("Futuros Linear USDT: " + state.bybitSymbolsAll.length + " perpetuals (sem spot/inverse)", "open");
       state.radar.total = state.bybitSymbolsAll.length;
       startRadarScan();
