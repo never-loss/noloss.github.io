@@ -124,8 +124,8 @@ test("closedCandlesOnly filters forming candle", () => {
 });
 
 test("API files: PAPER-only + no Deriv OAuth touch", () => {
-  const jobs = readFileSync(join(root, "api/bybit-arm-jobs.js"), "utf8");
-  const tick = readFileSync(join(root, "api/bybit-arm-tick.js"), "utf8");
+  const jobs = readFileSync(join(root, "api/bybit-arm.js"), "utf8");
+  const tick = readFileSync(join(root, "api/bybit-arm.js"), "utf8");
   const store = readFileSync(join(root, "lib/arm-store.js"), "utf8");
   assert.match(jobs, /Force PAPER/);
   assert.match(jobs, /createCloudArmJob/);
@@ -134,8 +134,8 @@ test("API files: PAPER-only + no Deriv OAuth touch", () => {
   assert.match(store, /ephemeral|memory/);
   // OAuth files untouched — existence check via git in CI; here assert we don't import token
   assert.doesNotMatch(jobs, /token\.js|deriv/i);
-  assert.ok(readFileSync(join(root, "api/bybit-arm-tick.js"), "utf8").includes("advanceCloudArmJob"));
-  // Cron optional on Hobby — lazy advance on GET is the primary path; external cron can hit /api/bybit-arm-tick.
+  assert.ok(readFileSync(join(root, "api/bybit-arm.js"), "utf8").includes("advanceCloudArmJob"));
+  // Cron optional on Hobby — lazy advance on GET is the primary path; external cron can hit /api/bybit-arm?tick=1.
 });
 
 test("UI: neste ecrã vs nuvem labels + chart light history", () => {

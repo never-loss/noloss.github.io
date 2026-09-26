@@ -12,7 +12,7 @@
   var TRADING_MODE_KEY = "nl_crypto_trading_mode";
   var CLOUD_ARM_CLIENT_KEY = "nl_cloud_arm_client";
   var CLOUD_ARM_JOB_KEY = "nl_cloud_arm_job";
-  var BYBIT_ARM_JOBS_URL = "/api/bybit-arm-jobs";
+  var BYBIT_ARM_JOBS_URL = "/api/bybit-arm";
   var POLL_CHART_MS = 2000;
   var GATE_REEVAL_MS = 30000;
   var LIVE_PROX_MS = 1200;

@@ -14,9 +14,9 @@ User picks Bybit linear USDT perpetual + strategy + **duration (≤3h)** → **A
 | `lib/nl-cloud.mjs` | esbuild bundle of core for Vercel (`npm run build:api`) |
 | `lib/arm-store.js` | **Upstash Redis REST** if `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`; else **memory** (ephemeral) |
 | `lib/arm-klines.js` | Server fetch Bybit v5 linear klines |
-| `api/bybit-arm-jobs.js` | `POST` create · `GET` list/status (lazy advance) · `DELETE` cancel |
-| `api/bybit-arm-tick.js` | Advance all RUNNING (cron / external scheduler) |
-| `/api/bybit-arm-tick` | optional external cron; lazy GET advance is primary |
+| `api/bybit-arm.js` | `POST` create · `GET` list/status (lazy advance) · `DELETE` cancel |
+| `api/bybit-arm.js` | Advance all RUNNING (cron / external scheduler) |
+| `/api/bybit-arm?tick=1` | optional external cron; lazy GET advance is primary |
 
 **Lazy advance:** GET status / list replays real closed candles since `startedAt`. Same outcome as frequent ticks for PAPER (deterministic). User return = truth.
 
@@ -28,7 +28,7 @@ User picks Bybit linear USDT perpetual + strategy + **duration (≤3h)** → **A
 ## Limits (honest)
 
 1. **Durable store:** without Upstash env, jobs live only in the warm serverless instance — configure free Upstash for multi-instance durability.
-2. **No vercel.json cron** (Hobby deploy + interval limits). For background ticks use external cron → `GET /api/bybit-arm-tick` (optional `CRON_SECRET`). Lazy advance on page open covers “come back later”.
+2. **No vercel.json cron** (Hobby deploy + interval limits). For background ticks use external cron → `GET /api/bybit-arm?tick=1` (optional `CRON_SECRET`). Lazy advance on page open covers “come back later”.
 3. Open paper position past `endsAt` may remain until next closed candle resolves (same as local session).
 
 ## How Hudson arms and leaves
