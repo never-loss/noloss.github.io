@@ -115,3 +115,78 @@ test("PAPER default + no martingale in bybit page", () => {
   assert.match(bybitJs, /sem martingale/i);
   assert.match(bybitHtml, /sem martingale/i);
 });
+
+test("multi-symbol: select/filter never orphans chart on BTC", () => {
+  assert.match(bybitJs, /Sticky: keep the live chart symbol/);
+  assert.match(bybitJs, /Never mutate state\.symbol here/);
+  assert.match(bybitJs, /async function switchSymbol\(sym, opts\)/);
+  assert.match(bybitJs, /Drop previous symbol candles immediately/);
+  assert.match(bybitJs, /Fast path: chart \+ WS first/);
+  assert.match(bybitJs, /applySeriesPriceFormat/);
+  assert.match(bybitJs, /op: "unsubscribe"/);
+  // renderBybitSymbolSelect must NOT assign state.symbol = sel.value
+  const renderFn = bybitJs.slice(
+    bybitJs.indexOf("function renderBybitSymbolSelect"),
+    bybitJs.indexOf("function filterSymbols"),
+  );
+  assert.doesNotMatch(renderFn, /state\.symbol\s*=\s*sel\.value/);
+  // switchSymbol owns symbol + reloads chart/WS
+  const switchFn = bybitJs.slice(
+    bybitJs.indexOf("async function switchSymbol"),
+    bybitJs.indexOf("async function switchInterval"),
+  );
+  assert.match(switchFn, /loadChartAndGates/);
+  assert.match(switchFn, /stopFeed/);
+  assert.match(switchFn, /loadBybitLeverage/);
+  // radar click uses same switchSymbol path
+  assert.match(bybitJs, /Same path as select: unsubscribe old WS/);
+  // readForm must not steal symbol from filtered select
+  const readFn = bybitJs.slice(
+    bybitJs.indexOf("function readForm"),
+    bybitJs.indexOf("async function switchSymbol"),
+  );
+  assert.doesNotMatch(readFn, /state\.symbol\s*=\s*sym\.value/);
+});
+
+test("multi-symbol: loadChartAndGates paints before GATE_HISTORY", () => {
+  const loadFn = bybitJs.slice(
+    bybitJs.indexOf("async function loadChartAndGates"),
+    bybitJs.indexOf("function startGateTimer"),
+  );
+  const paintIdx = loadFn.indexOf("paintChartFromState(true)");
+  const gateHistIdx = loadFn.indexOf("fetchBybitHistory");
+  const wsIdx = loadFn.indexOf("startWsFeed()");
+  assert.ok(paintIdx > 0 && wsIdx > 0 && gateHistIdx > 0);
+  assert.ok(paintIdx < gateHistIdx, "chart paint before heavy history");
+  assert.ok(wsIdx < gateHistIdx, "WS before heavy history");
+  assert.match(loadFn, /fetchKlinesRaw\(sym, gran, CHART_HISTORY\)/);
+});
+
+test("trade path: sessionSymbol pinned; REAL order uses tradeSymbol()", () => {
+  assert.match(bybitJs, /sessionSymbol/);
+  assert.match(bybitJs, /function tradeSymbol\(/);
+  assert.match(bybitJs, /state\.sessionSymbol = state\.symbol/);
+  assert.match(bybitJs, /Freeze the pair for this session/);
+  const place = bybitJs.slice(
+    bybitJs.indexOf("async function placeBybitOrder"),
+    bybitJs.indexOf("async function mirrorRealBybitEvent"),
+  );
+  assert.match(place, /tradeSymbol\(\)/);
+  assert.doesNotMatch(place, /symbol:\s*state\.symbol/);
+  assert.match(place, /symbol:\s*sym/);
+  // startSession asserts select mirrors state before arm
+  const start = bybitJs.slice(
+    bybitJs.indexOf("async function startSession"),
+    bybitJs.indexOf("function pauseSession"),
+  );
+  assert.match(start, /assertSelectMatchesTradeSymbol/);
+  assert.match(start, /sessionSymbol/);
+  assert.match(start, /fetchBybitHistory\(armSym/);
+  // switch while running forces select back to armed pair
+  const sw = bybitJs.slice(
+    bybitJs.indexOf("async function switchSymbol"),
+    bybitJs.indexOf("async function switchInterval"),
+  );
+  assert.match(sw, /syncSymbolSelectToState/);
+  assert.match(sw, /Sessão armada/);
+});
