@@ -442,7 +442,7 @@
     const acc = resolveSelectedAccount();
     if (!acc) {
       box.className = "account-context muted";
-      box.textContent = "Escolhe DEMO ou REAL abaixo. Depois estratégia → Analisar → PLAY.";
+      box.textContent = "Escolhe DEMO ou REAL abaixo. Depois mercado → estratégia → Analisar → PLAY.";
       return;
     }
     const kind = accountKind(acc);
@@ -1744,7 +1744,8 @@
     const openN = list.filter((i) => i.open && !i.suspended).length;
     var activeN = state.activeCrypto.length;
     var feedN = Math.max(0, n - activeN);
-    el("panelHint").textContent = isBybitWorld() || isBybitSource()
+    const panelHintEl = el("panelHint");
+    if (panelHintEl) panelHintEl.textContent = isBybitWorld() || isBybitSource()
       ? "Bybit Linear USDT: " +
         n +
         " perpetual *USDT. Modo " +
@@ -2357,7 +2358,8 @@
 
     state.realOpenQty = null;
     state.realOpenSide = null;
-    el("btnPlay").disabled = true;
+    const btnPlayLock = el("btnPlay");
+    if (btnPlayLock) btnPlayLock.disabled = true;
     const ctx = isBybitWorld()
       ? (
           "Bybit " +
@@ -2753,9 +2755,12 @@
     if (btnAnaliseGo) btnAnaliseGo.addEventListener("click", () => goOperarFromAnalise());
     const btnAnalisePlay = el("btnAnalisePlay");
     if (btnAnalisePlay) btnAnalisePlay.addEventListener("click", () => playFromAnalise());
-    el("btnPlay").addEventListener("click", () => startSession());
-    el("btnPause").addEventListener("click", () => pauseSession());
-    el("btnStop").addEventListener("click", () => stopSession());
+    const btnPlay = el("btnPlay");
+    if (btnPlay) btnPlay.addEventListener("click", () => startSession());
+    const btnPause = el("btnPause");
+    if (btnPause) btnPause.addEventListener("click", () => pauseSession());
+    const btnStop = el("btnStop");
+    if (btnStop) btnStop.addEventListener("click", () => stopSession());
     el("btnDisconnect").addEventListener("click", () => disconnect());
     const modePaper = el("modePaper");
     const modeReal = el("modeReal");
@@ -2885,17 +2890,11 @@
       if (state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
         state.tradingMode = "PAPER";
       }
-      // Pré-carrega símbolos Bybit (público) para o botão abrir rápido — sem misturar UI.
+      // Bybit UI vive em /bybit — dashboard só Deriv. Contagem pública opcional no log.
       try {
         await loadBybitSymbols();
-        renderBybitSymbolSelect();
       } catch (be) {
-        pushHistory("Bybit: ainda em ligação (" + (be.message || String(be)) + ")", "stop");
-        const note = el("bybitLinkingNote");
-        if (note) {
-          note.hidden = false;
-          note.textContent = "Bybit: ainda em ligação…";
-        }
+        pushHistory("Bybit (/bybit): " + (be.message || String(be)), "stop");
       }
       {
         state.panel = "digits";
@@ -2910,13 +2909,11 @@
       renderChips();
       renderAllMarketPanelSelects();
       pushHistory(
-        "Pronto · Deriv ligado · painéis dígitos/forex/metais/cripto. Bybit = /bybit (futures USDT, " +
+        "Pronto · Deriv (dígitos/forex/metais/cripto feed). Bybit = /bybit (" +
           state.bybitSymbols.length +
-          " pares" +
+          " pares USDT" +
           (state.bybitKeysConfigured ? ", chaves OK" : "") +
-          "). Modo " +
-          state.tradingMode +
-          ".",
+          ").",
         "",
       );
       updateSourceUI();
