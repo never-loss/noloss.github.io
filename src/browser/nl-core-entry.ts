@@ -26,8 +26,19 @@ export {
   strategyLibrary,
   dailyTrendAtrBreakout,
   dailyTrendStrategySet,
+  lucroRapidoStrategySet,
+  lossZeroStrategySet,
+  STRATEGY_PRESETS,
+  strategyPreset,
+  strategiesForPreset,
 } from "../core/strategies.ts";
-export type { Strategy, Signal } from "../core/strategies.ts";
+export type {
+  Strategy,
+  Signal,
+  StrategyPreset,
+  StrategyPresetId,
+  StrategyPresetGateHints,
+} from "../core/strategies.ts";
 
 export { feasible, maxStopFromMultiplier } from "../core/feasible.ts";
 

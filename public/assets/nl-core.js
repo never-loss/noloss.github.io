@@ -28,6 +28,7 @@ var NL = (() => {
     MAX_SESSION_MS: () => MAX_SESSION_MS,
     MIN_STAKE: () => MIN_STAKE,
     MT5_CRYPTO_STATUS: () => MT5_CRYPTO_STATUS,
+    STRATEGY_PRESETS: () => STRATEGY_PRESETS,
     cryptoBaseLabel: () => cryptoBaseLabel,
     cryptoSourceOf: () => cryptoSourceOf,
     dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
@@ -43,6 +44,8 @@ var NL = (() => {
     isOptionsFeedOnly: () => isOptionsFeedOnly,
     isScheduledOpen: () => isScheduledOpen,
     listAllCryptoUsd: () => listAllCryptoUsd,
+    lossZeroStrategySet: () => lossZeroStrategySet,
+    lucroRapidoStrategySet: () => lucroRapidoStrategySet,
     marketOf: () => marketOf,
     marketStatus: () => marketStatus,
     maxStopFromMultiplier: () => maxStopFromMultiplier,
@@ -51,7 +54,9 @@ var NL = (() => {
     nextCandleEnd: () => nextCandleEnd,
     parseActiveSymbols: () => parseActiveSymbols,
     parseCandlesMessage: () => parseCandlesMessage,
+    strategiesForPreset: () => strategiesForPreset,
     strategyLibrary: () => strategyLibrary,
+    strategyPreset: () => strategyPreset,
     summarizeMarkets: () => summarizeMarkets
   });
 
@@ -749,6 +754,83 @@ var NL = (() => {
       dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
       dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 1 })
     ];
+  }
+  function lucroRapidoStrategySet() {
+    return [
+      emaCross({ fast: 9, slow: 21 }),
+      emaCross({ fast: 12, slow: 26 }),
+      macdCross({ fast: 8, slow: 17, signal: 9 }),
+      bollingerBreakout({ period: 20, k: 2 }),
+      rsiReversion({ period: 7, low: 20, high: 80 }),
+      stochasticCross({ k: 14, d: 3, low: 20, high: 80 }),
+      dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 0.5, minAdx: 20 })
+    ];
+  }
+  function lossZeroStrategySet() {
+    return [
+      confluence({
+        strategies: [emaCross({ fast: 12, slow: 26 }), adxTrend({ period: 14, minAdx: 25 })],
+        minAgree: 2,
+        hold: 3
+      }),
+      confluence({
+        strategies: [macdCross({ fast: 12, slow: 26, signal: 9 }), adxTrend({ period: 14, minAdx: 20 })],
+        minAgree: 2,
+        hold: 3
+      }),
+      confluence({
+        strategies: [rsiReversion({ period: 14, low: 30, high: 70 }), bollingerReversion({ period: 20, k: 2 })],
+        minAgree: 2,
+        hold: 3
+      }),
+      confluence({
+        strategies: [stochasticCross({ k: 14, d: 3, low: 20, high: 80 }), rsiReversion({ period: 14, low: 30, high: 70 })],
+        minAgree: 2,
+        hold: 3
+      }),
+      adxTrend({ period: 14, minAdx: 25 }),
+      dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
+      dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 1 })
+    ];
+  }
+  var STRATEGY_PRESETS = [
+    {
+      id: "lucro_rapido",
+      label: "Lucro r\xE1pido",
+      description: "Sinais mais curtos (EMA/MACD/RSI r\xE1pidos). Stake fixa \xB7 porta de evid\xEAncia \xB7 NO TRADE se falhar \xB7 sem martingale. N\xE3o garante lucro.",
+      preferredGate: { tpR: 1.5, maxBars: 12, slAtr: 1.2, minLabel: "PRELIMINARY" },
+      strategies: lucroRapidoStrategySet
+    },
+    {
+      id: "loss_zero",
+      label: "Loss zero",
+      description: "Mais seletivo (conflu\xEAncia + ADX + tend\xEAncia di\xE1ria). Exige evid\xEAncia mais forte. N\xC3O promete zero perdas \u2014 NO TRADE se a porta falhar. Stake fixa, sem martingale.",
+      preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "EVIDENCE" },
+      strategies: lossZeroStrategySet
+    },
+    {
+      id: "tendencia_diaria",
+      label: "Tend\xEAncia di\xE1ria / breakout-ATR",
+      description: "S\xF3 breakouts ATR de tend\xEAncia di\xE1ria. Ainda exige walk-forward e pode fechar em NO TRADE.",
+      preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "PRELIMINARY" },
+      strategies: dailyTrendStrategySet
+    },
+    {
+      id: "biblioteca",
+      label: "Biblioteca completa",
+      description: "Toda a biblioteca: a porta escolhe a que passa fora da amostra. Sem martingale \xB7 stake fixa \xB7 paper.",
+      preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "PRELIMINARY" },
+      strategies: strategyLibrary
+    }
+  ];
+  function strategyPreset(id) {
+    const found = STRATEGY_PRESETS.find((p) => p.id === id);
+    return found ?? null;
+  }
+  function strategiesForPreset(id) {
+    const p = strategyPreset(id);
+    if (!p) throw new RangeError(`preset de estrat\xE9gia desconhecido: ${id}`);
+    return p.strategies();
   }
 
   // src/core/feasible.ts

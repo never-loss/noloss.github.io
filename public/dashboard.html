@@ -42,7 +42,7 @@
             <div class="stat"><div class="k">Pior queda</div><div class="v" id="statDd">—</div></div>
           </div>
           <div class="btn-row" style="margin-bottom:12px">
-            <button type="button" class="ctrl play" id="btnPlay" disabled title="Seleciona uma conta primeiro">PLAY</button>
+            <button type="button" class="ctrl play" id="btnPlay" disabled title="Seleciona conta + estratégia primeiro">PLAY</button>
             <button type="button" class="ctrl pause" id="btnPause" disabled>PAUSE</button>
             <button type="button" class="ctrl stop" id="btnStop" disabled>STOP</button>
           </div>
@@ -103,15 +103,33 @@
             <label for="minMultiplier">Mult. mín.</label>
             <input id="minMultiplier" type="number" min="1" step="1" value="100">
           </div>
-          <div class="field" id="strategyField">
-            <label for="strategySet">Estratégias (porta)</label>
-            <select id="strategySet">
-              <option value="all" selected>Todas (biblioteca)</option>
-              <option value="daily">Tendência diária / breakout-ATR</option>
+          <div class="field required" id="strategyField">
+            <label for="strategySet">Estratégia (obrigatório)</label>
+            <select id="strategySet" required>
+              <option value="" selected disabled>— Escolhe uma estratégia —</option>
+              <option value="lucro_rapido">Lucro rápido</option>
+              <option value="loss_zero">Loss zero</option>
+              <option value="tendencia_diaria">Tendência diária / breakout-ATR</option>
+              <option value="biblioteca">Biblioteca completa</option>
             </select>
           </div>
         </div>
         <p id="strategyHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
+        <div class="preplay-box" id="prePlayBox">
+          <div class="preplay-head">
+            <strong>Análise pré-PLAY</strong>
+            <button type="button" class="ghost" id="btnAnalyze" disabled title="Escolhe conta + estratégia">Analisar</button>
+          </div>
+          <p id="prePlayStatus" class="preplay-status muted">Escolhe conta DEMO/REAL e uma estratégia (ex.: Lucro rápido ou Loss zero), depois Analisar. Sem martingale · stake fixa · paper.</p>
+          <div class="preplay-metrics" id="prePlayMetrics" hidden>
+            <div class="gm"><span class="gk">Resultado</span><span class="gv" id="prePlayResult">—</span></div>
+            <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="prePlayLabel">—</span></div>
+            <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="prePlayOos">—</span></div>
+            <div class="gm"><span class="gk">Média R</span><span class="gv" id="prePlayMeanR">—</span></div>
+            <div class="gm"><span class="gk">p-valor</span><span class="gv" id="prePlayP">—</span></div>
+            <div class="gm"><span class="gk">Melhor</span><span class="gv" id="prePlayStrat">—</span></div>
+          </div>
+        </div>
         <div class="symbols-grid" id="symbolChips"></div>
       </section>
 

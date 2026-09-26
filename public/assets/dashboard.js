@@ -42,7 +42,9 @@
     stake: 1,
     minutes: 60,
     minMultiplier: 100,
-    strategySet: "all",
+    strategySet: "",
+    prePlayGate: null,
+    prePlayOk: false,
     revalidateEvery: 12,
   };
 
@@ -487,46 +489,186 @@
     state.stake = Number(el("stake").value) || 1;
     state.minutes = Math.min(180, Math.max(1, Number(el("minutes").value) || 60));
     state.minMultiplier = Number(el("minMultiplier").value) || 100;
-    state.strategySet = el("strategySet").value || "all";
+    state.strategySet = el("strategySet").value || "";
   }
 
   function updateButtons() {
     const hasAccount = !!resolveSelectedAccount();
+    const hasStrategy = !!(el("strategySet") && el("strategySet").value);
     const running = state.session && state.session.status === "RUNNING";
     const paused = state.session && state.session.status === "PAUSED";
     const stopped = !state.session || state.session.status === "STOPPED";
-    el("btnPlay").disabled = !hasAccount || running;
-    el("btnPlay").title = hasAccount
-      ? "Iniciar sessão paper / simulado"
-      : "Seleciona DEMO ou REAL primeiro";
+    el("btnPlay").disabled = !hasAccount || !hasStrategy || running;
+    el("btnPlay").title = !hasAccount
+      ? "Seleciona DEMO ou REAL primeiro"
+      : !hasStrategy
+        ? "Escolhe uma estratégia (Lucro rápido / Loss zero / …)"
+        : "Iniciar sessão paper / simulado (após análise pré-PLAY)";
+    const btnA = el("btnAnalyze");
+    if (btnA) {
+      btnA.disabled = !hasAccount || !hasStrategy || running;
+      btnA.title = !hasAccount
+        ? "Seleciona conta primeiro"
+        : !hasStrategy
+          ? "Escolhe estratégia primeiro"
+          : "Correr porta de evidência sem abrir sessão";
+    }
     el("btnPause").disabled = !running;
     el("btnStop").disabled = stopped && !state.running;
     void paused;
   }
 
 
+  function currentPreset() {
+    if (!state.strategySet) return null;
+    if (typeof NL.strategyPreset === "function") return NL.strategyPreset(state.strategySet);
+    return null;
+  }
+
   function resolveStrategies() {
-    const raw =
-      state.strategySet === "daily" && typeof NL.dailyTrendStrategySet === "function"
-        ? NL.dailyTrendStrategySet()
-        : NL.strategyLibrary();
+    if (!state.strategySet) throw new Error("Estratégia obrigatória");
+    let raw;
+    if (typeof NL.strategiesForPreset === "function") {
+      raw = NL.strategiesForPreset(state.strategySet);
+    } else if (state.strategySet === "lucro_rapido" && typeof NL.lucroRapidoStrategySet === "function") {
+      raw = NL.lucroRapidoStrategySet();
+    } else if (state.strategySet === "loss_zero" && typeof NL.lossZeroStrategySet === "function") {
+      raw = NL.lossZeroStrategySet();
+    } else if (state.strategySet === "tendencia_diaria" || state.strategySet === "daily") {
+      raw = NL.dailyTrendStrategySet();
+    } else {
+      raw = NL.strategyLibrary();
+    }
+    const preset = currentPreset();
+    const slAtr = (preset && preset.preferredGate && preset.preferredGate.slAtr) || 1.5;
     return raw.map((s) =>
-      NL.feasible(s, { slAtr: 1.5, maxStopFraction: 1 / state.minMultiplier }),
+      NL.feasible(s, { slAtr: slAtr, maxStopFraction: 1 / state.minMultiplier }),
     );
+  }
+
+  function gateOptsForPreset(costFraction, trainSize, testSize) {
+    const preset = currentPreset();
+    const g = (preset && preset.preferredGate) || {};
+    return {
+      slAtr: g.slAtr || 1.5,
+      tpR: g.tpR || 2,
+      maxBars: g.maxBars || 24,
+      costFraction: costFraction,
+      trainSize: trainSize,
+      testSize: testSize,
+      minLabel: g.minLabel || "PRELIMINARY",
+    };
   }
 
   function updateStrategyHint() {
     const hint = el("strategyHint");
     if (!hint) return;
-    if (state.strategySet === "daily") {
+    const preset = currentPreset();
+    if (!state.strategySet || !preset) {
       hint.textContent =
-        "Conjunto: tendência diária / breakout-ATR. Ainda exige walk-forward, p-valor e NO TRADE se falhar. Sem martingale.";
-    } else {
-      const n = typeof NL.strategyLibrary === "function" ? NL.strategyLibrary().length : "?";
-      hint.textContent =
-        "Biblioteca completa (" +
-        n +
-        "): a porta escolhe a que passa no teste fora da amostra. Inclui tendência-diária breakout-ATR.";
+        "Obrigatório: escolhe Lucro rápido, Loss zero, tendência diária ou biblioteca. Stake fixa · NO TRADE se a porta falhar · sem martingale · paper.";
+      return;
+    }
+    hint.textContent = preset.description;
+  }
+
+  function setPrePlayUI(result, statusText) {
+    const status = el("prePlayStatus");
+    const metrics = el("prePlayMetrics");
+    if (!status) return;
+    state.prePlayGate = result || null;
+    state.prePlayOk = !!(result && result.allowed);
+    status.classList.remove("open", "closed", "muted");
+    if (!result) {
+      status.classList.add("muted");
+      status.textContent =
+        statusText ||
+        "Escolhe conta DEMO/REAL e uma estratégia (ex.: Lucro rápido ou Loss zero), depois Analisar. Sem martingale · stake fixa · paper.";
+      if (metrics) metrics.hidden = true;
+      return;
+    }
+    status.classList.add(result.allowed ? "open" : "closed");
+    status.textContent =
+      statusText ||
+      (typeof NL.formatCandleGate === "function"
+        ? NL.formatCandleGate(result)
+        : result.allowed
+          ? "PORTA ABERTA — " + result.reason
+          : "NO TRADE — " + result.reason);
+    if (metrics) {
+      metrics.hidden = false;
+      el("prePlayResult").textContent = result.allowed ? "PORTA ABERTA" : "NO TRADE";
+      el("prePlayLabel").textContent = result.label || "—";
+      el("prePlayOos").textContent = String(result.oosTrades != null ? result.oosTrades : "—");
+      el("prePlayMeanR").textContent =
+        result.meanR != null ? (result.meanR >= 0 ? "+" : "") + Number(result.meanR).toFixed(3) + "R" : "—";
+      el("prePlayP").textContent =
+        result.pValue != null ? Number(result.pValue).toFixed(4) : "—";
+      el("prePlayStrat").textContent =
+        result.strategy && result.strategy.name ? result.strategy.name : "—";
+    }
+  }
+
+  async function runPrePlayAnalysis() {
+    resolveSelectedAccount();
+    if (!state.selectedAccount) {
+      setPrePlayUI(null, "Seleciona DEMO ou REAL antes de analisar.");
+      updateButtons();
+      return null;
+    }
+    readForm();
+    if (!state.strategySet) {
+      setPrePlayUI(null, "Escolhe uma estratégia (Lucro rápido / Loss zero / …) antes de analisar.");
+      updateButtons();
+      return null;
+    }
+    if (!state.symbol) {
+      setPrePlayUI(null, "Sem símbolo selecionado.");
+      return null;
+    }
+    const btnA = el("btnAnalyze");
+    if (btnA) btnA.disabled = true;
+    setPrePlayUI(null, "A carregar histórico para análise pré-PLAY de " + state.symbol + "…");
+    try {
+      const kind = NL.marketOf(state.symbol);
+      const costFraction = kind ? NL.MARKETS[kind].assumedCostFraction : 0.001;
+      const history = await fetchHistory(state.symbol, state.granularity, 3500);
+      if (!history.length || history.length < 1500) {
+        const closed = {
+          allowed: false,
+          reason: "histórico insuficiente (" + history.length + ")",
+          label: "INSUFFICIENT",
+          oosTrades: 0,
+          meanR: 0,
+          pValue: null,
+          strategy: null,
+        };
+        setPrePlayUI(closed);
+        return closed;
+      }
+      const n = history.length;
+      const trainSize = Math.min(1000, Math.floor(n * 0.4));
+      const testSize = Math.min(500, Math.floor(n * 0.2));
+      const strategies = resolveStrategies();
+      const gate = gateOptsForPreset(costFraction, trainSize, testSize);
+      const result = NL.evaluateCandleGate(history, strategies, gate);
+      setPrePlayUI(result);
+      pushHistory(
+        "Análise pré-PLAY · " +
+          (currentPreset() ? currentPreset().label : state.strategySet) +
+          " · " +
+          (result.allowed ? "PORTA ABERTA" : "NO TRADE") +
+          " · " +
+          result.reason,
+        result.allowed ? "open" : "stop",
+      );
+      return result;
+    } catch (e) {
+      setPrePlayUI(null, "Falha na análise: " + (e.message || String(e)));
+      pushHistory("Falha análise pré-PLAY: " + (e.message || String(e)), "stop");
+      return null;
+    } finally {
+      updateButtons();
     }
   }
 
@@ -538,6 +680,11 @@
       return;
     }
     readForm();
+    if (!state.strategySet) {
+      pushHistory("Escolhe uma estratégia (Lucro rápido / Loss zero / …) antes de PLAY.", "stop");
+      updateButtons();
+      return;
+    }
     if (!state.symbol) {
       pushHistory("Sem símbolo selecionado", "stop");
       return;
@@ -595,21 +742,25 @@
       const n = history.length;
       const trainSize = Math.min(1000, Math.floor(n * 0.4));
       const testSize = Math.min(500, Math.floor(n * 0.2));
-      const slAtr = 1.5;
-      const tpR = 2;
-      const maxBars = 24;
       const strategies = resolveStrategies();
+      const gate = gateOptsForPreset(costFraction, trainSize, testSize);
+      const slAtr = gate.slAtr;
+      const tpR = gate.tpR;
+      const maxBars = gate.maxBars;
+      // Análise pré-PLAY explícita (mesmo critério da porta) antes de abrir a sessão paper.
+      const pre = NL.evaluateCandleGate(history, strategies, gate);
+      setPrePlayUI(pre);
+      pushHistory(
+        "Análise pré-PLAY · " +
+          (currentPreset() ? currentPreset().label : state.strategySet) +
+          " · " +
+          (pre.allowed ? "PORTA ABERTA" : "NO TRADE") +
+          " · paper / simulado",
+        pre.allowed ? "open" : "stop",
+      );
       state.controller = new NL.CandleGateController({
         strategies: strategies,
-        gate: {
-          slAtr: slAtr,
-          tpR: tpR,
-          maxBars: maxBars,
-          costFraction: costFraction,
-          trainSize: trainSize,
-          testSize: testSize,
-          minLabel: "PRELIMINARY",
-        },
+        gate: gate,
         revalidateEvery: state.revalidateEvery,
         maxBuffer: 3500,
         initial: history,
@@ -762,9 +913,15 @@
       renderChips();
     });
     el("strategySet").addEventListener("change", () => {
-      state.strategySet = el("strategySet").value || "all";
+      state.strategySet = el("strategySet").value || "";
+      state.prePlayOk = false;
+      state.prePlayGate = null;
       updateStrategyHint();
+      setPrePlayUI(null);
+      updateButtons();
     });
+    const btnAnalyze = el("btnAnalyze");
+    if (btnAnalyze) btnAnalyze.addEventListener("click", () => runPrePlayAnalysis());
     el("btnPlay").addEventListener("click", () => startSession());
     el("btnPause").addEventListener("click", () => pauseSession());
     el("btnStop").addEventListener("click", () => stopSession());
@@ -811,7 +968,7 @@
       await connectWs();
       await loadSymbols();
       pushHistory(
-        "Pronto. Escolhe DEMO ou REAL, depois PLAY. Paper trading apenas — sem compras reais.",
+        "Pronto. Escolhe DEMO/REAL + estratégia (Lucro rápido / Loss zero). Analisa, depois PLAY. Paper apenas — sem compras reais.",
         "",
       );
     } catch (e) {

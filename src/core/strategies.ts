@@ -293,3 +293,121 @@ export function dailyTrendStrategySet(): Strategy[] {
     dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 1.0 }),
   ];
 }
+
+/** IDs dos presets do seletor obrigatório no painel. */
+export type StrategyPresetId = "lucro_rapido" | "loss_zero" | "tendencia_diaria" | "biblioteca";
+
+export interface StrategyPresetGateHints {
+  /** Take-profit em múltiplos de R (ainda stake fixa — sem martingale). */
+  tpR?: number;
+  maxBars?: number;
+  slAtr?: number;
+  /** Loss zero pede evidência mais forte; Lucro rápido aceita PRELIMINARY. */
+  minLabel?: "PRELIMINARY" | "EVIDENCE";
+}
+
+export interface StrategyPreset {
+  id: StrategyPresetId;
+  /** Nome visível no painel (ex.: "Lucro rápido"). */
+  label: string;
+  /** Texto honesto: porta de evidência + NO TRADE; sem promessa de lucro. */
+  description: string;
+  preferredGate?: StrategyPresetGateHints;
+  strategies(): Strategy[];
+}
+
+/**
+ * Lucro rápido: sinais mais curtos / frequentes (EMA rápidas, MACD curto, RSI 7, breakouts).
+ * Continua a passar pela porta — pode dar NO TRADE. Stake fixa, sem martingale.
+ */
+export function lucroRapidoStrategySet(): Strategy[] {
+  return [
+    emaCross({ fast: 9, slow: 21 }),
+    emaCross({ fast: 12, slow: 26 }),
+    macdCross({ fast: 8, slow: 17, signal: 9 }),
+    bollingerBreakout({ period: 20, k: 2 }),
+    rsiReversion({ period: 7, low: 20, high: 80 }),
+    stochasticCross({ k: 14, d: 3, low: 20, high: 80 }),
+    dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 0.5, minAdx: 20 }),
+  ];
+}
+
+/**
+ * Loss zero: mais seletivo (confluência + ADX alto + tendência diária).
+ * Nome aspiracional da marca — NÃO garante zero perdas; NO TRADE se a porta falhar.
+ */
+export function lossZeroStrategySet(): Strategy[] {
+  return [
+    confluence({
+      strategies: [emaCross({ fast: 12, slow: 26 }), adxTrend({ period: 14, minAdx: 25 })],
+      minAgree: 2,
+      hold: 3,
+    }),
+    confluence({
+      strategies: [macdCross({ fast: 12, slow: 26, signal: 9 }), adxTrend({ period: 14, minAdx: 20 })],
+      minAgree: 2,
+      hold: 3,
+    }),
+    confluence({
+      strategies: [rsiReversion({ period: 14, low: 30, high: 70 }), bollingerReversion({ period: 20, k: 2 })],
+      minAgree: 2,
+      hold: 3,
+    }),
+    confluence({
+      strategies: [stochasticCross({ k: 14, d: 3, low: 20, high: 80 }), rsiReversion({ period: 14, low: 30, high: 70 })],
+      minAgree: 2,
+      hold: 3,
+    }),
+    adxTrend({ period: 14, minAdx: 25 }),
+    dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
+    dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 1.0 }),
+  ];
+}
+
+/** Catálogo do seletor do painel (obrigatório antes de PLAY). */
+export const STRATEGY_PRESETS: readonly StrategyPreset[] = [
+  {
+    id: "lucro_rapido",
+    label: "Lucro rápido",
+    description:
+      "Sinais mais curtos (EMA/MACD/RSI rápidos). Stake fixa · porta de evidência · NO TRADE se falhar · sem martingale. Não garante lucro.",
+    preferredGate: { tpR: 1.5, maxBars: 12, slAtr: 1.2, minLabel: "PRELIMINARY" },
+    strategies: lucroRapidoStrategySet,
+  },
+  {
+    id: "loss_zero",
+    label: "Loss zero",
+    description:
+      "Mais seletivo (confluência + ADX + tendência diária). Exige evidência mais forte. NÃO promete zero perdas — NO TRADE se a porta falhar. Stake fixa, sem martingale.",
+    preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "EVIDENCE" },
+    strategies: lossZeroStrategySet,
+  },
+  {
+    id: "tendencia_diaria",
+    label: "Tendência diária / breakout-ATR",
+    description:
+      "Só breakouts ATR de tendência diária. Ainda exige walk-forward e pode fechar em NO TRADE.",
+    preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "PRELIMINARY" },
+    strategies: dailyTrendStrategySet,
+  },
+  {
+    id: "biblioteca",
+    label: "Biblioteca completa",
+    description:
+      "Toda a biblioteca: a porta escolhe a que passa fora da amostra. Sem martingale · stake fixa · paper.",
+    preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "PRELIMINARY" },
+    strategies: strategyLibrary,
+  },
+];
+
+export function strategyPreset(id: string): StrategyPreset | null {
+  const found = STRATEGY_PRESETS.find((p) => p.id === id);
+  return found ?? null;
+}
+
+/** Estratégias do preset; lança se o id for desconhecido (select obrigatório). */
+export function strategiesForPreset(id: string): Strategy[] {
+  const p = strategyPreset(id);
+  if (!p) throw new RangeError(`preset de estratégia desconhecido: ${id}`);
+  return p.strategies();
+}

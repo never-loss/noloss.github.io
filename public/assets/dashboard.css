@@ -449,3 +449,48 @@ button.ghost:hover { color: var(--text); }
   border-style: dashed;
   opacity: 0.95;
 }
+
+/* Strategy picker (required) + pré-PLAY analysis */
+.field.required label::after {
+  content: " *";
+  color: var(--warn);
+}
+.field.required select:invalid,
+#strategySet:required:invalid {
+  border-color: rgba(251, 191, 36, 0.55);
+}
+.field.required select:valid {
+  border-color: rgba(52, 211, 153, 0.45);
+}
+.preplay-box {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.35);
+  padding: 12px 14px;
+  margin: 0 0 12px;
+}
+.preplay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.preplay-head strong {
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+.preplay-status {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: left;
+}
+.preplay-status.open { color: var(--good); }
+.preplay-status.closed { color: var(--bad); }
+.preplay-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
