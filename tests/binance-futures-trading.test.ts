@@ -1,13 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync, createPublicKey, verify } from "node:crypto";
 import {
   signBinanceQuery,
+  signBinanceQueryEd25519,
   buildSignedQuery,
   buildPlaceMarketOrder,
   buildCancelOrder,
   quantityFromFixedStake,
   normalizeTradingMode,
   keysConfigured,
+  resolveAuthMode,
+  resolveSignMaterial,
+  normalizePem,
+  looksLikePem,
   DEFAULT_TRADING_MODE,
   BINANCE_ENV_KEY_NAMES,
 } from "../src/core/binance-futures-trading.ts";
@@ -30,7 +36,7 @@ test("signBinanceQuery HMAC-SHA256 estável", () => {
   assert.equal(signBinanceQuery("symbol=BTCUSDT&side=BUY&timestamp=1", "secret"), sig);
 });
 
-test("buildSignedQuery acrescenta timestamp e signature", () => {
+test("buildSignedQuery acrescenta timestamp e signature (HMAC)", () => {
   const q = buildSignedQuery({ symbol: "BTCUSDT", side: "BUY" }, "secret", 1_700_000_000_000);
   assert.ok(q.includes("symbol=BTCUSDT"));
   assert.ok(q.includes("side=BUY"));
@@ -38,6 +44,66 @@ test("buildSignedQuery acrescenta timestamp e signature", () => {
   assert.ok(q.includes("&signature="));
   const sig = q.split("&signature=")[1]!;
   assert.equal(sig.length, 64);
+  assert.match(sig, /^[a-f0-9]+$/);
+});
+
+test("Ed25519: normalizePem e looksLikePem", () => {
+  const escaped =
+    "-----BEGIN PRIVATE KEY-----\\nMC4CAQAwBQYDK2VwBCIEIJ+\\n-----END PRIVATE KEY-----\\n";
+  const norm = normalizePem(escaped);
+  assert.ok(norm.includes("\n"));
+  assert.ok(!norm.includes("\\n"));
+  assert.equal(looksLikePem(escaped), true);
+  assert.equal(looksLikePem("hmac-secret-not-pem"), false);
+  assert.equal(looksLikePem(""), false);
+  assert.equal(looksLikePem(undefined), false);
+});
+
+test("Ed25519: assina payload conhecido e verifica com chave pública", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const pubPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+  const payload = "symbol=BTCUSDT&side=BUY&timestamp=1700000000000";
+  const sigB64 = signBinanceQueryEd25519(payload, pem);
+  assert.ok(sigB64.length > 40);
+  assert.match(sigB64, /^[A-Za-z0-9+/=]+$/);
+  const ok = verify(
+    null,
+    Buffer.from(payload, "utf8"),
+    createPublicKey(pubPem),
+    Buffer.from(sigB64, "base64"),
+  );
+  assert.equal(ok, true);
+  // PEM com \\n escapes (como no Vercel env)
+  const escaped = pem.replace(/\n/g, "\\n");
+  const sig2 = signBinanceQueryEd25519(payload, escaped);
+  assert.equal(sig2, sigB64);
+});
+
+test("buildSignedQuery Ed25519: signature base64 URL-encoded", () => {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const q = buildSignedQuery(
+    { symbol: "ETHUSDT", side: "SELL" },
+    { mode: "ed25519", privateKeyPem: pem },
+    1_700_000_000_000,
+  );
+  assert.ok(q.includes("symbol=ETHUSDT"));
+  assert.ok(q.includes("&signature="));
+  const encoded = q.split("&signature=")[1]!;
+  // Pode conter %2B %2F %3D se a base64 tiver +/= 
+  const decoded = decodeURIComponent(encoded);
+  assert.match(decoded, /^[A-Za-z0-9+/=]+$/);
+  assert.notEqual(decoded.length, 64); // não é hex HMAC
+});
+
+test("buildSignedQuery auto-deteta PEM na string", () => {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const q = buildSignedQuery({ symbol: "BTCUSDT" }, pem, 1000);
+  const sig = decodeURIComponent(q.split("&signature=")[1]!);
+  assert.match(sig, /^[A-Za-z0-9+/=]+$/);
+  assert.ok(sig.length > 40);
 });
 
 test("buildPlaceMarketOrder: PAPER / gate / sessão bloqueiam", () => {
@@ -88,6 +154,27 @@ test("buildPlaceMarketOrder: REAL + gate monta POST assinado", () => {
   assert.ok(built.query.includes("signature="));
 });
 
+test("buildPlaceMarketOrder REAL com Ed25519", () => {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const built = buildPlaceMarketOrder(
+    {
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: 0.001,
+      evidenceAllowed: true,
+      mode: "REAL",
+      sessionElapsedMs: 0,
+    },
+    { mode: "ed25519", privateKeyPem: pem },
+    1_700_000_000_000,
+  );
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  const sig = decodeURIComponent(built.query.split("&signature=")[1]!);
+  assert.match(sig, /^[A-Za-z0-9+/=]+$/);
+});
+
 test("buildCancelOrder exige REAL e id", () => {
   const paper = buildCancelOrder({ symbol: "BTCUSDT", orderId: 1, mode: "PAPER" }, "secret");
   assert.equal(paper.ok, false);
@@ -109,10 +196,12 @@ test("quantityFromFixedStake sem martingale", () => {
   assert.throws(() => quantityFromFixedStake(1, 0), RangeError);
 });
 
-test("keysConfigured e nomes de env", () => {
+test("keysConfigured / resolveAuthMode / env names", () => {
   assert.equal(BINANCE_ENV_KEY_NAMES.apiKey, "BINANCE_API_KEY");
   assert.equal(BINANCE_ENV_KEY_NAMES.apiSecret, "BINANCE_API_SECRET");
+  assert.equal(BINANCE_ENV_KEY_NAMES.apiPrivateKey, "BINANCE_API_PRIVATE_KEY");
   assert.equal(keysConfigured({}), false);
+  assert.equal(resolveAuthMode({}), "none");
   assert.equal(keysConfigured({ BINANCE_API_KEY: "short", BINANCE_API_SECRET: "short" }), false);
   assert.equal(
     keysConfigured({
@@ -121,4 +210,50 @@ test("keysConfigured e nomes de env", () => {
     }),
     true,
   );
+  assert.equal(
+    resolveAuthMode({
+      BINANCE_API_KEY: "abcdefghij",
+      BINANCE_API_SECRET: "klmnopqrst",
+    }),
+    "hmac",
+  );
+
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  assert.equal(
+    resolveAuthMode({
+      BINANCE_API_KEY: "abcdefghij",
+      BINANCE_API_PRIVATE_KEY: pem,
+    }),
+    "ed25519",
+  );
+  assert.equal(
+    keysConfigured({
+      BINANCE_API_KEY: "abcdefghij",
+      BINANCE_API_PRIVATE_KEY: pem,
+    }),
+    true,
+  );
+  // PRIVATE_KEY tem prioridade sobre SECRET
+  assert.equal(
+    resolveAuthMode({
+      BINANCE_API_KEY: "abcdefghij",
+      BINANCE_API_PRIVATE_KEY: pem,
+      BINANCE_API_SECRET: "klmnopqrstuvwxyz",
+    }),
+    "ed25519",
+  );
+  // Secret que parece PEM → ed25519
+  assert.equal(
+    resolveAuthMode({
+      BINANCE_API_KEY: "abcdefghij",
+      BINANCE_API_SECRET: pem,
+    }),
+    "ed25519",
+  );
+  const mat = resolveSignMaterial({
+    BINANCE_API_PRIVATE_KEY: pem.replace(/\n/g, "\\n"),
+  });
+  assert.ok(mat);
+  assert.equal(mat!.mode, "ed25519");
 });

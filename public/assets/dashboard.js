@@ -367,7 +367,7 @@
       realBtn.disabled = !canReal;
       realBtn.title = canReal
         ? "REAL: ordens Futures USDT-M via servidor (porta de evidência + stake fixa + máx 3 h)"
-        : "Indisponível: configura BINANCE_API_KEY e BINANCE_API_SECRET no servidor (nunca no chat)";
+        : "Indisponível: configura BINANCE_API_KEY + BINANCE_API_PRIVATE_KEY (Ed25519) ou BINANCE_API_SECRET no servidor (nunca no chat)";
       realBtn.classList.toggle("active", state.tradingMode === "REAL" && canReal);
       realBtn.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
     }
@@ -376,7 +376,7 @@
         ? (state.tradingMode === "REAL"
           ? "REAL ativo: ordens MARKET só com porta aberta, stake fixa, sem martingale, STOP aos 3 h. Chaves só no servidor."
           : "PAPER / SIMULADO (omissão). Chaves detetadas no servidor — podes mudar para REAL explicitamente.")
-        : "PAPER / SIMULADO (omissão). REAL bloqueado até existirem BINANCE_API_KEY + BINANCE_API_SECRET no servidor. Não colar secrets no chat.";
+        : "PAPER / SIMULADO (omissão). REAL bloqueado até existirem BINANCE_API_KEY + BINANCE_API_PRIVATE_KEY (Ed25519) ou BINANCE_API_SECRET no servidor. Não colar secrets no chat.";
     }
   }
 
@@ -402,7 +402,7 @@
   function setTradingMode(next) {
     const mode = String(next || "").toUpperCase() === "REAL" ? "REAL" : "PAPER";
     if (mode === "REAL" && !state.binanceKeysConfigured) {
-      pushHistory("REAL indisponível: faltam BINANCE_API_KEY / BINANCE_API_SECRET no servidor.", "stop");
+      pushHistory("REAL indisponível: faltam BINANCE_API_KEY + BINANCE_API_PRIVATE_KEY (Ed25519) ou BINANCE_API_SECRET no servidor.", "stop");
       return false;
     }
     if (state.running) {

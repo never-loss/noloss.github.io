@@ -1,31 +1,67 @@
 // Ordens REAL Binance USDⓈ-M (assinadas no servidor). Omissão / browser sem chaves = bloqueado.
 // POST = place MARKET; DELETE = cancel. Porta de evidência obrigatória. Sem martingale.
-// Secrets: BINANCE_API_KEY, BINANCE_API_SECRET (opcional BINANCE_FUTURES_BASE_URL).
+// Auth: Ed25519 (BINANCE_API_PRIVATE_KEY PEM) preferido; HMAC (BINANCE_API_SECRET) fallback.
+// Manter em sync com src/core/binance-futures-trading.ts
 
-import { createHmac } from "node:crypto";
+import { createHmac, createPrivateKey, sign } from "node:crypto";
 
 const MAX_SESSION_MS = 3 * 60 * 60 * 1000;
 const MIN_STAKE = 0.5;
 
+function normalizePem(raw) {
+  return String(raw)
+    .replace(/\\n/g, "\n")
+    .replace(/\r\n/g, "\n")
+    .trim();
+}
+
+function looksLikePem(raw) {
+  if (raw == null || typeof raw !== "string") return false;
+  const n = normalizePem(raw);
+  return (
+    n.includes("-----BEGIN PRIVATE KEY-----") ||
+    n.includes("-----BEGIN ED25519 PRIVATE KEY-----")
+  );
+}
+
+function futuresBase(env) {
+  return typeof env.BINANCE_FUTURES_BASE_URL === "string" &&
+    /^https:\/\/[a-z0-9.-]+$/i.test(env.BINANCE_FUTURES_BASE_URL.trim())
+    ? env.BINANCE_FUTURES_BASE_URL.trim().replace(/\/$/, "")
+    : "https://fapi.binance.com";
+}
+
+/**
+ * @returns {{ apiKey: string, mode: 'ed25519'|'hmac', signingKey: string, base: string } | null}
+ * signingKey = PEM (ed25519) ou secret HMAC — nunca logar.
+ */
 function keysFromEnv(env) {
   const apiKey = env.BINANCE_API_KEY;
-  const apiSecret = env.BINANCE_API_SECRET;
-  if (!apiKey || !apiSecret || String(apiKey).length <= 8 || String(apiSecret).length <= 8) {
-    return null;
+  if (!apiKey || String(apiKey).length <= 8) return null;
+  const base = futuresBase(env);
+  const pem = env.BINANCE_API_PRIVATE_KEY;
+  if (pem && looksLikePem(pem) && normalizePem(pem).length > 32) {
+    return { apiKey: String(apiKey), mode: "ed25519", signingKey: normalizePem(pem), base };
   }
-  const base =
-    typeof env.BINANCE_FUTURES_BASE_URL === "string" &&
-    /^https:\/\/[a-z0-9.-]+$/i.test(env.BINANCE_FUTURES_BASE_URL.trim())
-      ? env.BINANCE_FUTURES_BASE_URL.trim().replace(/\/$/, "")
-      : "https://fapi.binance.com";
-  return { apiKey: String(apiKey), apiSecret: String(apiSecret), base };
+  const secret = env.BINANCE_API_SECRET;
+  if (secret && looksLikePem(secret) && normalizePem(secret).length > 32) {
+    return { apiKey: String(apiKey), mode: "ed25519", signingKey: normalizePem(secret), base };
+  }
+  if (secret && String(secret).length > 8 && !looksLikePem(secret)) {
+    return { apiKey: String(apiKey), mode: "hmac", signingKey: String(secret), base };
+  }
+  return null;
 }
 
-function sign(query, secret) {
-  return createHmac("sha256", secret).update(query).digest("hex");
+function signQuery(query, mode, signingKey) {
+  if (mode === "ed25519") {
+    const key = createPrivateKey(signingKey);
+    return sign(null, Buffer.from(query, "utf8"), key).toString("base64");
+  }
+  return createHmac("sha256", signingKey).update(query).digest("hex");
 }
 
-function buildSignedQuery(params, apiSecret, timestampMs) {
+function buildSignedQuery(params, mode, signingKey, timestampMs) {
   const entries = [];
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === "") continue;
@@ -34,7 +70,8 @@ function buildSignedQuery(params, apiSecret, timestampMs) {
   entries.push(["timestamp", String(timestampMs)]);
   entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const query = entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
-  return `${query}&signature=${sign(query, apiSecret)}`;
+  const signature = signQuery(query, mode, signingKey);
+  return `${query}&signature=${encodeURIComponent(signature)}`;
 }
 
 function readBody(req) {
@@ -72,7 +109,7 @@ export default async function handler(req, res) {
     return res.status(503).json({
       error: "keys_missing",
       error_description:
-        "Modo REAL indisponível: configura BINANCE_API_KEY e BINANCE_API_SECRET no servidor (Vercel env). Omissão = PAPER.",
+        "Modo REAL indisponível: configura BINANCE_API_KEY e BINANCE_API_PRIVATE_KEY (Ed25519 PEM) ou BINANCE_API_SECRET (HMAC) no servidor (Vercel env). Omissão = PAPER.",
     });
   }
 
@@ -142,7 +179,8 @@ export default async function handler(req, res) {
           quantity,
           recvWindow: 5000,
         },
-        creds.apiSecret,
+        creds.mode,
+        creds.signingKey,
         Date.now(),
       );
       const upstream = await fetch(`${creds.base}/fapi/v1/order?${query}`, {
@@ -171,7 +209,8 @@ export default async function handler(req, res) {
         origClientOrderId,
         recvWindow: 5000,
       },
-      creds.apiSecret,
+      creds.mode,
+      creds.signingKey,
       Date.now(),
     );
     const upstream = await fetch(`${creds.base}/fapi/v1/order?${query}`, {
