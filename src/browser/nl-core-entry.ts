@@ -14,9 +14,6 @@ export {
 } from "../core/crypto-symbols.ts";
 export type { CryptoSource } from "../core/crypto-symbols.ts";
 
-export { MT5_CRYPTO_STATUS, formatMt5StatusBlock } from "../core/mt5-status.ts";
-export type { Mt5StatusInfo, Mt5IntegrationStatus } from "../core/mt5-status.ts";
-
 export { parseActiveSymbols, parseCandlesMessage, summarizeMarkets } from "../core/market-data.ts";
 export type { SymbolInfo, Candle, SymbolsMessage, CandlesMessage } from "../core/market-data.ts";
 

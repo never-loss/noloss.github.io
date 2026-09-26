@@ -76,7 +76,7 @@ async function resolveSymbols(): Promise<string[]> {
   const activeN = msg.items.filter((i) => /^cry[A-Z0-9]+USD$/.test(i.symbol)).length;
   const openN = filtered.filter((i) => i.open && !i.suspended).length;
   console.log(
-    `Cripto USD Options: ${all.length} (active_symbols=${activeN}, feed extra=${all.length - activeN}; ${openN} preferidos abertos). MT5/CFD sem API.`,
+    `Cripto USD Options: ${all.length} (active_symbols=${activeN}, feed extra=${all.length - activeN}; ${openN} preferidos abertos).`,
   );
   return filtered.map((i) => i.symbol);
 }

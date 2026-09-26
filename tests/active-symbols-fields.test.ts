@@ -48,7 +48,7 @@ test("active_symbols aceita underlying_symbol (Options WS moderno)", () => {
     ["cryBTCUSD", "cryETHUSD"],
   );
 
-  // Painel/pesquisa: active + feed Options conhecido (não MT5).
+  // Painel/pesquisa: active + feed Options conhecido.
   const all = listAllCryptoUsd(msg.items).map((i) => i.symbol);
   assert.ok(all.includes("cryBTCUSD") && all.includes("cryETHUSD"));
   assert.ok(all.includes("crySOLUSD"));

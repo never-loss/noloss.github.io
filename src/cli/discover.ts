@@ -50,7 +50,6 @@ async function main(): Promise<void> {
     );
     console.log(`  active: ${activeCry.map((c) => c.symbol).join(" ") || "(nenhum)"}`);
     console.log(`  preferidos abertos p/ velas: ${crypto.length} -> ${crypto.map((c) => c.symbol).join(" ")}`);
-    console.log("  Nota: MT5/CFD cripto não está na API pública (só gestão de conta MT5).");
     if (allCrypto) {
       symbols = crypto.map((c) => c.symbol);
     }

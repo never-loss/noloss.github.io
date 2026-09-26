@@ -36,7 +36,6 @@ var NL = (() => {
     MARKET_ORDER: () => MARKET_ORDER,
     MAX_SESSION_MS: () => MAX_SESSION_MS,
     MIN_STAKE: () => MIN_STAKE,
-    MT5_CRYPTO_STATUS: () => MT5_CRYPTO_STATUS,
     STRATEGY_PRESETS: () => STRATEGY_PRESETS,
     binanceBaseAsset: () => binanceBaseAsset,
     binanceFetch: () => binanceFetch,
@@ -61,7 +60,6 @@ var NL = (() => {
     formatCandleEvent: () => formatCandleEvent,
     formatCandleGate: () => formatCandleGate,
     formatCandleSummary: () => formatCandleSummary,
-    formatMt5StatusBlock: () => formatMt5StatusBlock,
     granularityToBinanceInterval: () => granularityToBinanceInterval,
     granularityToBybitInterval: () => granularityToBybitInterval,
     isBinanceUsdtSymbol: () => isBinanceUsdtSymbol,
@@ -193,44 +191,6 @@ var NL = (() => {
   function cryptoSourceOf(symbol, activeItems) {
     if (!isCryptoUsd(symbol)) return null;
     return isOptionsFeedOnly(symbol, activeItems) ? "options_feed" : "options_active";
-  }
-
-  // src/core/mt5-status.ts
-  var MT5_CRYPTO_STATUS = {
-    status: "blocked_no_public_api",
-    title: "MT5 / CFD cripto \u2014 sem API p\xFAblica de mercado",
-    summary: "A Deriv exp\xF5e APIs MT5 s\xF3 para gest\xE3o de conta (lista, passwords, dep\xF3sito/levantamento). Trading e s\xEDmbolos CFD/MT5 n\xE3o est\xE3o dispon\xEDveis via API \u2014 s\xF3 na app Deriv MT5. O login OAuth Options (JWT) n\xE3o cobre listagem nem ticks/velas dos pares CFD (ex.: BTCUSD, AAVUSD). No WS Options esses c\xF3digos devolvem InvalidSymbol.",
-    needed: [
-      "API oficial Deriv de market data CFD/MT5 (lista de s\xEDmbolos + ticks/candles), ou",
-      "Credenciais/terminal MetaTrader 5 com feed export\xE1vel (fora do \xE2mbito desta app), ou",
-      "Produto Deriv documentado que exponha CFD no mesmo WS Options (hoje n\xE3o existe)."
-    ],
-    optionsPath: "Paper/pesquisa cripto usa o feed Options cry*USD (active_symbols + cat\xE1logo de velas p\xFAblico). Mesmas estrat\xE9gias e CandleGate. Sem saldos inventados e sem trades sem evid\xEAncia.",
-    exampleMt5Codes: [
-      "AAVUSD",
-      "ADAUSD",
-      "BNBUSD",
-      "BTCUSD",
-      "ETHUSD",
-      "BTCETH"
-    ],
-    docsUrl: "https://developers.deriv.com/docs/mt5"
-  };
-  function formatMt5StatusBlock(info = MT5_CRYPTO_STATUS) {
-    const need = info.needed.map((n, i) => `${i + 1}. ${n}`).join("\n");
-    return [
-      info.title,
-      "",
-      info.summary,
-      "",
-      "Para integrar MT5/CFD de verdade seria preciso:",
-      need,
-      "",
-      "Entretanto: " + info.optionsPath,
-      "",
-      "Exemplos de c\xF3digos CFD/MT5 (site Deriv, n\xE3o negoci\xE1veis aqui): " + info.exampleMt5Codes.join(", "),
-      "Docs: " + info.docsUrl
-    ].join("\n");
   }
 
   // src/core/market-data.ts

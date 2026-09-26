@@ -1,6 +1,6 @@
 // NEVER LOSS - cripto USD na Deriv Options (cry*USD).
 // active_symbols Options só lista cryBTCUSD + cryETHUSD; o feed de velas público
-// ainda serve outros cry*USD (paper/pesquisa). MT5/CFD é outro produto — ver mt5-status.ts.
+// ainda serve outros cry*USD (paper/pesquisa). Cripto CFD externo: Bybit linear USDT.
 import type { SymbolInfo } from "./market-data.ts";
 
 /** Origem do símbolo no painel cripto. */
@@ -8,7 +8,7 @@ export type CryptoSource = "options_active" | "options_feed";
 
 /**
  * Pares cry*USD com histórico de velas no WS público Options (verificado 2026-09-26).
- * Não são CFD/MT5 (esses usam códigos tipo BTCUSD/AAVUSD e não respondem neste WS).
+ * Códigos CFD tipo BTCUSD/AAVUSD não respondem neste WS Options.
  * active_symbols pode listar só um subconjunto (hoje tipicamente BTC+ETH).
  */
 export const KNOWN_OPTIONS_CRYPTO_FEED: readonly string[] = [

@@ -1,3 +1,4 @@
+<!-- deprecated: MT5 UI removed; Bybit replaces CFD crypto surface (2026-09-26). -->
 # Cripto MT5/CFD vs Options — NEVER LOSS (2026-09-26)
 
 ## Status para o parent

@@ -1079,8 +1079,6 @@
     if (derivPanel) derivPanel.hidden = onBybit;
     const mkt = el("marketStrategyPanel");
     if (mkt) mkt.hidden = onBybit;
-    const mt5 = el("mt5Panel");
-    if (mt5) mt5.hidden = onBybit;
     const hero = el("heroBalances");
     if (hero) hero.hidden = onBybit;
     const chart = el("chartPanel");
@@ -1621,7 +1619,6 @@
     });
     renderSymbolSelect();
     renderChips();
-    renderMt5Panel();
   }
 
   function panelSymbols() {
@@ -2834,31 +2831,6 @@
   }
 
 
-  function renderMt5Panel() {
-    var info = typeof NL.MT5_CRYPTO_STATUS === "object" ? NL.MT5_CRYPTO_STATUS : null;
-    var sum = el("mt5Summary");
-    var path = el("mt5OptionsPath");
-    var need = el("mt5Needed");
-    var ex = el("mt5Examples");
-    var docs = el("mt5Docs");
-    if (!sum || !info) return;
-    sum.textContent = info.summary;
-    if (path) path.textContent = info.optionsPath;
-    if (need) {
-      need.innerHTML = "";
-      (info.needed || []).forEach(function (line) {
-        var li = document.createElement("li");
-        li.textContent = line;
-        need.appendChild(li);
-      });
-    }
-    if (ex) ex.textContent = (info.exampleMt5Codes || []).join(", ");
-    if (docs) {
-      docs.href = info.docsUrl || "https://developers.deriv.com/docs/mt5";
-      docs.textContent = info.docsUrl || "Deriv MT5 API";
-    }
-  }
-
   async function boot() {
     bind();
     updateStrategyHint();
@@ -2874,7 +2846,6 @@
     const gm = el("gateMetrics");
     if (gm) gm.setAttribute("hidden", "");
     renderAccountContext();
-    renderMt5Panel();
     updateButtons();
     await loadAccounts();
     try {
