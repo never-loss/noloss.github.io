@@ -541,3 +541,11 @@ button.ghost:hover { color: var(--text); }
   color: #f0b90b;
   border-color: rgba(240, 185, 11, 0.45);
 }
+
+.source-btn:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.source-btn[hidden] {
+  display: none !important;
+}

@@ -30,7 +30,8 @@
     symbols: [],
     activeCrypto: [],
     binanceSymbols: [],
-    dataSource: sessionStorage.getItem(SOURCE_KEY) === "binance" ? "binance" : "deriv",
+    // Cripto = sempre Binance Spot; dígitos/forex = Deriv. Fonte segue o painel.
+    dataSource: "binance",
     panel: "crypto",
     ws: null,
     nextId: 1,
@@ -42,7 +43,7 @@
     session: null,
     lastEpoch: 0,
     historyLines: [],
-    symbol: "cryBTCUSD",
+    symbol: "BTCUSDT",
     granularity: 300,
     stake: 1,
     minutes: 60,
@@ -342,30 +343,44 @@
     const b = el("srcBinance");
     const hint = el("sourceHint");
     const pill = el("modePill");
-    if (d) d.classList.toggle("active", !isBinanceSource());
+    const onBinance = isBinanceSource();
+    // Cripto: só Binance (sem toggle Deriv). Dígitos/Forex: só Deriv (sem Binance).
+    if (d) {
+      d.hidden = onBinance;
+      d.disabled = true;
+      d.classList.toggle("active", !onBinance);
+      d.setAttribute("aria-pressed", onBinance ? "false" : "true");
+    }
     if (b) {
-      b.classList.toggle("active", isBinanceSource());
-      b.classList.toggle("binance-active", isBinanceSource());
+      b.hidden = !onBinance;
+      b.disabled = true;
+      b.classList.toggle("active", onBinance);
+      b.classList.toggle("binance-active", onBinance);
+      b.setAttribute("aria-pressed", onBinance ? "true" : "false");
     }
     if (hint) {
-      hint.textContent = isBinanceSource()
-        ? "Binance Spot: pares *USDT via API pública (exchangeInfo/klines). PAPER / SIMULADO — sem API keys, sem ordens Binance. OAuth Deriv intacto (contas/saldo)."
-        : "Deriv Options: cripto cry*USD via WS público + OAuth para contas. Sessão sempre paper / simulado.";
+      hint.textContent = onBinance
+        ? "Cripto = Binance Spot: pares *USDT via API pública (exchangeInfo/klines). PAPER / SIMULADO — sem API keys, sem ordens Binance. OAuth Deriv intacto (contas/saldo)."
+        : "Dígitos / Forex = Deriv Options (WS público + OAuth para contas). Sessão sempre paper / simulado. Painel Cripto usa só Binance Spot.";
     }
     if (pill) {
-      pill.textContent = isBinanceSource()
-        ? "PAPER · Binance Spot (só dados)"
-        : "PAPER / SIMULADO";
-      pill.classList.toggle("binance", isBinanceSource());
+      pill.textContent = onBinance
+        ? "PAPER · Cripto = Binance Spot"
+        : "PAPER / SIMULADO · Deriv Options";
+      pill.classList.toggle("binance", onBinance);
       pill.classList.add("warn");
     }
     const tabs = el("marketTabs");
     if (tabs) {
-      tabs.style.opacity = isBinanceSource() ? "0.45" : "1";
+      tabs.style.opacity = "1";
       tabs.querySelectorAll(".tab").forEach(function (btn) {
-        btn.disabled = isBinanceSource() && btn.getAttribute("data-panel") !== "crypto";
+        btn.disabled = false;
       });
     }
+  }
+
+  function sourceForPanel(panel) {
+    return panel === "crypto" ? "binance" : "deriv";
   }
 
   async function loadBinanceSymbols() {
@@ -388,7 +403,7 @@
     if (next !== "deriv" && next !== "binance") return;
     if (state.running) {
       pushHistory("Para de sessão paper antes de mudar a fonte.", "stop");
-      return;
+      return false;
     }
     state.dataSource = next;
     sessionStorage.setItem(SOURCE_KEY, next);
@@ -397,16 +412,12 @@
     setPrePlayUI(null);
     updateSourceUI();
     if (isBinanceSource()) {
-      state.panel = "crypto";
-      document.querySelectorAll(".tab").forEach(function (b) {
-        b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
-      });
       if (!state.binanceSymbols.length) {
         pushHistory("A carregar pares USDT da Binance (público)…", "");
         try {
           await loadBinanceSymbols();
           pushHistory(
-            "Binance Spot: " + state.binanceSymbols.length + " pares USDT · PAPER — sem trading Binance.",
+            "Cripto = Binance Spot: " + state.binanceSymbols.length + " pares USDT · PAPER — sem trading Binance.",
             "open",
           );
         } catch (e) {
@@ -414,12 +425,30 @@
         }
       }
       state.symbol = (state.binanceSymbols[0] && state.binanceSymbols[0].symbol) || "BTCUSDT";
+    } else if (state.panel === "forex") {
+      state.symbol = "frxEURUSD";
     } else {
-      state.symbol = "cryBTCUSD";
+      state.symbol = "R_100";
     }
     renderSymbolSelect();
     renderChips();
     updateButtons();
+    return true;
+  }
+
+  /** Fonte segue o painel: Cripto→Binance, Dígitos/Forex→Deriv. */
+  async function applyPanelSource() {
+    const next = sourceForPanel(state.panel);
+    if (state.dataSource === next) {
+      updateSourceUI();
+      if (next === "binance" && !state.binanceSymbols.length) {
+        return setDataSource("binance");
+      }
+      renderSymbolSelect();
+      renderChips();
+      return true;
+    }
+    return setDataSource(next);
   }
 
   async function fetchBinanceHistory(symbol, granularity, target) {
@@ -517,13 +546,9 @@
   }
 
   function panelSymbols() {
-    if (isBinanceSource()) {
+    // Cripto = só Binance Spot (*USDT). Sem cry*USD / Deriv Options neste painel.
+    if (state.panel === "crypto" || isBinanceSource()) {
       return state.binanceSymbols.slice();
-    }
-    if (state.panel === "crypto") {
-      // Todos os cry*USD (lista dinâmica); chips mostram aberto/fechado.
-      if (typeof NL.listAllCryptoUsd === "function") return NL.listAllCryptoUsd(state.symbols);
-      return NL.filterCryptoUsd(state.symbols);
     }
     if (state.panel === "forex") {
       return state.symbols
@@ -565,7 +590,7 @@
     if (list.some((i) => i.symbol === prev)) sel.value = prev;
     else {
       const prefer =
-        typeof NL.filterCryptoUsd === "function" && state.panel === "crypto"
+        typeof NL.filterCryptoUsd === "function" && state.panel === "crypto" && !isBinanceSource()
           ? NL.filterCryptoUsd(list)
           : list;
       sel.value = (prefer[0] || list[0]).symbol;
@@ -583,6 +608,7 @@
       btn.type = "button";
       var feedOnly =
         state.panel === "crypto" &&
+        !isBinanceSource() &&
         typeof NL.isOptionsFeedOnly === "function" &&
         NL.isOptionsFeedOnly(it.symbol, state.activeCrypto);
       btn.className =
@@ -607,21 +633,11 @@
     const openN = list.filter((i) => i.open && !i.suspended).length;
     var activeN = state.activeCrypto.length;
     var feedN = Math.max(0, n - activeN);
-    el("panelHint").textContent = isBinanceSource()
-      ? "Binance Spot: " +
+    el("panelHint").textContent = state.panel === "crypto" || isBinanceSource()
+      ? "Cripto = Binance Spot: " +
         n +
-        " pares *USDT (API pública). PAPER / SIMULADO — sem chaves, sem ordens Binance. Mesmos presets (Lucro rápido / Loss zero) + porta de evidência + stake fixa + máx 3 h + sem martingale."
-      : state.panel === "crypto"
-        ? "Cripto Options: " +
-          n +
-          " pares cry*USD (" +
-          activeN +
-          " em active_symbols, " +
-          feedN +
-          " só no feed de velas). " +
-          openN +
-          " abertos. Paper + CandleGate. Tracejado = feed-only. Alternativa: fonte Binance Spot acima."
-        : state.panel === "forex"
+        " pares *USDT (API pública). PAPER / SIMULADO — sem chaves, sem ordens Binance. Presets Lucro rápido / Loss zero + porta de evidência + stake fixa + máx 3 h + sem martingale."
+      : state.panel === "forex"
           ? "Forex e metais (frx*). Mercado fecha ao fim de semana."
           : "Índices sintéticos / dígitos. Paper em velas (mesma porta de evidência).";
     updateStrategyHint();
@@ -1093,22 +1109,28 @@
 
   function bind() {
     document.querySelectorAll(".tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (isBinanceSource() && btn.getAttribute("data-panel") !== "crypto") {
-          pushHistory("Com fonte Binance Spot só há cripto *USDT. Muda para Deriv Options para dígitos/forex.", "stop");
+      btn.addEventListener("click", async () => {
+        const nextPanel = btn.getAttribute("data-panel");
+        if (!nextPanel || nextPanel === state.panel) return;
+        if (state.running && sourceForPanel(nextPanel) !== state.dataSource) {
+          pushHistory("Para a sessão paper antes de mudar de painel (a fonte segue o painel).", "stop");
           return;
         }
+        const prevPanel = state.panel;
         document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
-        state.panel = btn.getAttribute("data-panel");
-        renderSymbolSelect();
-        renderChips();
+        state.panel = nextPanel;
+        const ok = await applyPanelSource();
+        if (ok === false) {
+          state.panel = prevPanel;
+          document.querySelectorAll(".tab").forEach(function (b) {
+            b.classList.toggle("active", b.getAttribute("data-panel") === prevPanel);
+          });
+          updateSourceUI();
+        }
       });
     });
-    const srcD = el("srcDeriv");
-    const srcB = el("srcBinance");
-    if (srcD) srcD.addEventListener("click", function () { setDataSource("deriv"); });
-    if (srcB) srcB.addEventListener("click", function () { setDataSource("binance"); });
+    // Fonte não é escolhível à mão: Cripto=Binance, Dígitos/Forex=Deriv.
     el("symbolSelect").addEventListener("change", () => {
       state.symbol = el("symbolSelect").value;
       renderChips();
@@ -1169,27 +1191,23 @@
     try {
       await connectWs();
       await loadSymbols();
-      if (isBinanceSource()) {
-        state.panel = "crypto";
-        document.querySelectorAll(".tab").forEach(function (b) {
-          b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
-        });
-        await loadBinanceSymbols();
-        state.symbol = (state.binanceSymbols[0] && state.binanceSymbols[0].symbol) || "BTCUSDT";
-        renderSymbolSelect();
-        renderChips();
-        pushHistory(
-          "Pronto · fonte Binance Spot (" +
-            state.binanceSymbols.length +
-            " USDT). PAPER — sem trading Binance. Escolhe DEMO/REAL + Lucro rápido / Loss zero → Analisar → PLAY.",
-          "",
-        );
-      } else {
-        pushHistory(
-          "Pronto · fonte Deriv Options. Escolhe DEMO/REAL + estratégia (Lucro rápido / Loss zero). Analisa, depois PLAY. Paper apenas — sem compras reais. Podes mudar para Binance Spot acima.",
-          "",
-        );
-      }
+      // Painel inicial Cripto → Binance Spot only (sem toggle Deriv neste contexto).
+      state.panel = "crypto";
+      state.dataSource = "binance";
+      sessionStorage.setItem(SOURCE_KEY, "binance");
+      document.querySelectorAll(".tab").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
+      });
+      await loadBinanceSymbols();
+      state.symbol = (state.binanceSymbols[0] && state.binanceSymbols[0].symbol) || "BTCUSDT";
+      renderSymbolSelect();
+      renderChips();
+      pushHistory(
+        "Pronto · Cripto = Binance Spot (" +
+          state.binanceSymbols.length +
+          " USDT). PAPER — sem trading Binance. Dígitos/Forex usam Deriv. Escolhe DEMO/REAL + Lucro rápido / Loss zero → Analisar → PLAY.",
+        "",
+      );
       updateSourceUI();
     } catch (e) {
       pushHistory("Falha WS/símbolos: " + (e.message || String(e)), "stop");

@@ -19,3 +19,11 @@
 ## Não feito (de propósito)
 
 - Trading real Binance (API keys, ordens, saldos Binance).
+
+
+## Update 2026-09-26 (painel Cripto)
+
+- **Cripto = Binance Spot only** — sem toggle Deriv Options no painel Cripto.
+- Fonte segue o painel: Cripto → Binance Spot (*USDT); Dígitos/Forex → Deriv Options.
+- UI PT: «Cripto = Binance Spot»; botão Deriv oculto em Cripto; Binance oculto em Dígitos/Forex.
+- Estratégias, porta de evidência, paper, stake fixa, sem martingale e OAuth Deriv mantidos.
