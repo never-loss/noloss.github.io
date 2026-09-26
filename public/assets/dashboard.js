@@ -725,7 +725,7 @@
     state.chartCandles = list;
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth || 640;
-    const cssH = 280;
+    const cssH = 200;
     canvas.width = Math.floor(cssW * dpr);
     canvas.height = Math.floor(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
