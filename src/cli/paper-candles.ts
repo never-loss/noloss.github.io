@@ -1,6 +1,7 @@
-// Paper trading AO VIVO em velas (Forex, metais, cripto) com PORTA DE EVIDÊNCIA. Sem login, sem dinheiro.
-// Só opera (simulado) se a estratégia passar no teste fora da amostra, com custos e só com stops executáveis.
-// Uso: node src/cli/paper-candles.ts --symbol cryBTCUSD --granularity 300 --minutes 60
+// Paper trading AO VIVO em velas (Forex, metais, cripto Deriv OU Binance Spot) com PORTA DE EVIDÊNCIA.
+// Sem login, sem dinheiro. Binance = só dados públicos (sem trading Binance).
+// Uso Deriv: node src/cli/paper-candles.ts --symbol cryBTCUSD --granularity 300 --minutes 60
+// Uso Binance: node src/cli/paper-candles.ts --source binance --symbol BTCUSDT --granularity 300 --minutes 60
 import { parseCandlesMessage } from "../core/market-data.ts";
 import type { Candle } from "../core/market-data.ts";
 import { mergeCandlePages, nextCandleEnd } from "../core/candle-pages.ts";
@@ -9,6 +10,12 @@ import { feasible } from "../core/feasible.ts";
 import { strategyLibrary } from "../core/strategies.ts";
 import { CandleGateController, formatCandleGate } from "../core/candle-gate.ts";
 import { CandlePaperSession, formatCandleEvent, formatCandleSummary } from "../core/candle-paper.ts";
+import {
+  fetchBinanceCandleHistory,
+  fetchBinanceKlinesPage,
+  granularityToBinanceInterval,
+  isBinanceUsdtSymbol,
+} from "../core/binance.ts";
 
 const URL = "wss://api.derivws.com/trading/v1/options/ws/public";
 
@@ -17,7 +24,8 @@ function arg(name: string, fallback: string): string {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1]! : fallback;
 }
 
-const symbol = arg("symbol", "cryBTCUSD");
+const source = arg("source", "deriv").toLowerCase() === "binance" ? "binance" : "deriv";
+const symbol = arg("symbol", source === "binance" ? "BTCUSDT" : "cryBTCUSD");
 const granularity = Number(arg("granularity", "300"));
 const stake = Number(arg("stake", "1"));
 const minutes = Number(arg("minutes", "60"));
@@ -40,6 +48,16 @@ if (kind === null) {
   console.error(`Símbolo desconhecido (não é forex, metal nem cripto): ${symbol}`);
   process.exit(1);
 }
+if (source === "binance") {
+  if (!isBinanceUsdtSymbol(symbol)) {
+    console.error(`Símbolo Binance inválido (espera *USDT): ${symbol}`);
+    process.exit(1);
+  }
+  if (!granularityToBinanceInterval(granularity)) {
+    console.error("--granularity não suportada na Binance");
+    process.exit(1);
+  }
+}
 if (!Number.isInteger(granularity) || granularity < 60 || !(minutes > 0) || minutes > 180 || !(pollSeconds >= 5)) {
   console.error("Parâmetros inválidos: --granularity >= 60, --minutes entre 1 e 180, --poll >= 5");
   process.exit(1);
@@ -49,11 +67,11 @@ if (!Number.isInteger(historyTarget) || historyTarget < 1500 || historyTarget > 
   process.exit(1);
 }
 
-const ws = new WebSocket(URL);
+const ws = source === "deriv" ? new WebSocket(URL) : null;
 let nextId = 1;
 const waiting = new Map<number, (raw: string) => void>();
 
-ws.onmessage = (event: MessageEvent) => {
+if (ws) ws.onmessage = (event: MessageEvent) => {
   const raw = String(event.data);
   try {
     const id = (JSON.parse(raw) as { req_id?: unknown }).req_id;
@@ -68,6 +86,7 @@ ws.onmessage = (event: MessageEvent) => {
 };
 
 function requestRaw(payload: Record<string, unknown>): Promise<string> {
+  if (!ws) return Promise.reject(new Error("WS Deriv indisponível (fonte Binance)"));
   const id = nextId++;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -89,6 +108,9 @@ function closedOnly(candles: Candle[]): Candle[] {
 }
 
 async function fetchHistory(): Promise<Candle[]> {
+  if (source === "binance") {
+    return closedOnly(await fetchBinanceCandleHistory(symbol, granularity, historyTarget));
+  }
   const pages: Candle[][] = [];
   let end: number | "latest" = "latest";
   let total = 0;
@@ -98,7 +120,7 @@ async function fetchHistory(): Promise<Candle[]> {
     );
     if (m.kind !== "candles" || m.candles.length === 0) {
       const why = m.kind === "error" ? `${m.code} - ${m.message}` : m.kind === "invalid" ? m.reason : "página vazia";
-      console.warn(`Histórico: página ${p}: ${why}. A continuar com o que já tenho.`);
+      console.warn(`página ${p}: ${why}`);
       break;
     }
     pages.push(m.candles);
@@ -113,10 +135,14 @@ async function fetchHistory(): Promise<Candle[]> {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 async function main(): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    ws.onopen = () => resolve();
-    ws.onerror = () => reject(new Error("Erro de ligação ao WebSocket"));
-  });
+  if (source === "deriv") {
+    await new Promise<void>((resolve, reject) => {
+      if (!ws) return reject(new Error("WS em falta"));
+      ws.onopen = () => resolve();
+      ws.onerror = () => reject(new Error("Erro de ligação ao WebSocket"));
+    });
+  }
+  console.log(`Fonte: ${source === "binance" ? "Binance Spot (paper · só dados · sem trading)" : "Deriv Options"}`);
 
   const history = await fetchHistory();
   const last = history[history.length - 1];
@@ -166,11 +192,17 @@ async function main(): Promise<void> {
     await sleep(pollSeconds * 1000);
     let fresh: Candle[] = [];
     try {
-      const m = parseCandlesMessage(
-        await requestRaw({ ticks_history: symbol, end: "latest", count: 10, style: "candles", granularity }),
-      );
-      if (m.kind === "candles") fresh = closedOnly(m.candles).filter((c) => c.epoch > lastEpoch).sort((a, b) => a.epoch - b.epoch);
-      else if (m.kind === "error") console.warn(`Aviso: ${m.code} - ${m.message}`);
+      if (source === "binance") {
+        const interval = granularityToBinanceInterval(granularity)!;
+        const batch = await fetchBinanceKlinesPage(symbol, interval, 10);
+        fresh = closedOnly(batch).filter((c) => c.epoch > lastEpoch).sort((a, b) => a.epoch - b.epoch);
+      } else {
+        const m = parseCandlesMessage(
+          await requestRaw({ ticks_history: symbol, end: "latest", count: 10, style: "candles", granularity }),
+        );
+        if (m.kind === "candles") fresh = closedOnly(m.candles).filter((c) => c.epoch > lastEpoch).sort((a, b) => a.epoch - b.epoch);
+        else if (m.kind === "error") console.warn(`Aviso: ${m.code} - ${m.message}`);
+      }
     } catch (e) {
       console.warn(`Aviso: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -195,6 +227,6 @@ main()
     process.exitCode = 1;
   })
   .finally(() => {
-    ws.close();
+    if (ws) ws.close();
     setTimeout(() => process.exit(process.exitCode ?? 0), 100);
   });

@@ -71,7 +71,15 @@
       
 <section class="glass panel" style="margin-top:14px">
         <h2>Mercados</h2>
-        <div class="tabs" role="tablist">
+        <div class="source-toggle" role="group" aria-label="Fonte de dados">
+          <span class="source-label">Fonte</span>
+          <button type="button" class="source-btn active" id="srcDeriv" data-source="deriv">Deriv Options</button>
+          <button type="button" class="source-btn" id="srcBinance" data-source="binance">Binance Spot</button>
+        </div>
+        <p id="sourceHint" class="footer-note" style="margin:0 0 10px;text-align:left">
+          Deriv Options: cripto cry*USD via WS público. Binance Spot: pares *USDT públicos (só dados — paper, sem chaves, sem trading Binance).
+        </p>
+        <div class="tabs" role="tablist" id="marketTabs">
           <button type="button" class="tab" data-panel="digits">Dígitos</button>
           <button type="button" class="tab" data-panel="forex">Forex</button>
           <button type="button" class="tab active" data-panel="crypto">Cripto</button>
@@ -153,7 +161,7 @@
 
       <p class="footer-note">
         Plataforma de pesquisa e paper trading. Não garante lucros nem “quase sem perdas”.
-        Dados de mercado via WS público · saldos via REST autenticado · sessão sempre simulada.
+        Dados: Deriv WS público ou Binance Spot público · saldos Deriv via REST · sessão sempre paper / simulado · sem trading Binance.
       </p>
     </div>
   </div>

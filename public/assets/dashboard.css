@@ -494,3 +494,50 @@ button.ghost:hover { color: var(--text); }
   gap: 8px;
   margin-top: 10px;
 }
+
+/* Fonte Deriv vs Binance */
+.source-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.source-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+}
+.source-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.55);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.source-btn:hover { color: var(--text); border-color: rgba(56, 189, 248, 0.45); }
+.source-btn.active {
+  color: #0b1220;
+  background: linear-gradient(120deg, var(--accent), var(--accent2));
+  border-color: transparent;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 8px 24px rgba(56, 189, 248, 0.18);
+  font-weight: 600;
+}
+.source-btn.binance-active,
+.source-btn.active[data-source="binance"] {
+  background: linear-gradient(120deg, #f0b90b, #f8d12f);
+  color: #1a1a1a;
+  box-shadow: 0 0 0 1px rgba(240, 185, 11, 0.4), 0 8px 24px rgba(240, 185, 11, 0.15);
+}
+.pill.binance {
+  background: rgba(240, 185, 11, 0.18);
+  color: #f0b90b;
+  border-color: rgba(240, 185, 11, 0.45);
+}

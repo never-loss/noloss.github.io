@@ -6,6 +6,9 @@
   const API_BASE = "https://api.derivws.com";
   const PUBLIC_WS = "wss://api.derivws.com/trading/v1/options/ws/public";
   const ACCOUNT_KEY = "nl_selected_account_id";
+  const SOURCE_KEY = "nl_market_source";
+  const BINANCE_SYMBOLS_URL = "/api/binance-symbols";
+  const BINANCE_KLINES_URL = "/api/binance-klines";
 
   const NL = window.NL;
   if (!NL) {
@@ -26,6 +29,8 @@
     selectedAccount: null,
     symbols: [],
     activeCrypto: [],
+    binanceSymbols: [],
+    dataSource: sessionStorage.getItem(SOURCE_KEY) === "binance" ? "binance" : "deriv",
     panel: "crypto",
     ws: null,
     nextId: 1,
@@ -324,7 +329,168 @@
     });
   }
 
-  function classifyPanel(it) {
+  function isBinanceSource() {
+    return state.dataSource === "binance";
+  }
+
+  function sourceLabel() {
+    return isBinanceSource() ? "Binance Spot (só dados · paper)" : "Deriv Options";
+  }
+
+  function updateSourceUI() {
+    const d = el("srcDeriv");
+    const b = el("srcBinance");
+    const hint = el("sourceHint");
+    const pill = el("modePill");
+    if (d) d.classList.toggle("active", !isBinanceSource());
+    if (b) {
+      b.classList.toggle("active", isBinanceSource());
+      b.classList.toggle("binance-active", isBinanceSource());
+    }
+    if (hint) {
+      hint.textContent = isBinanceSource()
+        ? "Binance Spot: pares *USDT via API pública (exchangeInfo/klines). PAPER / SIMULADO — sem API keys, sem ordens Binance. OAuth Deriv intacto (contas/saldo)."
+        : "Deriv Options: cripto cry*USD via WS público + OAuth para contas. Sessão sempre paper / simulado.";
+    }
+    if (pill) {
+      pill.textContent = isBinanceSource()
+        ? "PAPER · Binance Spot (só dados)"
+        : "PAPER / SIMULADO";
+      pill.classList.toggle("binance", isBinanceSource());
+      pill.classList.add("warn");
+    }
+    const tabs = el("marketTabs");
+    if (tabs) {
+      tabs.style.opacity = isBinanceSource() ? "0.45" : "1";
+      tabs.querySelectorAll(".tab").forEach(function (btn) {
+        btn.disabled = isBinanceSource() && btn.getAttribute("data-panel") !== "crypto";
+      });
+    }
+  }
+
+  async function loadBinanceSymbols() {
+    const res = await fetch(BINANCE_SYMBOLS_URL);
+    const payload = await res.json().catch(function () { return null; });
+    if (!res.ok) {
+      const why = (payload && (payload.error_description || payload.error)) || ("HTTP " + res.status);
+      throw new Error("Binance símbolos: " + why);
+    }
+    if (!payload || !Array.isArray(payload.items)) {
+      throw new Error("Binance símbolos: resposta inválida");
+    }
+    state.binanceSymbols = payload.items;
+    if (typeof NL.sortBinanceUsdtPreferred === "function") {
+      state.binanceSymbols = NL.sortBinanceUsdtPreferred(state.binanceSymbols);
+    }
+  }
+
+  async function setDataSource(next) {
+    if (next !== "deriv" && next !== "binance") return;
+    if (state.running) {
+      pushHistory("Para de sessão paper antes de mudar a fonte.", "stop");
+      return;
+    }
+    state.dataSource = next;
+    sessionStorage.setItem(SOURCE_KEY, next);
+    state.prePlayOk = false;
+    state.prePlayGate = null;
+    setPrePlayUI(null);
+    updateSourceUI();
+    if (isBinanceSource()) {
+      state.panel = "crypto";
+      document.querySelectorAll(".tab").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
+      });
+      if (!state.binanceSymbols.length) {
+        pushHistory("A carregar pares USDT da Binance (público)…", "");
+        try {
+          await loadBinanceSymbols();
+          pushHistory(
+            "Binance Spot: " + state.binanceSymbols.length + " pares USDT · PAPER — sem trading Binance.",
+            "open",
+          );
+        } catch (e) {
+          pushHistory("Falha Binance símbolos: " + (e.message || String(e)), "stop");
+        }
+      }
+      state.symbol = (state.binanceSymbols[0] && state.binanceSymbols[0].symbol) || "BTCUSDT";
+    } else {
+      state.symbol = "cryBTCUSD";
+    }
+    renderSymbolSelect();
+    renderChips();
+    updateButtons();
+  }
+
+  async function fetchBinanceHistory(symbol, granularity, target) {
+    if (typeof NL.fetchBinanceCandleHistory === "function") {
+      const proxyFetch = async function (url) {
+        const u = String(url);
+        // Reescreve pedidos klines para o proxy Vercel (geo-friendly).
+        if (u.indexOf("/api/v3/klines") >= 0) {
+          const q = u.split("?")[1] || "";
+          return fetch(BINANCE_KLINES_URL + (q ? "?" + q : ""));
+        }
+        return fetch(u);
+      };
+      return NL.fetchBinanceCandleHistory(symbol, granularity, target, proxyFetch);
+    }
+    // Fallback manual se nl-core antigo
+    const interval =
+      typeof NL.granularityToBinanceInterval === "function"
+        ? NL.granularityToBinanceInterval(granularity)
+        : null;
+    if (!interval) throw new Error("granularity não suportada na Binance: " + granularity);
+    const pages = [];
+    let endTime = "";
+    let guard = 0;
+    while (guard++ < 30) {
+      let url =
+        BINANCE_KLINES_URL +
+        "?symbol=" +
+        encodeURIComponent(symbol) +
+        "&interval=" +
+        encodeURIComponent(interval) +
+        "&limit=1000";
+      if (endTime) url += "&endTime=" + endTime;
+      const res = await fetch(url);
+      const text = await res.text();
+      const msg = NL.parseBinanceKlines(text);
+      if (msg.kind !== "candles" || !msg.candles.length) break;
+      pages.push(msg.candles);
+      const oldest = msg.candles.reduce(function (m, c) { return Math.min(m, c.epoch); }, Infinity);
+      endTime = String(oldest * 1000 - 1);
+      const merged = NL.mergeCandlePages(pages);
+      if (merged.length >= target || msg.candles.length < 1000) break;
+    }
+    return closedOnly(NL.mergeCandlePages(pages), granularity).slice(-target);
+  }
+
+  async function fetchLatestBinanceCandles(symbol, granularity, count) {
+    const interval =
+      typeof NL.granularityToBinanceInterval === "function"
+        ? NL.granularityToBinanceInterval(granularity)
+        : null;
+    if (!interval) throw new Error("granularity não suportada na Binance: " + granularity);
+    const url =
+      BINANCE_KLINES_URL +
+      "?symbol=" +
+      encodeURIComponent(symbol) +
+      "&interval=" +
+      encodeURIComponent(interval) +
+      "&limit=" +
+      Math.min(1000, Math.max(2, count || 10));
+    const res = await fetch(url);
+    const text = await res.text();
+    const msg = NL.parseBinanceKlines(text);
+    if (msg.kind !== "candles") {
+      const why = msg.kind === "error" ? msg.code + " - " + msg.message : msg.reason || msg.kind;
+      throw new Error("Binance klines: " + why);
+    }
+    return closedOnly(msg.candles, granularity);
+  }
+
+    function classifyPanel(it) {
     const kind = NL.marketOf(it.symbol);
     if (kind === "crypto") return "crypto";
     if (kind === "forex" || kind === "metals") return "forex";
@@ -351,6 +517,9 @@
   }
 
   function panelSymbols() {
+    if (isBinanceSource()) {
+      return state.binanceSymbols.slice();
+    }
     if (state.panel === "crypto") {
       // Todos os cry*USD (lista dinâmica); chips mostram aberto/fechado.
       if (typeof NL.listAllCryptoUsd === "function") return NL.listAllCryptoUsd(state.symbols);
@@ -422,10 +591,11 @@
         (feedOnly ? " feed" : "") +
         (it.symbol === state.symbol ? " active" : "");
       btn.textContent = it.symbol;
-      btn.title =
-        (it.displayName || it.symbol) +
-        (on ? " · aberto" : " · fechado/suspenso") +
-        (feedOnly ? " · feed Options (não em active_symbols)" : " · Options active");
+      btn.title = isBinanceSource()
+        ? (it.displayName || it.symbol) + " · Binance Spot · paper only"
+        : (it.displayName || it.symbol) +
+          (on ? " · aberto" : " · fechado/suspenso") +
+          (feedOnly ? " · feed Options (não em active_symbols)" : " · Options active");
       btn.addEventListener("click", () => {
         state.symbol = it.symbol;
         el("symbolSelect").value = it.symbol;
@@ -437,8 +607,11 @@
     const openN = list.filter((i) => i.open && !i.suspended).length;
     var activeN = state.activeCrypto.length;
     var feedN = Math.max(0, n - activeN);
-    el("panelHint").textContent =
-      state.panel === "crypto"
+    el("panelHint").textContent = isBinanceSource()
+      ? "Binance Spot: " +
+        n +
+        " pares *USDT (API pública). PAPER / SIMULADO — sem chaves, sem ordens Binance. Mesmos presets (Lucro rápido / Loss zero) + porta de evidência + stake fixa + máx 3 h + sem martingale."
+      : state.panel === "crypto"
         ? "Cripto Options: " +
           n +
           " pares cry*USD (" +
@@ -447,7 +620,7 @@
           feedN +
           " só no feed de velas). " +
           openN +
-          " abertos. Paper + CandleGate. Tracejado = feed-only. MT5/CFD: ver secção abaixo (sem API)."
+          " abertos. Paper + CandleGate. Tracejado = feed-only. Alternativa: fonte Binance Spot acima."
         : state.panel === "forex"
           ? "Forex e metais (frx*). Mercado fecha ao fim de semana."
           : "Índices sintéticos / dígitos. Paper em velas (mesma porta de evidência).";
@@ -460,6 +633,9 @@
   }
 
   async function fetchHistory(symbol, granularity, target) {
+    if (isBinanceSource()) {
+      return fetchBinanceHistory(symbol, granularity, target);
+    }
     const pages = [];
     let end = "latest";
     let total = 0;
@@ -710,8 +886,14 @@
       state.selectedAccount.account_id +
       " | saldo Deriv " +
       accountBalanceText(state.selectedAccount);
-    pushHistory("PAPER / SIMULADO · contexto " + ctx, "open");
-    pushHistory("A carregar histórico de " + state.symbol + "…", "");
+    pushHistory(
+      "PAPER / SIMULADO · fonte " +
+        sourceLabel() +
+        " · contexto " +
+        ctx,
+      "open",
+    );
+    pushHistory("A carregar histórico de " + state.symbol + " (" + sourceLabel() + ")…", "");
     try {
       const kind = NL.marketOf(state.symbol);
       const costFraction = kind ? NL.MARKETS[kind].assumedCostFraction : 0.001;
@@ -783,13 +965,15 @@
       state.lastEpoch = last.epoch;
       state.running = true;
       state.historyLines = [];
-      pushHistory("PAPER / SIMULADO · contexto " + ctx, "open");
+      pushHistory("PAPER / SIMULADO · fonte " + sourceLabel() + " · contexto " + ctx, "open");
       for (const e of state.session.start(last.epoch * 1000)) {
         pushHistory(NL.formatCandleEvent(e), "open");
       }
       pushHistory(
         "Paper " +
           state.symbol +
+          " | fonte " +
+          sourceLabel() +
           " | " +
           history.length +
           " velas | stake fixa " +
@@ -799,7 +983,8 @@
           " min | contexto " +
           accountKind(state.selectedAccount) +
           " | " +
-          NL.formatCandleGate(state.controller.result),
+          NL.formatCandleGate(state.controller.result) +
+          (isBinanceSource() ? " | SEM trading Binance" : ""),
         "",
       );
       setStats(state.session.summary());
@@ -849,33 +1034,41 @@
       return;
     }
     try {
-      const m = NL.parseCandlesMessage(
-        await requestRaw({
-          ticks_history: state.symbol,
-          end: "latest",
-          count: 10,
-          style: "candles",
-          granularity: state.granularity,
-        }),
-      );
-      if (m.kind === "candles") {
-        const fresh = closedOnly(m.candles, state.granularity)
+      let fresh = [];
+      if (isBinanceSource()) {
+        const candles = await fetchLatestBinanceCandles(state.symbol, state.granularity, 10);
+        fresh = candles
           .filter((c) => c.epoch > state.lastEpoch)
           .sort((a, b) => a.epoch - b.epoch);
-        for (const c of fresh) {
-          state.lastEpoch = c.epoch;
-          const changed = state.controller.push(c);
-          if (changed) setGateUI(state.controller.result, state.controller.isOpen);
-          for (const e of state.session.onCandle(c)) {
-            let cls = "";
-            if (e.type === "trade_opened") cls = "open";
-            else if (e.type === "trade_closed") cls = e.r >= 0 ? "close-win" : "close-loss";
-            else if (e.type === "stopped" || e.type === "paused") cls = "stop";
-            pushHistory(NL.formatCandleEvent(e), cls);
-          }
-          setGateUI(state.controller.result, state.controller.isOpen);
-          setStats(state.session.summary());
+      } else {
+        const m = NL.parseCandlesMessage(
+          await requestRaw({
+            ticks_history: state.symbol,
+            end: "latest",
+            count: 10,
+            style: "candles",
+            granularity: state.granularity,
+          }),
+        );
+        if (m.kind === "candles") {
+          fresh = closedOnly(m.candles, state.granularity)
+            .filter((c) => c.epoch > state.lastEpoch)
+            .sort((a, b) => a.epoch - b.epoch);
         }
+      }
+      for (const c of fresh) {
+        state.lastEpoch = c.epoch;
+        const changed = state.controller.push(c);
+        if (changed) setGateUI(state.controller.result, state.controller.isOpen);
+        for (const e of state.session.onCandle(c)) {
+          let cls = "";
+          if (e.type === "trade_opened") cls = "open";
+          else if (e.type === "trade_closed") cls = e.r >= 0 ? "close-win" : "close-loss";
+          else if (e.type === "stopped" || e.type === "paused") cls = "stop";
+          pushHistory(NL.formatCandleEvent(e), cls);
+        }
+        setGateUI(state.controller.result, state.controller.isOpen);
+        setStats(state.session.summary());
       }
     } catch (e) {
       pushHistory("Aviso poll: " + (e.message || String(e)), "stop");
@@ -901,6 +1094,10 @@
   function bind() {
     document.querySelectorAll(".tab").forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (isBinanceSource() && btn.getAttribute("data-panel") !== "crypto") {
+          pushHistory("Com fonte Binance Spot só há cripto *USDT. Muda para Deriv Options para dígitos/forex.", "stop");
+          return;
+        }
         document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         state.panel = btn.getAttribute("data-panel");
@@ -908,6 +1105,10 @@
         renderChips();
       });
     });
+    const srcD = el("srcDeriv");
+    const srcB = el("srcBinance");
+    if (srcD) srcD.addEventListener("click", function () { setDataSource("deriv"); });
+    if (srcB) srcB.addEventListener("click", function () { setDataSource("binance"); });
     el("symbolSelect").addEventListener("change", () => {
       state.symbol = el("symbolSelect").value;
       renderChips();
@@ -957,6 +1158,7 @@
   async function boot() {
     bind();
     updateStrategyHint();
+    updateSourceUI();
     setGateUI(null, false);
     setStats(null);
     renderHistory();
@@ -967,10 +1169,28 @@
     try {
       await connectWs();
       await loadSymbols();
-      pushHistory(
-        "Pronto. Escolhe DEMO/REAL + estratégia (Lucro rápido / Loss zero). Analisa, depois PLAY. Paper apenas — sem compras reais.",
-        "",
-      );
+      if (isBinanceSource()) {
+        state.panel = "crypto";
+        document.querySelectorAll(".tab").forEach(function (b) {
+          b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
+        });
+        await loadBinanceSymbols();
+        state.symbol = (state.binanceSymbols[0] && state.binanceSymbols[0].symbol) || "BTCUSDT";
+        renderSymbolSelect();
+        renderChips();
+        pushHistory(
+          "Pronto · fonte Binance Spot (" +
+            state.binanceSymbols.length +
+            " USDT). PAPER — sem trading Binance. Escolhe DEMO/REAL + Lucro rápido / Loss zero → Analisar → PLAY.",
+          "",
+        );
+      } else {
+        pushHistory(
+          "Pronto · fonte Deriv Options. Escolhe DEMO/REAL + estratégia (Lucro rápido / Loss zero). Analisa, depois PLAY. Paper apenas — sem compras reais. Podes mudar para Binance Spot acima.",
+          "",
+        );
+      }
+      updateSourceUI();
     } catch (e) {
       pushHistory("Falha WS/símbolos: " + (e.message || String(e)), "stop");
     }

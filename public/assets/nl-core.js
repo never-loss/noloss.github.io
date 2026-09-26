@@ -20,6 +20,8 @@ var NL = (() => {
   // src/browser/nl-core-entry.ts
   var nl_core_entry_exports = {};
   __export(nl_core_entry_exports, {
+    BINANCE_PREFERRED_USDT: () => BINANCE_PREFERRED_USDT,
+    BINANCE_PUBLIC_BASES: () => BINANCE_PUBLIC_BASES,
     CandleGateController: () => CandleGateController,
     CandlePaperSession: () => CandlePaperSession,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
@@ -29,17 +31,25 @@ var NL = (() => {
     MIN_STAKE: () => MIN_STAKE,
     MT5_CRYPTO_STATUS: () => MT5_CRYPTO_STATUS,
     STRATEGY_PRESETS: () => STRATEGY_PRESETS,
+    binanceBaseAsset: () => binanceBaseAsset,
+    binanceFetch: () => binanceFetch,
+    binanceIntervalToSeconds: () => binanceIntervalToSeconds,
     cryptoBaseLabel: () => cryptoBaseLabel,
     cryptoSourceOf: () => cryptoSourceOf,
     dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
     dailyTrendStrategySet: () => dailyTrendStrategySet,
     evaluateCandleGate: () => evaluateCandleGate,
     feasible: () => feasible,
+    fetchBinanceCandleHistory: () => fetchBinanceCandleHistory,
+    fetchBinanceKlinesPage: () => fetchBinanceKlinesPage,
+    fetchBinanceUsdtSymbols: () => fetchBinanceUsdtSymbols,
     filterCryptoUsd: () => filterCryptoUsd,
     formatCandleEvent: () => formatCandleEvent,
     formatCandleGate: () => formatCandleGate,
     formatCandleSummary: () => formatCandleSummary,
     formatMt5StatusBlock: () => formatMt5StatusBlock,
+    granularityToBinanceInterval: () => granularityToBinanceInterval,
+    isBinanceUsdtSymbol: () => isBinanceUsdtSymbol,
     isCryptoUsd: () => isCryptoUsd,
     isOptionsFeedOnly: () => isOptionsFeedOnly,
     isScheduledOpen: () => isScheduledOpen,
@@ -53,7 +63,10 @@ var NL = (() => {
     mergeCryptoUsdListings: () => mergeCryptoUsdListings,
     nextCandleEnd: () => nextCandleEnd,
     parseActiveSymbols: () => parseActiveSymbols,
+    parseBinanceExchangeInfo: () => parseBinanceExchangeInfo,
+    parseBinanceKlines: () => parseBinanceKlines,
     parseCandlesMessage: () => parseCandlesMessage,
+    sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
     strategiesForPreset: () => strategiesForPreset,
     strategyLibrary: () => strategyLibrary,
     strategyPreset: () => strategyPreset,
@@ -69,6 +82,7 @@ var NL = (() => {
   var MARKET_ORDER = ["forex", "metals", "crypto"];
   function marketOf(symbol) {
     if (/^cry[A-Z0-9]+USD$/.test(symbol)) return "crypto";
+    if (/^[A-Z0-9]{2,20}USDT$/.test(symbol)) return "crypto";
     if (/^frx(XAU|XAG|XPD|XPT)[A-Z]{3}$/.test(symbol)) return "metals";
     if (/^frx[A-Z]{6}$/.test(symbol)) return "forex";
     return null;
@@ -286,6 +300,248 @@ var NL = (() => {
     }
     const pip = num(obj.pip_size);
     return { kind: "candles", candles, pipSize: pip !== null && Number.isInteger(pip) ? pip : null };
+  }
+
+  // src/core/binance.ts
+  var BINANCE_PUBLIC_BASES = [
+    "https://data-api.binance.vision",
+    "https://api.binance.com"
+  ];
+  var GRANULARITY_TO_INTERVAL = {
+    60: "1m",
+    180: "3m",
+    300: "5m",
+    900: "15m",
+    1800: "30m",
+    3600: "1h",
+    7200: "2h",
+    14400: "4h",
+    21600: "6h",
+    28800: "8h",
+    43200: "12h",
+    86400: "1d"
+  };
+  function granularityToBinanceInterval(seconds) {
+    if (!Number.isInteger(seconds) || seconds < 60) return null;
+    return GRANULARITY_TO_INTERVAL[seconds] ?? null;
+  }
+  function binanceIntervalToSeconds(interval) {
+    for (const [sec, label] of Object.entries(GRANULARITY_TO_INTERVAL)) {
+      if (label === interval) return Number(sec);
+    }
+    return null;
+  }
+  function isBinanceUsdtSymbol(symbol) {
+    return /^[A-Z0-9]{2,20}USDT$/.test(symbol);
+  }
+  function binanceBaseAsset(symbol) {
+    const m = /^([A-Z0-9]+)USDT$/.exec(symbol);
+    return m ? m[1] : symbol;
+  }
+  function parseObject2(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return "JSON inv\xE1lido";
+    }
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      return "Mensagem n\xE3o \xE9 um objeto";
+    }
+    return data;
+  }
+  function num2(v) {
+    const x = typeof v === "string" ? Number(v) : v;
+    return typeof x === "number" && Number.isFinite(x) ? x : null;
+  }
+  function binanceError(obj) {
+    if (typeof obj.code === "number" && typeof obj.msg === "string") {
+      return { kind: "error", code: String(obj.code), message: obj.msg };
+    }
+    return null;
+  }
+  function spotAllowed(e) {
+    if (e.isSpotTradingAllowed === false) return false;
+    if (Array.isArray(e.permissions) && e.permissions.length > 0) {
+      return e.permissions.includes("SPOT");
+    }
+    return true;
+  }
+  function parseBinanceExchangeInfo(raw) {
+    const obj = parseObject2(raw);
+    if (typeof obj === "string") return { kind: "invalid", reason: obj };
+    const err = binanceError(obj);
+    if (err) return err;
+    if (!Array.isArray(obj.symbols)) return { kind: "invalid", reason: "symbols em falta" };
+    const items = [];
+    let skipped = 0;
+    for (const entry of obj.symbols) {
+      if (typeof entry !== "object" || entry === null) {
+        skipped += 1;
+        continue;
+      }
+      const e = entry;
+      const symbol = typeof e.symbol === "string" ? e.symbol : null;
+      const quote = typeof e.quoteAsset === "string" ? e.quoteAsset : null;
+      const status = typeof e.status === "string" ? e.status : null;
+      const base = typeof e.baseAsset === "string" ? e.baseAsset : null;
+      if (symbol === null || quote !== "USDT" || !isBinanceUsdtSymbol(symbol)) {
+        skipped += 1;
+        continue;
+      }
+      if (status !== "TRADING" || !spotAllowed(e)) {
+        skipped += 1;
+        continue;
+      }
+      items.push({
+        symbol,
+        displayName: `${base ?? binanceBaseAsset(symbol)}/USDT (Binance Spot)`,
+        market: "cryptocurrency",
+        submarket: "binance_usdt",
+        open: true,
+        suspended: false
+      });
+    }
+    items.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    return { kind: "symbols", items, skipped };
+  }
+  function parseBinanceKlines(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return { kind: "invalid", reason: "JSON inv\xE1lido" };
+    }
+    if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+      const err = binanceError(data);
+      if (err) return err;
+      return { kind: "invalid", reason: "klines n\xE3o \xE9 um array" };
+    }
+    if (!Array.isArray(data)) return { kind: "invalid", reason: "klines n\xE3o \xE9 um array" };
+    const candles = [];
+    for (const row of data) {
+      if (!Array.isArray(row) || row.length < 6) {
+        return { kind: "invalid", reason: "vela Binance inv\xE1lida" };
+      }
+      const openTimeMs = num2(row[0]);
+      const open = num2(row[1]);
+      const high = num2(row[2]);
+      const low = num2(row[3]);
+      const close = num2(row[4]);
+      if (openTimeMs === null || open === null || high === null || low === null || close === null) {
+        return { kind: "invalid", reason: "vela Binance com campos em falta ou inv\xE1lidos" };
+      }
+      if (!Number.isInteger(openTimeMs) || openTimeMs < 0) {
+        return { kind: "invalid", reason: "openTime inv\xE1lido" };
+      }
+      const epoch = Math.floor(openTimeMs / 1e3);
+      if (high < low || high < Math.max(open, close) || low > Math.min(open, close)) {
+        return { kind: "invalid", reason: "vela incoerente (m\xE1ximo/m\xEDnimo)" };
+      }
+      candles.push({ epoch, open, high, low, close });
+    }
+    return { kind: "candles", candles };
+  }
+  var BINANCE_PREFERRED_USDT = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "ADAUSDT",
+    "DOGEUSDT",
+    "AVAXUSDT",
+    "DOTUSDT",
+    "LINKUSDT",
+    "LTCUSDT",
+    "MATICUSDT",
+    "TRXUSDT",
+    "ATOMUSDT",
+    "NEARUSDT",
+    "UNIUSDT"
+  ];
+  function sortBinanceUsdtPreferred(items) {
+    const rank = new Map(BINANCE_PREFERRED_USDT.map((s, i) => [s, i]));
+    return [...items].sort((a, b) => {
+      const ra = rank.has(a.symbol) ? rank.get(a.symbol) : 1e3;
+      const rb = rank.has(b.symbol) ? rank.get(b.symbol) : 1e3;
+      if (ra !== rb) return ra - rb;
+      return a.symbol.localeCompare(b.symbol);
+    });
+  }
+  async function binanceFetch(pathAndQuery, fetchImpl = fetch) {
+    const path = pathAndQuery.startsWith("/") ? pathAndQuery : `/${pathAndQuery}`;
+    let lastErr = null;
+    for (const base of BINANCE_PUBLIC_BASES) {
+      try {
+        const res = await fetchImpl(`${base}${path}`);
+        const text = await res.text();
+        if (res.ok) return { base, text, status: res.status };
+        if (res.status === 451 || res.status === 403 || res.status === 418) {
+          lastErr = new Error(`Binance ${res.status} em ${base}`);
+          continue;
+        }
+        return { base, text, status: res.status };
+      } catch (e) {
+        lastErr = e instanceof Error ? e : new Error(String(e));
+      }
+    }
+    throw lastErr ?? new Error("Binance inacess\xEDvel");
+  }
+  async function fetchBinanceUsdtSymbols(fetchImpl = fetch) {
+    const { text, status } = await binanceFetch("/api/v3/exchangeInfo", fetchImpl);
+    if (status < 200 || status >= 300) {
+      const parsed = parseBinanceExchangeInfo(text);
+      if (parsed.kind === "error") throw new Error(`Binance exchangeInfo: ${parsed.code} \u2014 ${parsed.message}`);
+      throw new Error(`Binance exchangeInfo HTTP ${status}`);
+    }
+    const msg = parseBinanceExchangeInfo(text);
+    if (msg.kind !== "symbols") {
+      const why = msg.kind === "error" ? `${msg.code} \u2014 ${msg.message}` : msg.reason;
+      throw new Error(`Binance exchangeInfo: ${why}`);
+    }
+    return sortBinanceUsdtPreferred(msg.items);
+  }
+  async function fetchBinanceKlinesPage(symbol, interval, limit, endTimeMs, fetchImpl = fetch) {
+    if (!isBinanceUsdtSymbol(symbol)) throw new RangeError(`s\xEDmbolo Binance inv\xE1lido: ${symbol}`);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1e3) {
+      throw new RangeError(`limit inv\xE1lido: ${limit}`);
+    }
+    let path = `/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+    if (endTimeMs !== void 0) {
+      if (!Number.isInteger(endTimeMs) || endTimeMs < 0) throw new RangeError(`endTimeMs inv\xE1lido: ${endTimeMs}`);
+      path += `&endTime=${endTimeMs}`;
+    }
+    const { text, status } = await binanceFetch(path, fetchImpl);
+    const msg = parseBinanceKlines(text);
+    if (status < 200 || status >= 300 || msg.kind !== "candles") {
+      if (msg.kind === "error") throw new Error(`Binance klines: ${msg.code} \u2014 ${msg.message}`);
+      if (msg.kind === "invalid") throw new Error(`Binance klines: ${msg.reason}`);
+      throw new Error(`Binance klines HTTP ${status}`);
+    }
+    return msg.candles;
+  }
+  async function fetchBinanceCandleHistory(symbol, granularitySec, target, fetchImpl = fetch, nowMs = Date.now()) {
+    const interval = granularityToBinanceInterval(granularitySec);
+    if (!interval) throw new RangeError(`granularity n\xE3o suportada na Binance: ${granularitySec}`);
+    if (!Number.isInteger(target) || target < 1 || target > 2e4) {
+      throw new RangeError(`target inv\xE1lido: ${target}`);
+    }
+    const byEpoch = /* @__PURE__ */ new Map();
+    let endTimeMs;
+    for (let page = 0; page < 30 && byEpoch.size < target + 5; page++) {
+      const batch = await fetchBinanceKlinesPage(symbol, interval, 1e3, endTimeMs, fetchImpl);
+      if (batch.length === 0) break;
+      for (const c of batch) byEpoch.set(c.epoch, c);
+      const oldest = batch.reduce((m, c) => Math.min(m, c.epoch), Infinity);
+      const nextEnd = oldest * 1e3 - 1;
+      if (endTimeMs !== void 0 && nextEnd >= endTimeMs) break;
+      endTimeMs = nextEnd;
+      if (batch.length < 1e3) break;
+    }
+    const nowSec = nowMs / 1e3;
+    const closed2 = [...byEpoch.values()].filter((c) => c.epoch + granularitySec <= nowSec).sort((a, b) => a.epoch - b.epoch);
+    return closed2.slice(-target);
   }
 
   // src/core/candle-pages.ts

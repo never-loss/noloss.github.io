@@ -42,6 +42,8 @@ test("cada símbolo vai para o seu mercado: cripto NÃO é forex", () => {
   assert.equal(marketOf("cryBTCUSD"), "crypto");
   assert.equal(marketOf("cryETHUSD"), "crypto");
   assert.equal(marketOf("crySOLUSD"), "crypto");
+  assert.equal(marketOf("BTCUSDT"), "crypto");
+  assert.equal(marketOf("ETHUSDT"), "crypto");
   assert.equal(marketOf("frxEURUSD"), "forex");
   assert.equal(marketOf("frxUSDJPY"), "forex");
   assert.equal(marketOf("frxXAUUSD"), "metals");

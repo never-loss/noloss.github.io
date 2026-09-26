@@ -20,6 +20,23 @@ export type { Mt5StatusInfo, Mt5IntegrationStatus } from "../core/mt5-status.ts"
 export { parseActiveSymbols, parseCandlesMessage, summarizeMarkets } from "../core/market-data.ts";
 export type { SymbolInfo, Candle, SymbolsMessage, CandlesMessage } from "../core/market-data.ts";
 
+export {
+  BINANCE_PUBLIC_BASES,
+  BINANCE_PREFERRED_USDT,
+  granularityToBinanceInterval,
+  binanceIntervalToSeconds,
+  isBinanceUsdtSymbol,
+  binanceBaseAsset,
+  parseBinanceExchangeInfo,
+  parseBinanceKlines,
+  sortBinanceUsdtPreferred,
+  binanceFetch,
+  fetchBinanceUsdtSymbols,
+  fetchBinanceKlinesPage,
+  fetchBinanceCandleHistory,
+} from "../core/binance.ts";
+export type { BinanceInterval, BinanceSymbolsMessage, BinanceKlinesMessage } from "../core/binance.ts";
+
 export { mergeCandlePages, nextCandleEnd } from "../core/candle-pages.ts";
 
 export {
