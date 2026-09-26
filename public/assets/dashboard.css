@@ -993,41 +993,6 @@ button.ctrl.analyze:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 /* ===== Mundo Deriv / Bybit ===== */
-.world-nav {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 10px;
-  margin-bottom: 8px;
-}
-.world-btn {
-  appearance: none;
-  border: 1px solid var(--border);
-  background: rgba(2, 6, 23, 0.45);
-  color: var(--muted);
-  border-radius: 14px;
-  padding: 8px 10px;
-  font-size: 0.88rem;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  min-height: 40px;
-  transition: border-color 0.15s, color 0.15s, background 0.15s, box-shadow 0.15s;
-}
-.world-btn:hover { color: var(--text); border-color: rgba(56, 189, 248, 0.45); }
-.world-btn.active {
-  color: var(--text);
-  border-color: rgba(56, 189, 248, 0.65);
-  background: rgba(14, 165, 233, 0.18);
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25) inset;
-}
-.world-btn.bybit.active {
-  border-color: rgba(251, 191, 36, 0.7);
-  background: rgba(245, 158, 11, 0.18);
-  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.3) inset;
-  color: #fde68a;
-}
-
 .bybit-world-panel {
   border-color: rgba(251, 191, 36, 0.35);
 }
@@ -1072,17 +1037,7 @@ button.ctrl.analyze:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--bad);
   font-size: 0.88rem;
 }
-/* World isolation: each world owns its Operar controls; shared hero keeps PAUSE/STOP. */
-body.world-bybit .account-panel#derivAccountPanel { display: none !important; }
-body.world-bybit #marketStrategyPanel { display: none !important; }
-body.world-bybit #mt5Panel { display: none !important; }
-/* Bybit panel has its own PLAY — avoid two PLAY buttons */
-body.world-bybit #btnPlay { display: none !important; }
-body.world-bybit .btn-row-hero { grid-template-columns: 1fr 1fr; }
-body.world-deriv #bybitWorldPanel { display: none !important; }
-/* Deriv world: hero PLAY is the start control (Bybit panel hidden) */
-body.world-deriv #btnBybitPlay,
-body.world-deriv #btnBybitAnalyze { display: none !important; }
+/* world-isolation rules removed — Bybit is /bybit only */
 
 /* ===== Phase A shell: compact dense (restrained type) ===== */
 .hero-balances { margin-bottom: 8px; padding: 8px 10px; }
