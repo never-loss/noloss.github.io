@@ -990,3 +990,96 @@ button.ctrl.analyze:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-row-hero .ctrl.pause,
   .btn-row-hero .ctrl.stop { min-height: 48px; }
 }
+
+/* ===== Mundo Deriv / Bybit ===== */
+.world-nav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.world-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, 0.45);
+  color: var(--muted);
+  border-radius: 14px;
+  padding: 14px 12px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  min-height: 52px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.world-btn:hover { color: var(--text); border-color: rgba(56, 189, 248, 0.45); }
+.world-btn.active {
+  color: var(--text);
+  border-color: rgba(56, 189, 248, 0.65);
+  background: rgba(14, 165, 233, 0.18);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25) inset;
+}
+.world-btn.bybit.active {
+  border-color: rgba(251, 191, 36, 0.7);
+  background: rgba(245, 158, 11, 0.18);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.3) inset;
+  color: #fde68a;
+}
+
+.bybit-world-panel {
+  border-color: rgba(251, 191, 36, 0.35);
+}
+.bybit-balance-card {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+.bybit-bal-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bybit-balance-card .k {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.bybit-balance-card .v {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #fde68a;
+  line-height: 1.15;
+}
+.bybit-balance-card .sub {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.bybit-bal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.bybit-bal-err {
+  margin: 10px 0 0;
+  color: var(--bad);
+  font-size: 0.88rem;
+}
+body.world-bybit .account-panel#derivAccountPanel { display: none; }
+body.world-bybit #marketStrategyPanel .tabs,
+body.world-bybit #marketStrategyPanel #panelHint,
+body.world-bybit #marketStrategyPanel .source-toggle,
+body.world-bybit #marketStrategyPanel #sourceHint,
+body.world-bybit #marketStrategyPanel #tradingModeToggle,
+body.world-bybit #marketStrategyPanel #tradingModeHint {
+  /* Mercado section still has shared symbol/strategy/analyze — hide duplicate when Bybit panel owns them */
+}
+body.world-bybit #marketStrategyPanel { display: none; }
+body.world-bybit #mt5Panel { display: none; }
+body.world-deriv #bybitWorldPanel { display: none !important; }

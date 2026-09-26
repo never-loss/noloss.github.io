@@ -12,7 +12,10 @@
   const BYBIT_STATUS_URL = "/api/bybit-status";
   // REAL order path (signed server proxy). PAPER never calls this — only placeBybitOrder when isRealTradingMode().
   const BYBIT_ORDER_URL = "/api/bybit-order";
+  const BYBIT_BALANCE_URL = "/api/bybit-balance";
+  const BYBIT_LEVERAGE_URL = "/api/bybit-leverage";
   const TRADING_MODE_KEY = "nl_crypto_trading_mode";
+  const WORLD_KEY = "nl_world";
   const JOURNAL_KEY = "nl_trade_journal";
   const JOURNAL_MAX = 400;
 
@@ -41,6 +44,12 @@
     tradingMode: "PAPER",
     bybitKeysConfigured: false,
     bybitRealAvailable: false,
+    /** "deriv" | "bybit" — Bybit world shows wallet + futures; Deriv keeps OAuth accounts. */
+    world: sessionStorage.getItem(WORLD_KEY) === "bybit" ? "bybit" : "deriv",
+    bybitBalance: null,
+    bybitBalanceError: null,
+    bybitLeverageInfo: null,
+    bybitLeverage: 1,
     /** Last REAL open qty/side for flatten on trade_closed (PAPER ignores). */
     realOpenQty: null,
     realOpenSide: null,
@@ -324,8 +333,8 @@
   function updateNextStep() {
     const box = el("nextStepText");
     if (!box) return;
-    const hasAccount = !!resolveSelectedAccount();
-    const hasStrategy = !!(el("strategySet") && el("strategySet").value);
+    const hasAccount = accountReady();
+    const hasStrategy = !!(el("strategySet") && el("strategySet").value) || !!(el("bybitStrategy") && el("bybitStrategy").value);
     const running = state.session && state.session.status === "RUNNING";
     const paused = state.session && state.session.status === "PAUSED";
     if (running) {
@@ -385,6 +394,12 @@
   function accountBalanceText(acc) {
     if (!acc) return "—";
     return (acc.balance != null ? acc.balance : "—") + " " + (acc.currency || "");
+  }
+
+  /** Bybit world does not need Deriv OAuth account; Deriv world does. */
+  function accountReady() {
+    if (isBybitWorld()) return true;
+    return !!resolveSelectedAccount();
   }
 
   function resolveSelectedAccount() {
@@ -633,29 +648,38 @@
     const hint = el("tradingModeHint");
     const paperBtn = el("modePaper");
     const realBtn = el("modeReal");
-    const onBybit = isBybitSource();
-    if (toggle) toggle.hidden = !onBybit;
-    if (hint) hint.hidden = !onBybit;
-    if (!onBybit) return;
-    if (paperBtn) {
-      paperBtn.classList.toggle("active", state.tradingMode !== "REAL");
-      paperBtn.setAttribute("aria-pressed", state.tradingMode !== "REAL" ? "true" : "false");
-    }
-    if (realBtn) {
-      const canReal = state.bybitKeysConfigured && state.bybitRealAvailable;
-      realBtn.disabled = !canReal;
-      realBtn.title = canReal
-        ? "REAL: ordens Bybit Linear via servidor (porta de evidência + stake fixa + máx 3 h)"
-        : "Indisponível: faltam BYBIT_API_KEY + BYBIT_API_SECRET no servidor (nunca no chat)";
-      realBtn.classList.toggle("active", state.tradingMode === "REAL" && canReal);
-      realBtn.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
-    }
-    if (hint) {
+    const onBybit = isBybitSource() || isBybitWorld();
+    if (toggle) toggle.hidden = !onBybit || isBybitWorld(); // Bybit panel has its own toggle
+    if (hint) hint.hidden = !onBybit || isBybitWorld();
+    const syncPair = function (paperEl, realEl) {
+      if (paperEl) {
+        paperEl.classList.toggle("active", state.tradingMode !== "REAL");
+        paperEl.setAttribute("aria-pressed", state.tradingMode !== "REAL" ? "true" : "false");
+      }
+      if (realEl) {
+        const canReal = state.bybitKeysConfigured && state.bybitRealAvailable;
+        realEl.disabled = !canReal;
+        realEl.title = canReal
+          ? "REAL: ordens Bybit Linear via servidor (porta de evidência + stake fixa + máx 3 h)"
+          : "Indisponível: faltam BYBIT_API_KEY + BYBIT_API_SECRET no servidor (nunca no chat)";
+        realEl.classList.toggle("active", state.tradingMode === "REAL" && canReal);
+        realEl.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
+      }
+    };
+    syncPair(paperBtn, realBtn);
+    syncPair(el("bybitModePaper"), el("bybitModeReal"));
+    if (hint && !isBybitWorld()) {
       hint.textContent = state.bybitRealAvailable && state.bybitKeysConfigured
         ? (state.tradingMode === "REAL"
           ? "REAL ligado — dinheiro de verdade. Porta + stake fixa + máx. 3 h."
           : "PAPER (seguro). Chaves OK no servidor — podes mudar para REAL (pede confirmação).")
         : "PAPER (seguro). REAL bloqueado: faltam chaves no servidor.";
+    }
+    const actionHint = el("bybitActionHint");
+    if (actionHint && isBybitWorld()) {
+      actionHint.textContent = state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable
+        ? "REAL: PLAY envia ordens Bybit (porta + stake fixa + máx 3 h). Analisar continua só paper/gate."
+        : "Analisar = porta (paper). PLAY = sessão PAPER por omissão. REAL só com toggle + confirmação.";
     }
   }
 
@@ -678,6 +702,281 @@
       }
     }
     updateTradingModeUI();
+  }
+
+  function isBybitWorld() {
+    return state.world === "bybit";
+  }
+
+  function applyWorldUI() {
+    const onBybit = isBybitWorld();
+    document.body.classList.toggle("world-bybit", onBybit);
+    document.body.classList.toggle("world-deriv", !onBybit);
+    const d = el("worldDeriv");
+    const b = el("worldBybit");
+    if (d) {
+      d.classList.toggle("active", !onBybit);
+      d.setAttribute("aria-selected", onBybit ? "false" : "true");
+    }
+    if (b) {
+      b.classList.toggle("active", onBybit);
+      b.setAttribute("aria-selected", onBybit ? "true" : "false");
+    }
+    const panel = el("bybitWorldPanel");
+    if (panel) panel.hidden = !onBybit;
+    const hint = el("worldHint");
+    if (hint) {
+      hint.textContent = onBybit
+        ? "Mundo Bybit: saldo real (só leitura), futures USDT, alavancagem do par, Analisar + PLAY. PAPER por omissão."
+        : "Mundo Deriv: dígitos/forex via OAuth. Conta DEMO/REAL = contexto. Cripto usa o botão Bybit.";
+    }
+    updateTradingModeUI();
+    updateModeBanner();
+    updateButtons();
+  }
+
+  async function setWorld(next) {
+    const w = next === "bybit" ? "bybit" : "deriv";
+    if (state.running && w !== state.world) {
+      pushHistory("Para a sessão antes de mudar Deriv/Bybit.", "stop");
+      return false;
+    }
+    state.world = w;
+    sessionStorage.setItem(WORLD_KEY, w);
+    if (w === "bybit") {
+      state.panel = "crypto";
+      state.dataSource = "bybit";
+      sessionStorage.setItem(SOURCE_KEY, "bybit");
+      document.querySelectorAll("#marketTabs .tab").forEach(function (btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-panel") === "crypto");
+      });
+      if (!state.bybitSymbols.length) {
+        try {
+          await loadBybitSymbols();
+        } catch (e) {
+          pushHistory("Bybit símbolos: " + (e.message || String(e)), "stop");
+        }
+      }
+      state.symbol = state.symbol || (state.bybitSymbols[0] && state.bybitSymbols[0].symbol) || "BTCUSDT";
+      syncBybitFormFromState();
+      renderBybitSymbolSelect();
+      await loadBybitBalance();
+      await loadBybitLeverage(state.symbol);
+      pushHistory("Mundo Bybit · Linear USDT · modo " + state.tradingMode, "open");
+    } else {
+      pushHistory("Mundo Deriv · dígitos/forex (OAuth intacto)", "");
+    }
+    applyWorldUI();
+    updateSourceUI();
+    renderSymbolSelect();
+    renderChips();
+    syncFormToAnalise();
+    return true;
+  }
+
+  function formatUsdt(v) {
+    if (v == null || v === "") return "—";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v);
+    return n.toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 4 }) + " USDT";
+  }
+
+  function renderBybitBalance() {
+    const usdtEl = el("bybitBalUsdt");
+    const meta = el("bybitBalMeta");
+    const err = el("bybitBalErr");
+    const grid = el("bybitBalGrid");
+    if (!usdtEl) return;
+    if (state.bybitBalanceError) {
+      usdtEl.textContent = "—";
+      if (meta) meta.textContent = "Saldo indisponível";
+      if (err) {
+        err.hidden = false;
+        err.textContent = state.bybitBalanceError;
+      }
+      if (grid) grid.hidden = true;
+      return;
+    }
+    const bal = state.bybitBalance;
+    if (!bal) {
+      usdtEl.textContent = "—";
+      if (meta) meta.textContent = "A carregar saldo Bybit…";
+      if (err) err.hidden = true;
+      if (grid) grid.hidden = true;
+      return;
+    }
+    if (err) err.hidden = true;
+    usdtEl.textContent = formatUsdt(bal.usdtWalletBalance != null ? bal.usdtWalletBalance : bal.totalWalletBalance);
+    if (meta) {
+      meta.textContent =
+        (bal.label || "REAL · Bybit UNIFIED") +
+        " · equity " +
+        formatUsdt(bal.usdtEquity != null ? bal.usdtEquity : bal.totalEquity);
+    }
+    if (grid) {
+      grid.hidden = false;
+      const set = function (id, val) {
+        const n = el(id);
+        if (n) n.textContent = val;
+      };
+      set("bybitBalEquity", formatUsdt(bal.totalEquity));
+      set("bybitBalAvail", formatUsdt(bal.totalAvailableBalance));
+      set("bybitBalUpl", formatUsdt(bal.totalPerpUPL));
+      set("bybitBalType", bal.accountType || "UNIFIED");
+    }
+  }
+
+  async function loadBybitBalance() {
+    state.bybitBalanceError = null;
+    renderBybitBalance();
+    try {
+      const res = await fetch(BYBIT_BALANCE_URL + "?coin=USDT");
+      const payload = await res.json().catch(function () { return null; });
+      if (!res.ok || !payload || payload.ok !== true) {
+        const why =
+          (payload && (payload.error_description || payload.error || payload.message)) ||
+          ("HTTP " + res.status);
+        state.bybitBalance = null;
+        state.bybitBalanceError = String(why);
+        renderBybitBalance();
+        return false;
+      }
+      state.bybitBalance = payload;
+      state.bybitBalanceError = null;
+      // Presence of balance confirms keys work; keep status flags in sync if status was stale.
+      if (payload.keysConfigured) state.bybitKeysConfigured = true;
+      renderBybitBalance();
+      updateTradingModeUI();
+      return true;
+    } catch (e) {
+      state.bybitBalance = null;
+      state.bybitBalanceError = e.message || String(e);
+      renderBybitBalance();
+      return false;
+    }
+  }
+
+  function renderBybitLeverageHint() {
+    const hint = el("bybitLeverageHint");
+    const input = el("bybitLeverage");
+    const info = state.bybitLeverageInfo;
+    if (!hint) return;
+    if (!info) {
+      hint.textContent = "Alavancagem: a carregar intervalo do par… Stake fixa (não multiplica no paper).";
+      return;
+    }
+    hint.textContent =
+      info.symbol +
+      ": alavancagem " +
+      info.minLeverage +
+      "×–" +
+      info.maxLeverage +
+      "× (passo " +
+      info.leverageStep +
+      "). Predefinição conservadora " +
+      info.defaultLeverage +
+      "×. Stake fixa em USDT — não multiplica o risco no paper.";
+    if (input) {
+      input.min = String(info.minLeverage);
+      input.max = String(info.maxLeverage);
+      input.step = String(info.leverageStep);
+      const cur = Number(input.value);
+      const clamped =
+        typeof NL.clampBybitLeverage === "function"
+          ? NL.clampBybitLeverage(cur || info.defaultLeverage, info)
+          : info.defaultLeverage;
+      input.value = String(clamped);
+      state.bybitLeverage = clamped;
+    }
+  }
+
+  async function loadBybitLeverage(symbol) {
+    const sym = symbol || state.symbol || "BTCUSDT";
+    try {
+      const res = await fetch(BYBIT_LEVERAGE_URL + "?symbol=" + encodeURIComponent(sym));
+      const payload = await res.json().catch(function () { return null; });
+      if (!res.ok || !payload || payload.ok !== true) {
+        state.bybitLeverageInfo = null;
+        renderBybitLeverageHint();
+        return false;
+      }
+      state.bybitLeverageInfo = payload;
+      state.bybitLeverage = payload.defaultLeverage;
+      renderBybitLeverageHint();
+      return true;
+    } catch (_e) {
+      state.bybitLeverageInfo = null;
+      renderBybitLeverageHint();
+      return false;
+    }
+  }
+
+  function renderBybitSymbolSelect() {
+    const sel = el("bybitSymbolSelect");
+    if (!sel) return;
+    const items = state.bybitSymbols.slice();
+    const prev = state.symbol;
+    sel.innerHTML = "";
+    if (!items.length) {
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = "Sem pares…";
+      sel.appendChild(o);
+      return;
+    }
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.symbol;
+      o.textContent = it.displayName || it.symbol;
+      sel.appendChild(o);
+    }
+    if (prev && items.some(function (it) { return it.symbol === prev; })) sel.value = prev;
+    else sel.value = items[0].symbol;
+    state.symbol = sel.value;
+  }
+
+  function syncBybitFormFromState() {
+    const sym = el("bybitSymbolSelect");
+    const strat = el("bybitStrategy");
+    const stake = el("bybitStake");
+    const mainSym = el("symbolSelect");
+    const mainStrat = el("strategySet");
+    const mainStake = el("stake");
+    if (sym && state.symbol) sym.value = state.symbol;
+    if (strat && state.strategySet) strat.value = state.strategySet;
+    if (stake && mainStake) stake.value = mainStake.value;
+    if (mainSym && state.symbol) mainSym.value = state.symbol;
+    if (mainStrat && state.strategySet) mainStrat.value = state.strategySet;
+  }
+
+  function syncStateFromBybitForm() {
+    const sym = el("bybitSymbolSelect");
+    const strat = el("bybitStrategy");
+    const stake = el("bybitStake");
+    const lev = el("bybitLeverage");
+    const mainSym = el("symbolSelect");
+    const mainStrat = el("strategySet");
+    const mainStake = el("stake");
+    if (sym && sym.value) {
+      state.symbol = sym.value;
+      if (mainSym) mainSym.value = sym.value;
+    }
+    if (strat && strat.value) {
+      state.strategySet = strat.value;
+      if (mainStrat) mainStrat.value = strat.value;
+      updateStrategyHint();
+    }
+    if (stake && mainStake) {
+      mainStake.value = stake.value;
+      state.stake = Number(stake.value) || 1;
+    }
+    if (lev) {
+      const info = state.bybitLeverageInfo;
+      let v = Number(lev.value);
+      if (info && typeof NL.clampBybitLeverage === "function") v = NL.clampBybitLeverage(v, info);
+      state.bybitLeverage = v;
+      lev.value = String(v);
+    }
   }
 
   function setTradingMode(next, opts) {
@@ -1075,23 +1374,27 @@
   }
 
   function readForm() {
-    state.symbol = el("symbolSelect").value;
+    const symEl = el("symbolSelect");
+    const stratEl = el("strategySet");
+    const stakeEl = el("stake");
+    if (symEl && symEl.value) state.symbol = symEl.value;
     state.granularity = Number(el("granularity").value) || 300;
-    state.stake = Number(el("stake").value) || 1;
+    if (stakeEl) state.stake = Number(stakeEl.value) || 1;
     state.minutes = Math.min(180, Math.max(1, Number(el("minutes").value) || 60));
     state.minMultiplier = Number(el("minMultiplier").value) || 100;
-    state.strategySet = el("strategySet").value || "";
+    if (stratEl && stratEl.value) state.strategySet = stratEl.value;
   }
 
   function updateButtons() {
-    const hasAccount = !!resolveSelectedAccount();
-    const hasStrategy = !!(el("strategySet") && el("strategySet").value);
+    if (isBybitWorld()) syncStateFromBybitForm();
+    const hasAccount = accountReady();
+    const hasStrategy = !!(el("strategySet") && el("strategySet").value) || !!(el("bybitStrategy") && el("bybitStrategy").value);
     const running = state.session && state.session.status === "RUNNING";
     const paused = state.session && state.session.status === "PAUSED";
     const stopped = !state.session || state.session.status === "STOPPED";
     el("btnPlay").disabled = !hasAccount || !hasStrategy || running;
     el("btnPlay").title = !hasAccount
-      ? "Seleciona DEMO ou REAL primeiro"
+      ? (isBybitWorld() ? "Mundo Bybit — escolhe estratégia" : "Seleciona DEMO ou REAL primeiro")
       : !hasStrategy
         ? "Escolhe uma estratégia (Lucro rápido / Loss zero / …)"
         : "Iniciar sessão paper / simulado (após análise pré-PLAY)";
@@ -1103,6 +1406,20 @@
         : !hasStrategy
           ? "Escolhe estratégia primeiro"
           : "Correr porta de evidência sem abrir sessão";
+    }
+    const btnBA = el("btnBybitAnalyze");
+    const btnBP = el("btnBybitPlay");
+    if (btnBA) {
+      btnBA.disabled = !hasStrategy || running;
+      btnBA.title = !hasStrategy ? "Escolhe estratégia Bybit" : "Analisar mercado Bybit (porta de evidência, paper)";
+    }
+    if (btnBP) {
+      btnBP.disabled = !hasStrategy || running;
+      btnBP.title = !hasStrategy
+        ? "Escolhe estratégia Bybit"
+        : isRealTradingMode()
+          ? "PLAY REAL Bybit (ordens verdadeiras — confirmação já no modo)"
+          : "PLAY paper Bybit (simulado)";
     }
     el("btnPause").disabled = !running;
     el("btnStop").disabled = stopped && !state.running;
@@ -1288,7 +1605,7 @@
   }
 
   function updateAnaliseButtons() {
-    const hasAccount = !!resolveSelectedAccount();
+    const hasAccount = accountReady();
     const aStrat = el("analiseStrategy");
     const hasStrategy = !!(aStrat && aStrat.value) || !!(el("strategySet") && el("strategySet").value);
     const running = state.session && state.session.status === "RUNNING";
@@ -1369,13 +1686,22 @@
   }
 
   async function runPrePlayAnalysis() {
+    if (isBybitWorld()) syncStateFromBybitForm();
     resolveSelectedAccount();
-    if (!state.selectedAccount) {
+    if (!isBybitWorld() && !state.selectedAccount) {
       setPrePlayUI(null, "Seleciona DEMO ou REAL antes de analisar.");
       updateButtons();
       return null;
     }
     readForm();
+    if (isBybitWorld()) {
+      const bs = el("bybitSymbolSelect");
+      const bstrat = el("bybitStrategy");
+      const bst = el("bybitStake");
+      if (bs && bs.value) state.symbol = bs.value;
+      if (bstrat && bstrat.value) state.strategySet = bstrat.value;
+      if (bst) state.stake = Number(bst.value) || state.stake;
+    }
     if (!state.strategySet) {
       setPrePlayUI(null, "Escolhe uma estratégia (Lucro rápido / Loss zero / …) antes de analisar.");
       updateButtons();
@@ -1526,13 +1852,23 @@
   }
 
   async function startSession() {
+    if (isBybitWorld()) syncStateFromBybitForm();
     resolveSelectedAccount();
-    if (!state.selectedAccount) {
+    if (!isBybitWorld() && !state.selectedAccount) {
       pushHistory("Seleciona uma conta DEMO ou REAL antes de PLAY.", "stop");
       updateButtons();
       return;
     }
     readForm();
+    if (isBybitWorld()) {
+      // Prefer Bybit form values
+      const bs = el("bybitSymbolSelect");
+      const bstrat = el("bybitStrategy");
+      const bst = el("bybitStake");
+      if (bs && bs.value) state.symbol = bs.value;
+      if (bstrat && bstrat.value) state.strategySet = bstrat.value;
+      if (bst) state.stake = Number(bst.value) || state.stake;
+    }
     if (!state.strategySet) {
       pushHistory("Escolhe uma estratégia (Lucro rápido / Loss zero / …) antes de PLAY.", "stop");
       updateButtons();
@@ -1559,12 +1895,25 @@
     state.realOpenQty = null;
     state.realOpenSide = null;
     el("btnPlay").disabled = true;
-    const ctx =
-      accountKind(state.selectedAccount) +
-      " " +
-      state.selectedAccount.account_id +
-      " | saldo Deriv " +
-      accountBalanceText(state.selectedAccount);
+    const ctx = isBybitWorld()
+      ? (
+          "Bybit " +
+          (state.tradingMode === "REAL" ? "REAL" : "PAPER") +
+          " | saldo " +
+          (state.bybitBalance
+            ? formatUsdt(state.bybitBalance.usdtWalletBalance != null ? state.bybitBalance.usdtWalletBalance : state.bybitBalance.totalWalletBalance)
+            : (state.bybitBalanceError || "n/d")) +
+          " | lev " +
+          state.bybitLeverage +
+          "×"
+        )
+      : (
+          accountKind(state.selectedAccount) +
+          " " +
+          state.selectedAccount.account_id +
+          " | saldo Deriv " +
+          accountBalanceText(state.selectedAccount)
+        );
     if (isBybitSource() && state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
       pushHistory("REAL pediu-se mas chaves em falta — a forçar PAPER.", "stop");
       state.tradingMode = "PAPER";
@@ -1667,7 +2016,9 @@
           " | máx " +
           state.minutes +
           " min | contexto " +
-          accountKind(state.selectedAccount) +
+          (isBybitWorld()
+            ? ("Bybit " + state.tradingMode + " lev " + state.bybitLeverage + "×")
+            : accountKind(state.selectedAccount)) +
           " | " +
           NL.formatCandleGate(state.controller.result) +
           (isBybitSource() ? (isRealTradingMode() ? " | REAL Bybit (gate+stake fixa)" : " | PAPER — sem ordens reais") : ""),
@@ -1808,6 +2159,18 @@
         document.querySelectorAll("#marketTabs .tab").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         state.panel = nextPanel;
+        if (nextPanel === "crypto" && !isBybitWorld()) {
+          await setWorld("bybit");
+          return;
+        }
+        if (nextPanel !== "crypto" && isBybitWorld()) {
+          await setWorld("deriv");
+          // re-apply panel after world switch
+          state.panel = nextPanel;
+          document.querySelectorAll("#marketTabs .tab").forEach(function (b) {
+            b.classList.toggle("active", b.getAttribute("data-panel") === nextPanel);
+          });
+        }
         const ok = await applyPanelSource();
         if (ok === false) {
           state.panel = prevPanel;
@@ -1874,6 +2237,71 @@
     const modeReal = el("modeReal");
     if (modePaper) modePaper.addEventListener("click", () => setTradingMode("PAPER"));
     if (modeReal) modeReal.addEventListener("click", () => setTradingMode("REAL"));
+    const bybitModePaper = el("bybitModePaper");
+    const bybitModeReal = el("bybitModeReal");
+    if (bybitModePaper) bybitModePaper.addEventListener("click", () => setTradingMode("PAPER"));
+    if (bybitModeReal) bybitModeReal.addEventListener("click", () => setTradingMode("REAL"));
+    document.querySelectorAll("#worldNav .world-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setWorld(btn.getAttribute("data-world"));
+      });
+    });
+    const btnBal = el("btnBybitRefreshBal");
+    if (btnBal) btnBal.addEventListener("click", function () { loadBybitBalance(); });
+    const bybitSym = el("bybitSymbolSelect");
+    if (bybitSym) {
+      bybitSym.addEventListener("change", function () {
+        state.symbol = bybitSym.value;
+        const main = el("symbolSelect");
+        if (main) main.value = state.symbol;
+        state.prePlayOk = false;
+        state.prePlayGate = null;
+        setPrePlayUI(null);
+        loadBybitLeverage(state.symbol);
+        updateButtons();
+      });
+    }
+    const bybitStrat = el("bybitStrategy");
+    if (bybitStrat) {
+      bybitStrat.addEventListener("change", function () {
+        state.strategySet = bybitStrat.value || "";
+        const main = el("strategySet");
+        if (main && state.strategySet) main.value = state.strategySet;
+        state.prePlayOk = false;
+        state.prePlayGate = null;
+        updateStrategyHint();
+        setPrePlayUI(null);
+        updateButtons();
+      });
+    }
+    const bybitStake = el("bybitStake");
+    if (bybitStake) {
+      bybitStake.addEventListener("change", function () {
+        const main = el("stake");
+        if (main) main.value = bybitStake.value;
+        state.stake = Number(bybitStake.value) || 1;
+      });
+    }
+    const bybitLev = el("bybitLeverage");
+    if (bybitLev) {
+      bybitLev.addEventListener("change", function () {
+        syncStateFromBybitForm();
+      });
+    }
+    const btnBybitAnalyze = el("btnBybitAnalyze");
+    if (btnBybitAnalyze) {
+      btnBybitAnalyze.addEventListener("click", function () {
+        syncStateFromBybitForm();
+        runPrePlayAnalysis();
+      });
+    }
+    const btnBybitPlay = el("btnBybitPlay");
+    if (btnBybitPlay) {
+      btnBybitPlay.addEventListener("click", function () {
+        syncStateFromBybitForm();
+        startSession();
+      });
+    }
   }
 
 
@@ -1938,18 +2366,26 @@
       state.symbol = (state.bybitSymbols[0] && state.bybitSymbols[0].symbol) || "BTCUSDT";
       renderSymbolSelect();
       renderChips();
+      renderBybitSymbolSelect();
+      applyWorldUI();
+      if (isBybitWorld()) {
+        await loadBybitBalance();
+        await loadBybitLeverage(state.symbol);
+        syncBybitFormFromState();
+      }
       pushHistory(
-        "Pronto · Cripto = Bybit Linear USDT (" +
+        "Pronto · Bybit Linear USDT (" +
           state.bybitSymbols.length +
           " perpetual). Modo " +
           state.tradingMode +
           (state.bybitRealAvailable && state.bybitKeysConfigured
             ? " · chaves servidor OK (REAL disponível)"
             : " · PAPER (sem chaves / REAL off)") +
-          ". Dígitos/Forex = Deriv. Escolhe conta + Lucro rápido / Loss zero → Analisar → PLAY.",
+          ". Usa o botão Bybit (abaixo) para saldo real + futures. Deriv = dígitos/forex.",
         "",
       );
       updateSourceUI();
+      updateButtons();
     } catch (e) {
       pushHistory("Falha WS/símbolos: " + (e.message || String(e)), "stop");
     }

@@ -27,6 +27,14 @@
         <span id="nextStepText">1 Conta · 2 Estratégia · 3 Analisar · 4 PLAY</span>
       </div>
 
+      <nav class="glass world-nav" id="worldNav" role="tablist" aria-label="Mundo Deriv ou Bybit">
+        <button type="button" class="world-btn active" role="tab" aria-selected="true" data-world="deriv" id="worldDeriv">Deriv</button>
+        <button type="button" class="world-btn bybit" role="tab" aria-selected="false" data-world="bybit" id="worldBybit">Bybit</button>
+      </nav>
+      <p id="worldHint" class="footer-note" style="margin:0 0 10px;text-align:left">
+        Deriv = dígitos/forex (OAuth). Bybit = cripto futures USDT (saldo real + paper/REAL).
+      </p>
+
       <nav class="glass view-nav" id="viewTabs" role="tablist" aria-label="Secções">
         <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="analise" id="tabAnalise">Análise</button>
         <button type="button" class="view-tab active" role="tab" aria-selected="true" data-view="operar" id="tabOperar">Operar</button>
@@ -128,13 +136,84 @@
           </div>
         </section>
 
-        <section class="glass panel account-panel" style="margin-top:12px">
-          <h2>1 · Conta</h2>
+        <section class="glass panel account-panel" style="margin-top:12px" id="derivAccountPanel">
+          <h2>1 · Conta Deriv</h2>
           <div id="accountContext" class="account-context muted">Escolhe DEMO ou REAL (só contexto). Sessão continua PAPER até mudares o modo Cripto.</div>
           <div id="accounts" class="accounts"><div class="loading">…</div></div>
         </section>
 
-        <section class="glass panel" style="margin-top:12px">
+        <section class="glass panel bybit-world-panel" style="margin-top:12px" id="bybitWorldPanel" hidden>
+          <h2>Bybit · tempo real</h2>
+          <p class="footer-note" style="margin:0 0 10px;text-align:left">
+            Mundo Bybit Linear USDT. Saldo abaixo é a carteira real (só leitura). PAPER por omissão — REAL só com toggle + confirmação.
+          </p>
+          <div class="bybit-balance-card" id="bybitBalanceCard" aria-live="polite">
+            <div class="bybit-bal-row">
+              <div>
+                <div class="k">Saldo Bybit (REAL)</div>
+                <div class="v" id="bybitBalUsdt">—</div>
+                <div class="sub" id="bybitBalMeta">A carregar…</div>
+              </div>
+              <button type="button" class="ghost" id="btnBybitRefreshBal" title="Atualizar saldo">Atualizar</button>
+            </div>
+            <div class="bybit-bal-grid" id="bybitBalGrid" hidden>
+              <div class="gm"><span class="gk">Equity</span><span class="gv" id="bybitBalEquity">—</span></div>
+              <div class="gm"><span class="gk">Disponível</span><span class="gv" id="bybitBalAvail">—</span></div>
+              <div class="gm"><span class="gk">Perp UPL</span><span class="gv" id="bybitBalUpl">—</span></div>
+              <div class="gm"><span class="gk">Conta</span><span class="gv" id="bybitBalType">—</span></div>
+            </div>
+            <p class="bybit-bal-err" id="bybitBalErr" hidden></p>
+          </div>
+          <div class="controls controls-primary" style="margin-top:12px">
+            <div class="field">
+              <label for="bybitSymbolSelect">Futures USDT</label>
+              <select id="bybitSymbolSelect"></select>
+            </div>
+            <div class="field">
+              <label for="bybitLeverage">Alavancagem</label>
+              <input id="bybitLeverage" type="number" min="1" step="1" value="1" inputmode="decimal" title="Predefinição conservadora 1x">
+            </div>
+            <div class="field">
+              <label for="bybitStake">Stake (USDT)</label>
+              <input id="bybitStake" type="number" min="0.5" step="0.5" value="1" inputmode="decimal">
+            </div>
+            <div class="field required">
+              <label for="bybitStrategy">Estratégia</label>
+              <select id="bybitStrategy" required>
+                <option value="" selected disabled>— Escolhe —</option>
+                <option value="lucro_rapido">Lucro rápido</option>
+                <option value="loss_zero">Loss zero</option>
+                <option value="tendencia_diaria">Tendência diária</option>
+                <option value="biblioteca">Biblioteca</option>
+              </select>
+            </div>
+          </div>
+          <p id="bybitLeverageHint" class="footer-note" style="margin:0 0 10px;text-align:left">
+            Alavancagem: intervalo do par (Bybit). Stake fixa — não multiplica o risco no paper.
+          </p>
+          <div class="mode-toggle-wrap" id="bybitTradingModeToggle">
+            <span class="source-label">Modo Bybit</span>
+            <div class="mode-toggle" role="group" aria-label="Modo PAPER ou REAL Bybit">
+              <button type="button" class="mode-btn paper active" id="bybitModePaper" data-mode="PAPER" aria-pressed="true">
+                <strong>PAPER</strong>
+                <small>Simulado</small>
+              </button>
+              <button type="button" class="mode-btn real" id="bybitModeReal" data-mode="REAL" aria-pressed="false" disabled title="Precisa de chaves no servidor">
+                <strong>REAL</strong>
+                <small>Dinheiro real</small>
+              </button>
+            </div>
+          </div>
+          <div class="btn-row btn-row-analise two-col" style="margin-top:14px">
+            <button type="button" class="ctrl analyze" id="btnBybitAnalyze" disabled title="Escolhe estratégia">Analisar</button>
+            <button type="button" class="ctrl play" id="btnBybitPlay" disabled title="Escolhe estratégia">PLAY</button>
+          </div>
+          <p id="bybitActionHint" class="footer-note" style="margin:10px 0 0;text-align:left">
+            Analisar = porta de evidência (paper). PLAY = sessão (PAPER por omissão).
+          </p>
+        </section>
+
+        <section class="glass panel" style="margin-top:12px" id="marketStrategyPanel">
           <h2>2 · Mercado e estratégia</h2>
 
           <div class="tabs" role="tablist" id="marketTabs" aria-label="Tipo de mercado">
@@ -299,7 +378,7 @@
 
       <p class="footer-note">
         Pesquisa e paper trading. Não garante lucro.
-        Cripto Bybit (PAPER por omissão) · Dígitos/Forex Deriv · OAuth intacto.
+        Mundo Bybit (saldo real + PAPER/REAL) · Mundo Deriv (dígitos/forex) · OAuth intacto.
       </p>
     </div>
   </div>
