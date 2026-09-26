@@ -161,3 +161,32 @@ test("multi-symbol: loadChartAndGates paints before GATE_HISTORY", () => {
   assert.ok(wsIdx < gateHistIdx, "WS before heavy history");
   assert.match(loadFn, /fetchKlinesRaw\(sym, gran, CHART_HISTORY\)/);
 });
+
+test("trade path: sessionSymbol pinned; REAL order uses tradeSymbol()", () => {
+  assert.match(bybitJs, /sessionSymbol/);
+  assert.match(bybitJs, /function tradeSymbol\(/);
+  assert.match(bybitJs, /state\.sessionSymbol = state\.symbol/);
+  assert.match(bybitJs, /Freeze the pair for this session/);
+  const place = bybitJs.slice(
+    bybitJs.indexOf("async function placeBybitOrder"),
+    bybitJs.indexOf("async function mirrorRealBybitEvent"),
+  );
+  assert.match(place, /tradeSymbol\(\)/);
+  assert.doesNotMatch(place, /symbol:\s*state\.symbol/);
+  assert.match(place, /symbol:\s*sym/);
+  // startSession asserts select mirrors state before arm
+  const start = bybitJs.slice(
+    bybitJs.indexOf("async function startSession"),
+    bybitJs.indexOf("function pauseSession"),
+  );
+  assert.match(start, /assertSelectMatchesTradeSymbol/);
+  assert.match(start, /sessionSymbol/);
+  assert.match(start, /fetchBybitHistory\(armSym/);
+  // switch while running forces select back to armed pair
+  const sw = bybitJs.slice(
+    bybitJs.indexOf("async function switchSymbol"),
+    bybitJs.indexOf("async function switchInterval"),
+  );
+  assert.match(sw, /syncSymbolSelectToState/);
+  assert.match(sw, /Sessão armada/);
+});

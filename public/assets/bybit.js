@@ -63,6 +63,7 @@
     loadGen: 0,
     feedGen: 0,
     session: null,
+    sessionSymbol: null, // pinned at ARMAR — REAL/PAPER trades this, never stale BTC default
     controller: null,
     running: false,
     lastEpoch: 0,
@@ -123,6 +124,36 @@
 
   function isRealTradingMode() {
     return state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable;
+  }
+
+  /** Symbol that chart/WS/gate/session/REAL must agree on. Armed sessions pin sessionSymbol. */
+  function tradeSymbol() {
+    if (state.running && state.sessionSymbol) return state.sessionSymbol;
+    return state.symbol;
+  }
+
+  function syncSymbolSelectToState() {
+    var sel = el("bybitSymbolSelect");
+    if (!sel || !state.symbol) return;
+    if (![].some.call(sel.options, function (o) { return o.value === state.symbol; })) {
+      // Ensure option exists: temporarily unfilter, re-render sticky, restore filter list.
+      filterSymbols("");
+    }
+    if (sel.value !== state.symbol) sel.value = state.symbol;
+  }
+
+  function assertSelectMatchesTradeSymbol() {
+    // Chart/WS/gates own state.symbol. Select is a mirror — never let UI show ETH
+    // while armed/session still on BTC (or vice-versa).
+    if (state.running && state.sessionSymbol) {
+      state.symbol = state.sessionSymbol;
+    }
+    syncSymbolSelectToState();
+    var sel = el("bybitSymbolSelect");
+    if (sel && sel.value && sel.value !== state.symbol) {
+      sel.value = state.symbol;
+    }
+    return state.symbol;
   }
 
   function intervalLabel() {
@@ -1264,7 +1295,8 @@
   }
 
   async function loadBybitLeverage(symbol) {
-    var sym = symbol || state.symbol || "BTCUSDT";
+    var sym = String(symbol || state.symbol || "").trim().toUpperCase();
+    if (!sym) return false;
     try {
       var res = await fetch(BYBIT_LEVERAGE_URL + "?symbol=" + encodeURIComponent(sym));
       var payload = await res.json().catch(function () { return null; });
@@ -1414,9 +1446,9 @@
 
   async function switchSymbol(sym, opts) {
     if (state.running) {
-      pushHistory("Para a sessão antes de mudar o par.", "stop");
-      var selBusy = el("bybitSymbolSelect");
-      if (selBusy) selBusy.value = state.symbol;
+      pushHistory("Para a sessão antes de mudar o par. Sessão armada em " +
+        (state.sessionSymbol || state.symbol) + ".", "stop");
+      syncSymbolSelectToState();
       return;
     }
     var next = String(sym || "").trim().toUpperCase();
@@ -1424,6 +1456,7 @@
     var force = opts && opts.force;
     if (next === state.symbol && !force) return;
     state.symbol = next;
+    state.sessionSymbol = null; // never keep a prior arm pin across idle switches
     var sel = el("bybitSymbolSelect");
     if (sel) {
       if (![].some.call(sel.options, function (o) { return o.value === next; })) {
@@ -1431,6 +1464,7 @@
       }
       sel.value = next;
     }
+    syncSymbolSelectToState();
     state.prePlayOk = false;
     state.prePlayGate = null;
     state.liveProx = { lucro_rapido: null, loss_zero: null };
@@ -1510,8 +1544,12 @@
     }
     var started = state.session && state.session.startedAtMs;
     var elapsed = typeof started === "number" ? Date.now() - started : 0;
+    var sym = tradeSymbol();
+    if (!sym || !/^[A-Z0-9]{2,20}USDT$/.test(sym)) {
+      throw new Error("Símbolo de ordem inválido: " + (sym || "(vazio)"));
+    }
     var body = {
-      mode: "REAL", symbol: state.symbol, side: side, quantity: quantity,
+      mode: "REAL", symbol: sym, side: side, quantity: quantity,
       stake: state.stake, evidenceAllowed: true, sessionElapsedMs: elapsed,
     };
     if (reduceOnly) body.reduceOnly = true;
@@ -1540,7 +1578,7 @@
       try {
         var resp = await placeBybitOrder(side, qty);
         var oid = resp && ((resp.result && resp.result.orderId) || resp.orderId);
-        pushHistory("REAL Bybit MARKET " + side + " qty=" + qty + (oid ? " orderId=" + oid : ""), "open");
+        pushHistory("REAL Bybit MARKET " + side + " " + tradeSymbol() + " qty=" + qty + (oid ? " orderId=" + oid : ""), "open");
       } catch (err) {
         pushHistory("REAL Bybit FALHA open: " + (err.message || String(err)), "stop");
       }
@@ -1552,7 +1590,7 @@
       try {
         var resp2 = await placeBybitOrder(closeSide, q, { reduceOnly: true });
         var oid2 = resp2 && ((resp2.result && resp2.result.orderId) || resp2.orderId);
-        pushHistory("REAL Bybit FECHA " + closeSide + " qty=" + q + " (reduceOnly)" + (oid2 ? " orderId=" + oid2 : ""),
+        pushHistory("REAL Bybit FECHA " + closeSide + " " + tradeSymbol() + " qty=" + q + " (reduceOnly)" + (oid2 ? " orderId=" + oid2 : ""),
           e.r >= 0 ? "close-win" : "close-loss");
       } catch (err2) {
         pushHistory("REAL Bybit FALHA close: " + (err2.message || String(err2)), "stop");
@@ -1593,6 +1631,13 @@
 
   async function startSession() {
     readForm();
+    // Select UI and trade symbol must agree — never arm BTC while UI shows ETH.
+    assertSelectMatchesTradeSymbol();
+    syncSymbolSelectToState();
+    if (!state.symbol || !/^[A-Z0-9]{2,20}USDT$/.test(state.symbol)) {
+      pushHistory("Escolhe um perpetual USDT válido antes de ARMAR.", "stop");
+      return;
+    }
     if (!state.strategySet) {
       pushHistory("Escolhe uma estratégia antes de ARMAR.", "stop");
       updateButtons();
@@ -1640,19 +1685,31 @@
 
     state.realOpenQty = null;
     state.realOpenSide = null;
+    // Freeze the pair for this session — REAL orders + candle poll use this, not a later select drift / BTC default.
+    state.sessionSymbol = state.symbol;
+    syncSymbolSelectToState();
     var btnP = el("btnBybitPlay");
     if (btnP) btnP.disabled = true;
     state.armState = "armed";
     pushHistory((isRealTradingMode() ? "REAL · Bybit futuros" : "PAPER · Bybit futuros") +
-      " · ARMADO · " + state.symbol + " · " + state.strategySet, "open");
+      " · ARMADO · " + state.sessionSymbol + " · " + state.strategySet, "open");
 
     try {
+      var armSym = state.sessionSymbol;
       var history = state.gateCandles;
       if (!history.length || history.length < 1500) {
-        history = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+        history = await fetchBybitHistory(armSym, state.granularity, GATE_HISTORY);
+        if (state.symbol !== armSym || state.sessionSymbol !== armSym) {
+          pushHistory("Par mudou durante o armamento — abortado.", "stop");
+          state.sessionSymbol = null;
+          state.armState = "disarmed";
+          state.running = false;
+          updateButtons();
+          return;
+        }
         state.gateCandles = history;
       }
-      var kind = NL.marketOf(state.symbol);
+      var kind = NL.marketOf(armSym);
       var costFraction = kind && NL.MARKETS[kind] ? NL.MARKETS[kind].assumedCostFraction : 0.001;
       var n = history.length;
       var trainSize = Math.min(1000, Math.floor(n * 0.4));
@@ -1678,7 +1735,7 @@
       state.running = true;
       var startEvs = state.session.start(last.epoch * 1000);
       for (var i1 = 0; i1 < startEvs.length; i1++) pushHistory(NL.formatCandleEvent(startEvs[i1]), "open");
-      pushHistory("ARMADO " + state.symbol + " (futuro USDT) | stake fixa " + state.stake + " | lev " +
+      pushHistory("ARMADO " + armSym + " (futuro USDT) | stake fixa " + state.stake + " | lev " +
         state.bybitLeverage + "× | " + NL.formatCandleGate(state.controller.result) +
         " | entrada só com porta+sinal" +
         (isRealTradingMode() ? " | REAL" : " | PAPER — sem ordens reais"), "");
@@ -1710,6 +1767,8 @@
     }
     state.running = false;
     state.armState = "disarmed";
+    state.sessionSymbol = null;
+    syncSymbolSelectToState();
     setStats(state.session ? state.session.summary() : null);
     syncArmUi();
     updateButtons();
@@ -1723,10 +1782,10 @@
   async function sessionPollOnce() {
     if (!state.running || !state.session) return;
     if (state.session.status === "STOPPED" && !state.session.hasOpenPosition) {
-      state.running = false; updateButtons(); return;
+      state.running = false; state.sessionSymbol = null; updateButtons(); return;
     }
     try {
-      var candles = await fetchLatestBybitCandles(state.symbol, state.granularity, 10);
+      var candles = await fetchLatestBybitCandles(tradeSymbol(), state.granularity, 10);
       var fresh = candles.filter(function (c) { return c.epoch > state.lastEpoch; })
         .sort(function (a, b) { return a.epoch - b.epoch; });
       for (var i = 0; i < fresh.length; i++) {
@@ -1753,7 +1812,7 @@
       pushHistory("Aviso poll sessão: " + (e.message || String(e)), "stop");
     }
     if (state.session.status === "STOPPED" && !state.session.hasOpenPosition) {
-      state.running = false; updateButtons(); return;
+      state.running = false; state.sessionSymbol = null; updateButtons(); return;
     }
     scheduleSessionPoll();
     updateButtons();
@@ -1792,7 +1851,9 @@
     } else if (running) {
       mode = "armed";
       var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : (preset || "");
-      titleTxt = "ARMADO · " + stratLabel + " — à espera do alvo";
+      var armPair = tradeSymbol() || state.symbol || "";
+      titleTxt = "ARMADO · " + armPair + " · " + stratLabel + " — à espera do alvo";
+      syncSymbolSelectToState();
       if (!gateOk) reasonTxt = "NO TRADE (porta) — " + (gate ? gate.reason : "sem evidência") + (live ? " · " + live.detail : "");
       else if (!atTarget) reasonTxt = "Porta aberta · co-piloto à espera do sinal · " + (live ? live.detail : "");
       else reasonTxt = "Porta aberta + alvo · entrada na abertura da próxima vela (PAPER/REAL)";
@@ -1833,6 +1894,12 @@
 
   async function pushClosedCandleToSession(c) {
     if (!state.running || !state.session || !state.controller) return;
+    // Refuse candles if armed pair drifted from live feed symbol.
+    if (state.sessionSymbol && state.symbol && state.sessionSymbol !== state.symbol) {
+      pushHistory("Par da sessão (" + state.sessionSymbol + ") ≠ UI (" + state.symbol + ") — a repor select.", "stop");
+      state.symbol = state.sessionSymbol;
+      syncSymbolSelectToState();
+    }
     if (!(c.epoch > state.lastEpoch)) return;
     state.lastEpoch = c.epoch;
     try {
@@ -1857,6 +1924,7 @@
       if (state.session.status === "STOPPED" && !state.session.hasOpenPosition) {
         state.running = false;
         state.armState = "disarmed";
+        state.sessionSymbol = null;
         updateButtons();
       }
     } catch (e) {
