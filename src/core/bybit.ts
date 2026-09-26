@@ -1,6 +1,6 @@
 // NEVER LOSS — Bybit v5 linear USDT perpetual public market data.
 // instruments-info / kline via api.bybit.com — no API keys in the browser. Paper by default;
-// signed trading stays for a later PR (bybit-trading + api/bybit-order).
+// signed trading: bybit-trading + api/bybit-order (REAL only; PAPER never signs).
 
 import type { Candle, SymbolInfo } from "./market-data.ts";
 

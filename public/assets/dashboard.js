@@ -1,4 +1,4 @@
-/* NEVER LOSS dashboard — paper por omissão; Cripto = Bybit Linear USDT; REAL atrás de chaves servidor (PR2). */
+/* NEVER LOSS dashboard — paper por omissão; Cripto = Bybit Linear USDT; REAL atrás de chaves servidor. */
 (function () {
   "use strict";
 
@@ -10,7 +10,7 @@
   const BYBIT_SYMBOLS_URL = "/api/bybit-symbols";
   const BYBIT_KLINES_URL = "/api/bybit-klines";
   const BYBIT_STATUS_URL = "/api/bybit-status";
-  // REAL order path reserved for PR2 — keep unused so PAPER cannot hit signed endpoints.
+  // REAL order path (signed server proxy). PAPER never calls this — only placeBybitOrder when isRealTradingMode().
   const BYBIT_ORDER_URL = "/api/bybit-order";
   const TRADING_MODE_KEY = "nl_crypto_trading_mode";
 
@@ -39,6 +39,9 @@
     tradingMode: "PAPER",
     bybitKeysConfigured: false,
     bybitRealAvailable: false,
+    /** Last REAL open qty/side for flatten on trade_closed (PAPER ignores). */
+    realOpenQty: null,
+    realOpenSide: null,
     panel: "crypto",
     ws: null,
     nextId: 1,
@@ -369,7 +372,7 @@
       realBtn.disabled = !canReal;
       realBtn.title = canReal
         ? "REAL: ordens Bybit Linear via servidor (porta de evidência + stake fixa + máx 3 h)"
-        : "Indisponível: REAL ainda não ligado (PR2) ou faltam BYBIT_API_KEY + BYBIT_API_SECRET no servidor (nunca no chat)";
+        : "Indisponível: faltam BYBIT_API_KEY + BYBIT_API_SECRET no servidor (nunca no chat)";
       realBtn.classList.toggle("active", state.tradingMode === "REAL" && canReal);
       realBtn.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
     }
@@ -378,7 +381,7 @@
         ? (state.tradingMode === "REAL"
           ? "REAL ativo: ordens MARKET só com porta aberta, stake fixa, sem martingale, STOP aos 3 h. Chaves só no servidor."
           : "PAPER / SIMULADO (omissão). Chaves detetadas no servidor — podes mudar para REAL explicitamente.")
-        : "PAPER / SIMULADO (omissão). REAL bloqueado nesta fase (market+paper). Chaves BYBIT_* no servidor ativam REAL só após PR2. Não colar secrets no chat.";
+        : "PAPER / SIMULADO (omissão). REAL bloqueado sem BYBIT_API_KEY + BYBIT_API_SECRET no servidor. Não colar secrets no chat.";
     }
   }
 
@@ -406,7 +409,7 @@
   function setTradingMode(next) {
     const mode = String(next || "").toUpperCase() === "REAL" ? "REAL" : "PAPER";
     if (mode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
-      pushHistory("REAL indisponível: falta BYBIT_API_KEY + BYBIT_API_SECRET no servidor, ou REAL ainda não ligado (PR2).", "stop");
+      pushHistory("REAL indisponível: falta BYBIT_API_KEY + BYBIT_API_SECRET no servidor.", "stop");
       return false;
     }
     if (state.running) {
@@ -442,7 +445,7 @@
     }
     if (hint) {
       hint.textContent = onBybit
-        ? "Cripto = Bybit Linear USDT: perpetual *USDT via v5 (instruments/kline). Omissão PAPER / SIMULADO. REAL só com chaves no servidor (PR2). OAuth Deriv intacto."
+        ? "Cripto = Bybit Linear USDT: perpetual *USDT via v5 (instruments/kline). Omissão PAPER / SIMULADO. REAL só com chaves no servidor + toggle explícito. OAuth Deriv intacto."
         : "Dígitos / Forex = Deriv Options (WS público + OAuth para contas). Sessão paper / simulado. Painel Cripto usa só Bybit Linear USDT.";
     }
     if (pill) {
@@ -960,37 +963,97 @@
   }
 
 
-  /** Envia ordem REAL via proxy assinado. Exige mode=REAL + evidenceAllowed. */
-  async function placeBybitOrder(side, quantity) {
+  /** Qty from fixed stake / price (no martingale). */
+  function qtyFromFixedStake(stake, price) {
+    const s = Number(stake);
+    const px = Number(price);
+    if (!Number.isFinite(s) || s < NL.MIN_STAKE) throw new Error("Stake mínima é " + NL.MIN_STAKE);
+    if (!Number.isFinite(px) || px <= 0) throw new Error("Preço inválido para qty");
+    let qty = s / px;
+    // Avoid scientific notation; trim trailing zeros but keep precision.
+    const raw = qty.toFixed(8).replace(/\.?0+$/, "");
+    if (!raw || Number(raw) <= 0) throw new Error("quantity resultante ≤ 0");
+    return raw;
+  }
+
+  /**
+   * Envia ordem REAL via proxy assinado.
+   * Opens: exige evidence gate + session < 3h.
+   * Closes (reduceOnly): pode flatten mesmo com porta fechada.
+   * PAPER nunca chama isto (isRealTradingMode guard).
+   */
+  async function placeBybitOrder(side, quantity, opts) {
+    opts = opts || {};
+    const reduceOnly = opts.reduceOnly === true;
     if (!isRealTradingMode()) {
       throw new Error("Ordens reais só em modo REAL com chaves no servidor");
     }
-    if (!state.controller || !state.controller.isOpen) {
+    if (!reduceOnly && (!state.controller || !state.controller.isOpen)) {
       throw new Error("Porta de evidência fechada — NO TRADE");
     }
     const started = state.session && state.session.startedAtMs;
     const elapsed = typeof started === "number" ? Date.now() - started : 0;
+    const body = {
+      mode: "REAL",
+      symbol: state.symbol,
+      side: side,
+      quantity: quantity,
+      stake: state.stake,
+      evidenceAllowed: true,
+      sessionElapsedMs: elapsed,
+    };
+    if (reduceOnly) body.reduceOnly = true;
     const res = await fetch(BYBIT_ORDER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mode: "REAL",
-        symbol: state.symbol,
-        side: side,
-        quantity: quantity,
-        stake: state.stake,
-        evidenceAllowed: true,
-        sessionElapsedMs: elapsed,
-      }),
+      body: JSON.stringify(body),
     });
     const text = await res.text();
     let payload = null;
     try { payload = JSON.parse(text); } catch (_e) {}
     if (!res.ok) {
-      const why = (payload && (payload.error_description || payload.msg || payload.error)) || ("HTTP " + res.status);
+      const why = (payload && (payload.error_description || payload.msg || payload.error || payload.retMsg)) || ("HTTP " + res.status);
       throw new Error("Ordem Bybit: " + why);
     }
     return payload || text;
+  }
+
+  /** Mirror paper open/close → Bybit MARKET when REAL. PAPER path never enters. */
+  async function mirrorRealBybitEvent(e) {
+    if (!isRealTradingMode()) return;
+    if (e.type === "trade_opened") {
+      const side = e.direction === 1 ? "BUY" : "SELL";
+      const qty = qtyFromFixedStake(state.stake, e.entry);
+      state.realOpenQty = qty;
+      state.realOpenSide = side;
+      try {
+        const resp = await placeBybitOrder(side, qty);
+        const oid = resp && (resp.result && resp.result.orderId || resp.orderId);
+        pushHistory(
+          "REAL Bybit MARKET " + side + " qty=" + qty + (oid ? (" orderId=" + oid) : ""),
+          "open",
+        );
+      } catch (err) {
+        pushHistory("REAL Bybit FALHA open: " + (err.message || String(err)), "stop");
+      }
+      return;
+    }
+    if (e.type === "trade_closed" && state.realOpenQty && state.realOpenSide) {
+      const closeSide = state.realOpenSide === "BUY" ? "SELL" : "BUY";
+      const qty = state.realOpenQty;
+      try {
+        const resp = await placeBybitOrder(closeSide, qty, { reduceOnly: true });
+        const oid = resp && (resp.result && resp.result.orderId || resp.orderId);
+        pushHistory(
+          "REAL Bybit FECHA " + closeSide + " qty=" + qty + " (reduceOnly)" + (oid ? (" orderId=" + oid) : ""),
+          e.r >= 0 ? "close-win" : "close-loss",
+        );
+      } catch (err) {
+        pushHistory("REAL Bybit FALHA close: " + (err.message || String(err)), "stop");
+      }
+      state.realOpenQty = null;
+      state.realOpenSide = null;
+    }
   }
 
   async function startSession() {
@@ -1024,6 +1087,8 @@
     }
     if (state.running) return;
 
+    state.realOpenQty = null;
+    state.realOpenSide = null;
     el("btnPlay").disabled = true;
     const ctx =
       accountKind(state.selectedAccount) +
@@ -1218,6 +1283,10 @@
           else if (e.type === "trade_closed") cls = e.r >= 0 ? "close-win" : "close-loss";
           else if (e.type === "stopped" || e.type === "paused") cls = "stop";
           pushHistory(NL.formatCandleEvent(e), cls);
+          // REAL: mirror paper opens/closes to signed Bybit MARKET. PAPER never hits /api/bybit-order.
+          if (isRealTradingMode() && (e.type === "trade_opened" || e.type === "trade_closed")) {
+            await mirrorRealBybitEvent(e);
+          }
         }
         setGateUI(state.controller.result, state.controller.isOpen);
         setStats(state.session.summary());
@@ -1352,8 +1421,8 @@
           " perpetual). Modo " +
           state.tradingMode +
           (state.bybitRealAvailable && state.bybitKeysConfigured
-            ? " · chaves servidor OK"
-            : " · PAPER (REAL = PR2 / sem chaves)") +
+            ? " · chaves servidor OK (REAL disponível)"
+            : " · PAPER (sem chaves / REAL off)") +
           ". Dígitos/Forex = Deriv. Escolhe conta + Lucro rápido / Loss zero → Analisar → PLAY.",
         "",
       );

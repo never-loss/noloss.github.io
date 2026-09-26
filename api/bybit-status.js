@@ -1,5 +1,5 @@
 // Bybit Cripto status: PAPER default; keysConfigured from env presence only (never values).
-// PR1: realAvailable stays false (no signed order route yet). authMode: hmac | none.
+// PR2: realAvailable true when authMode=hmac (BYBIT_API_KEY + BYBIT_API_SECRET present).
 
 function resolveAuthMode(env) {
   const key = env.BYBIT_API_KEY;
@@ -20,8 +20,8 @@ export default async function handler(req, res) {
 
   const authMode = resolveAuthMode(process.env);
   const configured = authMode !== "none";
-  // PR1: market + paper only — no bybit-order route; gate REAL off even if keys exist.
-  const realAvailable = false;
+  // PR2: order route exists — REAL available only when HMAC keys are present.
+  const realAvailable = configured && authMode === "hmac";
   res.setHeader("Cache-Control", "no-store");
   return res.status(200).json({
     defaultMode: "PAPER",
