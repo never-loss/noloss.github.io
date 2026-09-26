@@ -39,13 +39,13 @@
     symbols: [],
     activeCrypto: [],
     bybitSymbols: [],
-    // Cripto = sempre Bybit Linear USDT; dígitos/forex = Deriv. Fonte segue o painel.
-    dataSource: "bybit",
+    // Deriv = dígitos/forex/metais (+ cripto Deriv se existir). Bybit = secção separada pós-login.
+    dataSource: "deriv",
     tradingMode: "PAPER",
     bybitKeysConfigured: false,
     bybitRealAvailable: false,
-    /** "deriv" | "bybit" — Bybit world shows wallet + futures; Deriv keeps OAuth accounts. */
-    world: sessionStorage.getItem(WORLD_KEY) === "deriv" ? "deriv" : "bybit",
+    /** "deriv" | "bybit" — Bybit só após login Deriv, secção independente. */
+    world: sessionStorage.getItem(WORLD_KEY) === "bybit" ? "bybit" : "deriv",
     bybitBalance: null,
     bybitBalanceError: null,
     bybitLeverageInfo: null,
@@ -53,7 +53,8 @@
     /** Last REAL open qty/side for flatten on trade_closed (PAPER ignores). */
     realOpenQty: null,
     realOpenSide: null,
-    panel: "crypto",
+    panel: "digits",
+    chartCandles: [],
     ws: null,
     nextId: 1,
     waiting: new Map(),
@@ -334,7 +335,9 @@
     const box = el("nextStepText");
     if (!box) return;
     const hasAccount = accountReady();
-    const hasStrategy = !!(el("strategySet") && el("strategySet").value) || !!(el("bybitStrategy") && el("bybitStrategy").value);
+    const hasStrategy = isBybitWorld()
+      ? !!(el("bybitStrategy") && el("bybitStrategy").value)
+      : !!(el("strategySet") && el("strategySet").value) || !!(el("mktStrat-" + state.panel) && el("mktStrat-" + state.panel).value);
     const running = state.session && state.session.status === "RUNNING";
     const paused = state.session && state.session.status === "PAUSED";
     const bybit = isBybitWorld();
@@ -516,6 +519,340 @@
       btn.addEventListener("click", () => selectAccount(acc.account_id));
       box.appendChild(btn);
     }
+    renderHeroBalances();
+  }
+
+  function renderHeroBalances() {
+    const realEl = el("heroBalReal");
+    const demoEl = el("heroBalDemo");
+    const realMeta = el("heroBalRealMeta");
+    const demoMeta = el("heroBalDemoMeta");
+    if (!realEl || !demoEl) return;
+    let realAcc = null;
+    let demoAcc = null;
+    for (const acc of state.accounts) {
+      if (accountKind(acc) === "DEMO") {
+        if (!demoAcc) demoAcc = acc;
+      } else if (!realAcc) {
+        realAcc = acc;
+      }
+    }
+    if (realAcc) {
+      realEl.textContent = accountBalanceText(realAcc);
+      realEl.classList.toggle("pos", Number(realAcc.balance) >= 0);
+      if (realMeta) realMeta.textContent = (realAcc.account_id || "REAL") + " · Deriv";
+    } else {
+      realEl.textContent = "—";
+      if (realMeta) realMeta.textContent = "Sem conta REAL nesta sessão";
+    }
+    if (demoAcc) {
+      demoEl.textContent = accountBalanceText(demoAcc);
+      if (demoMeta) demoMeta.textContent = (demoAcc.account_id || "DEMO") + " · Deriv";
+    } else {
+      demoEl.textContent = "—";
+      if (demoMeta) demoMeta.textContent = "Sem conta DEMO nesta sessão";
+    }
+  }
+
+  function syncMarketCardsActive() {
+    document.querySelectorAll(".mkt-card").forEach(function (card) {
+      const p = card.getAttribute("data-panel");
+      card.classList.toggle("active", !isBybitWorld() && p === state.panel);
+    });
+    document.querySelectorAll("#marketTabs .tab").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-panel") === state.panel);
+    });
+  }
+
+  function fillPanelSelect(sel, list, prefer) {
+    if (!sel) return;
+    const prev = prefer || sel.value || "";
+    sel.innerHTML = "";
+    if (!list.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "Nenhum símbolo";
+      sel.appendChild(opt);
+      return;
+    }
+    for (const it of list) {
+      const opt = document.createElement("option");
+      opt.value = it.symbol;
+      const flag = it.open && !it.suspended ? "●" : "○";
+      opt.textContent =
+        flag +
+        " " +
+        it.symbol +
+        (it.displayName && it.displayName !== it.symbol ? " — " + it.displayName : "");
+      sel.appendChild(opt);
+    }
+    if (prev && Array.from(sel.options).some(function (o) { return o.value === prev; })) {
+      sel.value = prev;
+    } else {
+      sel.value = list[0].symbol;
+    }
+  }
+
+  function renderAllMarketPanelSelects() {
+    const panels = ["digits", "forex", "metals", "crypto"];
+    for (const p of panels) {
+      const list = symbolsForPanel(p);
+      const sel = el("mktSym-" + p);
+      const empty = el("mktEmpty-" + p);
+      fillPanelSelect(sel, list, p === state.panel ? state.symbol : (sel && sel.value));
+      if (empty) {
+        empty.hidden = list.length > 0;
+        if (p === "crypto" && list.length === 0) {
+          empty.hidden = false;
+          empty.innerHTML = 'Sem símbolos Deriv — usa <strong>Bybit</strong> para futures USDT.';
+        }
+      }
+    }
+    syncMarketCardsActive();
+  }
+
+  function syncSharedFormFromPanel(panel) {
+    const p = panel || state.panel;
+    const sym = el("mktSym-" + p);
+    const strat = el("mktStrat-" + p);
+    if (sym && sym.value) {
+      state.symbol = sym.value;
+      const main = el("symbolSelect");
+      if (main) {
+        if (!Array.from(main.options).some(function (o) { return o.value === state.symbol; })) {
+          // ensure option exists
+          const opt = document.createElement("option");
+          opt.value = state.symbol;
+          opt.textContent = state.symbol;
+          main.appendChild(opt);
+        }
+        main.value = state.symbol;
+      }
+    }
+    if (strat && strat.value) {
+      state.strategySet = strat.value;
+      const mainS = el("strategySet");
+      if (mainS) mainS.value = state.strategySet;
+    }
+  }
+
+  function activateMarketPanel(panel) {
+    if (!panel || panel === state.panel) {
+      syncSharedFormFromPanel(panel);
+      syncMarketCardsActive();
+      return true;
+    }
+    if (state.running && sourceForPanel(panel) !== state.dataSource) {
+      pushHistory("Para a sessão antes de mudar de painel.", "stop");
+      return false;
+    }
+    state.panel = panel;
+    state.dataSource = "deriv";
+    sessionStorage.setItem(SOURCE_KEY, "deriv");
+    syncSharedFormFromPanel(panel);
+    renderSymbolSelect();
+    renderChips();
+    syncMarketCardsActive();
+    updateSourceUI();
+    updateButtons();
+    return true;
+  }
+
+  function updateProximityUI(result, isOpen) {
+    const fill = el("proximityFill");
+    const bar = el("proximityBar");
+    const label = el("proximityLabel");
+    const dot = el("proximityDot");
+    if (!fill || !label) return;
+    const allowed = !!(result && result.allowed && (isOpen !== false));
+    let score = 0;
+    const reasons = [];
+    if (!result) {
+      label.textContent = "A aguardar análise / dados…";
+      score = 0;
+    } else if (allowed) {
+      score = 100;
+      label.textContent = "Porta aberta (evidência real) — confirmação PLAY ainda necessária";
+    } else {
+      // Informational progress from real gate metrics — never claim ready unless allowed.
+      const oos = typeof result.oosTrades === "number" ? result.oosTrades : 0;
+      const meanR = typeof result.meanR === "number" ? result.meanR : 0;
+      const p = result.pValue != null && Number.isFinite(result.pValue) ? result.pValue : 1;
+      score += Math.min(40, Math.round((oos / 30) * 40));
+      if (meanR > 0) score += Math.min(30, Math.round(Math.min(meanR, 0.5) / 0.5 * 30));
+      if (p < 0.5) score += Math.min(25, Math.round((1 - p) * 25));
+      score = Math.min(85, Math.max(5, score)); // cap below 100 when NO TRADE
+      const why =
+        typeof NL.formatCandleGate === "function"
+          ? NL.formatCandleGate(result)
+          : result.reason || result.label || "NO TRADE";
+      label.textContent = "NO TRADE · " + why;
+      reasons.push(why);
+    }
+    fill.style.width = score + "%";
+    fill.classList.toggle("ok", allowed);
+    fill.classList.toggle("warn", !allowed && score >= 40);
+    fill.classList.toggle("bad", !allowed && score < 40);
+    if (bar) bar.setAttribute("aria-valuenow", String(score));
+    if (dot) {
+      dot.className = "sem-dot " + (allowed ? "green" : score >= 40 ? "amber" : "red");
+    }
+  }
+
+  function simpleEma(closes, period) {
+    const out = new Array(closes.length).fill(null);
+    if (closes.length < period) return out;
+    let sum = 0;
+    for (let i = 0; i < period; i++) sum += closes[i];
+    let prev = sum / period;
+    out[period - 1] = prev;
+    const k = 2 / (period + 1);
+    for (let i = period; i < closes.length; i++) {
+      prev = closes[i] * k + prev * (1 - k);
+      out[i] = prev;
+    }
+    return out;
+  }
+
+  function renderChart(candles) {
+    const canvas = el("chartCanvas");
+    const empty = el("chartEmpty");
+    const status = el("chartStatus");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const list = (candles || state.chartCandles || []).slice(-80);
+    state.chartCandles = list;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 640;
+    const cssH = 280;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    if (!list.length) {
+      if (empty) empty.hidden = false;
+      if (status) {
+        status.className = "pill warn";
+        status.textContent = "A carregar…";
+      }
+      return;
+    }
+    if (empty) empty.hidden = true;
+    if (status) {
+      status.className = "pill ok";
+      status.textContent = list.length + " velas · " + (state.symbol || "");
+    }
+    let min = Infinity;
+    let max = -Infinity;
+    for (const c of list) {
+      min = Math.min(min, c.low);
+      max = Math.max(max, c.high);
+    }
+    if (!(max > min)) {
+      max = min + 1;
+    }
+    const pad = (max - min) * 0.08;
+    min -= pad;
+    max += pad;
+    const left = 8;
+    const right = 8;
+    const top = 12;
+    const bottom = 12;
+    const w = cssW - left - right;
+    const h = cssH - top - bottom;
+    const n = list.length;
+    const slot = w / n;
+    const yOf = function (v) {
+      return top + ((max - v) / (max - min)) * h;
+    };
+    // grid
+    ctx.strokeStyle = "rgba(148,163,184,0.15)";
+    ctx.lineWidth = 1;
+    for (let g = 0; g < 4; g++) {
+      const y = top + (h * g) / 3;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(left + w, y);
+      ctx.stroke();
+    }
+    const closes = list.map(function (c) { return c.close; });
+    const emaFast = simpleEma(closes, 9);
+    const emaSlow = simpleEma(closes, 21);
+    for (let i = 0; i < n; i++) {
+      const c = list[i];
+      const x = left + i * slot + slot * 0.5;
+      const up = c.close >= c.open;
+      ctx.strokeStyle = up ? "#34d399" : "#f87171";
+      ctx.fillStyle = up ? "rgba(52,211,153,0.35)" : "rgba(248,113,113,0.35)";
+      ctx.beginPath();
+      ctx.moveTo(x, yOf(c.high));
+      ctx.lineTo(x, yOf(c.low));
+      ctx.stroke();
+      const bodyTop = yOf(Math.max(c.open, c.close));
+      const bodyBot = yOf(Math.min(c.open, c.close));
+      const bw = Math.max(2, slot * 0.55);
+      ctx.fillRect(x - bw / 2, bodyTop, bw, Math.max(1, bodyBot - bodyTop));
+    }
+    function drawEma(series, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < n; i++) {
+        if (series[i] == null) continue;
+        const x = left + i * slot + slot * 0.5;
+        const y = yOf(series[i]);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else ctx.lineTo(x, y);
+      }
+      if (started) ctx.stroke();
+    }
+    drawEma(emaFast, "#38bdf8");
+    drawEma(emaSlow, "#818cf8");
+  }
+
+  async function refreshChartPreview() {
+    const status = el("chartStatus");
+    if (!state.symbol) {
+      renderChart([]);
+      return;
+    }
+    if (status) {
+      status.className = "pill warn";
+      status.textContent = "A carregar…";
+    }
+    try {
+      let candles;
+      if (isBybitSource()) {
+        candles = await fetchLatestBybitCandles(state.symbol, state.granularity || 300, 80);
+      } else {
+        const m = NL.parseCandlesMessage(
+          await requestRaw({
+            ticks_history: state.symbol,
+            end: "latest",
+            count: 80,
+            style: "candles",
+            granularity: state.granularity || 300,
+          }),
+        );
+        if (m.kind !== "candles") throw new Error(m.kind === "error" ? m.message : m.kind);
+        candles = closedOnly(m.candles, state.granularity || 300);
+      }
+      renderChart(candles);
+    } catch (e) {
+      if (status) {
+        status.className = "pill warn";
+        status.textContent = "Gráfico: ainda em ligação";
+      }
+      const empty = el("chartEmpty");
+      if (empty) {
+        empty.hidden = false;
+        empty.textContent = "Sem velas — " + (e.message || String(e));
+      }
+    }
   }
 
   function setGateUI(result, isOpen) {
@@ -541,6 +878,7 @@
         : "—";
     el("gateStrat").textContent =
       result && result.strategy && result.strategy.name ? result.strategy.name : "—";
+    updateProximityUI(result, isOpen);
   }
 
   function setStats(summary) {
@@ -743,27 +1081,32 @@
     if (mkt) mkt.hidden = onBybit;
     const mt5 = el("mt5Panel");
     if (mt5) mt5.hidden = onBybit;
+    const hero = el("heroBalances");
+    if (hero) hero.hidden = onBybit;
+    const chart = el("chartPanel");
+    if (chart) chart.hidden = false; // chart útil nos dois mundos
+    const openBtn = el("btnOpenBybit");
+    if (openBtn) openBtn.hidden = onBybit;
     const hint = el("worldHint");
     if (hint) {
       hint.textContent = onBybit
-        ? "Mundo Bybit: saldo real (só leitura), futures USDT, alavancagem, Analisar + PLAY. PAPER por omissão. (Deriv escondido.)"
-        : "Mundo Deriv: dígitos/forex via OAuth. Conta DEMO/REAL = contexto. Para cripto futures usa o botão Bybit.";
+        ? "Bybit: saldo real (só leitura), futures USDT, Analisar + PLAY. PAPER por omissão."
+        : "Deriv: dígitos/forex/metais. Bybit = botão separado (só após login Deriv).";
     }
     const aTitle = el("analiseTitle");
     const aNote = el("analiseNote");
     if (aTitle) {
-      aTitle.textContent = onBybit
-        ? "Análise · Bybit (paper)"
-        : "Análise · Deriv (paper)";
+      aTitle.textContent = onBybit ? "Análise · Bybit (paper)" : "Análise · Deriv (paper)";
     }
     if (aNote) {
       aNote.textContent = onBybit
-        ? "Simulado (paper) com velas Bybit. REAL só em Operar → modo Bybit REAL + confirmação."
-        : "Isto é simulado (paper). REAL só no separador Operar, à mão.";
+        ? "Simulado (paper) com velas Bybit. REAL só com toggle Bybit REAL + confirmação."
+        : "Isto é simulado (paper). Futures REAL só na secção Bybit, à mão.";
     }
     updateTradingModeUI();
     updateModeBanner();
     updateButtons();
+    syncMarketCardsActive();
   }
 
   async function setWorld(next) {
@@ -795,7 +1138,13 @@
       await loadBybitLeverage(state.symbol);
       pushHistory("Mundo Bybit · Linear USDT · modo " + state.tradingMode, "open");
     } else {
-      pushHistory("Mundo Deriv · dígitos/forex (OAuth intacto)", "");
+      state.dataSource = "deriv";
+      sessionStorage.setItem(SOURCE_KEY, "deriv");
+      if (!["digits", "forex", "metals", "crypto"].includes(state.panel) || state.panel === "crypto") {
+        // keep metals/forex/digits; if was bybit crypto, fall back to digits
+        if (state.panel === "crypto" && !symbolsForPanel("crypto").length) state.panel = "digits";
+      }
+      pushHistory("Deriv · dígitos/forex/metais (OAuth intacto). Bybit fechado.", "");
     }
     applyWorldUI();
     updateSourceUI();
@@ -820,10 +1169,15 @@
     if (!usdtEl) return;
     if (state.bybitBalanceError) {
       usdtEl.textContent = "—";
-      if (meta) meta.textContent = "Saldo indisponível";
+      if (meta) meta.textContent = "Bybit: ainda em ligação";
       if (err) {
         err.hidden = false;
         err.textContent = state.bybitBalanceError;
+      }
+      const note = el("bybitLinkingNote");
+      if (note) {
+        note.hidden = false;
+        note.textContent = "Bybit: ainda em ligação…";
       }
       if (grid) grid.hidden = true;
       return;
@@ -837,6 +1191,8 @@
       return;
     }
     if (err) err.hidden = true;
+    const noteOk = el("bybitLinkingNote");
+    if (noteOk) noteOk.hidden = true;
     usdtEl.textContent = formatUsdt(bal.usdtWalletBalance != null ? bal.usdtWalletBalance : bal.totalWalletBalance);
     if (meta) {
       meta.textContent =
@@ -1094,7 +1450,9 @@
   }
 
   function sourceForPanel(panel) {
-    return panel === "crypto" ? "bybit" : "deriv";
+    // Painéis Deriv (incl. cripto Deriv) = deriv. Bybit só via mundo Bybit.
+    if (isBybitWorld()) return "bybit";
+    return "deriv";
   }
 
   async function loadBybitSymbols() {
@@ -1234,10 +1592,11 @@
     return closedOnly(msg.candles, granularity);
   }
 
-    function classifyPanel(it) {
+  function classifyPanel(it) {
     const kind = NL.marketOf(it.symbol);
     if (kind === "crypto") return "crypto";
-    if (kind === "forex" || kind === "metals") return "forex";
+    if (kind === "metals") return "metals";
+    if (kind === "forex") return "forex";
     if (it.market === "synthetic_index" || it.market === "indices") return "digits";
     if (/^(R_|1HZ)/.test(it.symbol)) return "digits";
     return null;
@@ -1261,21 +1620,37 @@
   }
 
   function panelSymbols() {
-    // Cripto = só Bybit Linear USDT (*USDT perpetual). Sem cry*USD / Deriv Options neste painel.
-    if (state.panel === "crypto" || isBybitSource()) {
+    // Bybit world uses Linear USDT list. Deriv panels never mix Bybit symbols.
+    if (isBybitWorld() || isBybitSource()) {
       return state.bybitSymbols.slice();
     }
     if (state.panel === "forex") {
       return state.symbols
-        .filter((it) => {
-          const k = NL.marketOf(it.symbol);
-          return k === "forex" || k === "metals";
-        })
+        .filter((it) => NL.marketOf(it.symbol) === "forex")
+        .sort((a, b) => a.symbol.localeCompare(b.symbol));
+    }
+    if (state.panel === "metals") {
+      return state.symbols
+        .filter((it) => NL.marketOf(it.symbol) === "metals")
+        .sort((a, b) => a.symbol.localeCompare(b.symbol));
+    }
+    if (state.panel === "crypto") {
+      // Deriv cry*USD feed only — futures USDT vivem na secção Bybit.
+      return state.symbols
+        .filter((it) => classifyPanel(it) === "crypto")
         .sort((a, b) => a.symbol.localeCompare(b.symbol));
     }
     return state.symbols
       .filter((it) => classifyPanel(it) === "digits")
       .sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }
+
+  function symbolsForPanel(panel) {
+    const prev = state.panel;
+    state.panel = panel;
+    const list = panelSymbols();
+    state.panel = prev;
+    return list;
   }
 
   function renderSymbolSelect() {
@@ -1322,11 +1697,16 @@
         aSym.value = state.symbol;
       }
     }
+    if (typeof renderAllMarketPanelSelects === "function") renderAllMarketPanelSelects();
   }
 
   function renderChips() {
     const strip = el("symbolChips");
     const list = panelSymbols();
+    if (!strip) {
+      updateStrategyHint();
+      return;
+    }
     strip.innerHTML = "";
     for (const it of list) {
       const on = it.open && !it.suspended;
@@ -1359,16 +1739,21 @@
     const openN = list.filter((i) => i.open && !i.suspended).length;
     var activeN = state.activeCrypto.length;
     var feedN = Math.max(0, n - activeN);
-    el("panelHint").textContent = state.panel === "crypto" || isBybitSource()
-      ? "Cripto = Bybit Linear USDT: " +
+    el("panelHint").textContent = isBybitWorld() || isBybitSource()
+      ? "Bybit Linear USDT: " +
         n +
-        " perpetual *USDT (v5). Modo " +
+        " perpetual *USDT. Modo " +
         state.tradingMode +
-        (state.tradingMode === "PAPER" ? " / SIMULADO" : "") +
-        ". Lucro rápido / Loss zero + porta de evidência + stake fixa + máx 3 h + sem martingale + NO TRADE."
+        ". Porta + stake fixa + máx 3 h + sem martingale."
       : state.panel === "forex"
-          ? "Forex e metais (frx*). Mercado fecha ao fim de semana."
-          : "Índices sintéticos / dígitos. Paper em velas (mesma porta de evidência).";
+          ? "Forex (frx*). Mercado fecha ao fim de semana. " + openN + "/" + n + " abertos."
+          : state.panel === "metals"
+            ? "Metais (frxXAU/XAG…). " + (n ? openN + "/" + n + " abertos." : "Sem símbolos nesta sessão.")
+            : state.panel === "crypto"
+              ? (n
+                  ? "Cripto Deriv (cry*). Futures USDT → botão Bybit. " + openN + "/" + n + " abertos."
+                  : "Sem cripto Deriv — usa Bybit para futures USDT.")
+              : "Índices sintéticos / dígitos. Paper em velas (mesma porta). " + openN + "/" + n + " abertos.";
     updateStrategyHint();
   }
 
@@ -1418,17 +1803,22 @@
 
   function updateButtons() {
     if (isBybitWorld()) syncStateFromBybitForm();
+    else if (!isBybitWorld()) syncSharedFormFromPanel(state.panel);
     const hasAccount = accountReady();
-    const hasStrategy = !!(el("strategySet") && el("strategySet").value) || !!(el("bybitStrategy") && el("bybitStrategy").value);
+    const hasStrategy = isBybitWorld()
+      ? !!(el("bybitStrategy") && el("bybitStrategy").value)
+      : !!(el("strategySet") && el("strategySet").value) || !!(el("mktStrat-" + state.panel) && el("mktStrat-" + state.panel).value);
     const running = state.session && state.session.status === "RUNNING";
     const paused = state.session && state.session.status === "PAUSED";
     const stopped = !state.session || state.session.status === "STOPPED";
-    el("btnPlay").disabled = !hasAccount || !hasStrategy || running;
-    el("btnPlay").title = !hasAccount
-      ? (isBybitWorld() ? "Mundo Bybit — escolhe estratégia" : "Seleciona DEMO ou REAL primeiro")
-      : !hasStrategy
-        ? "Escolhe uma estratégia (Lucro rápido / Loss zero / …)"
-        : "Iniciar sessão paper / simulado (após análise pré-PLAY)";
+    if (el("btnPlay")) {
+      el("btnPlay").disabled = !hasAccount || !hasStrategy || running;
+      el("btnPlay").title = !hasAccount
+        ? (isBybitWorld() ? "Bybit — escolhe estratégia" : "Seleciona DEMO ou REAL primeiro")
+        : !hasStrategy
+          ? "Escolhe uma estratégia (Lucro rápido / Loss zero / …)"
+          : "Iniciar sessão paper / simulado (após análise pré-PLAY)";
+    }
     const btnA = el("btnAnalyze");
     if (btnA) {
       btnA.disabled = !hasAccount || !hasStrategy || running;
@@ -1452,9 +1842,42 @@
           ? "PLAY REAL Bybit (ordens verdadeiras — confirmação já no modo)"
           : "PLAY paper Bybit (simulado)";
     }
-    el("btnPause").disabled = !running;
-    el("btnStop").disabled = stopped && !state.running;
+    if (el("btnPause")) el("btnPause").disabled = !running;
+    if (el("btnStop")) el("btnStop").disabled = stopped && !state.running;
+    const btnBPause = el("btnBybitPause");
+    const btnBStop = el("btnBybitStop");
+    if (btnBPause) btnBPause.disabled = !running || !isBybitWorld();
+    if (btnBStop) btnBStop.disabled = (stopped && !state.running) || !isBybitWorld();
+
+    // Per-panel PLAY/PAUSE/STOP — only active panel can drive session controls
+    document.querySelectorAll(".mkt-play").forEach(function (btn) {
+      const p = btn.getAttribute("data-panel");
+      const stratEl = el("mktStrat-" + p);
+      const symEl = el("mktSym-" + p);
+      const hasSym = !!(symEl && symEl.value);
+      const hasStrat = !!(stratEl && stratEl.value);
+      const isActivePanel = p === state.panel && !isBybitWorld();
+      btn.disabled = !hasAccount || !hasStrat || !hasSym || running;
+      btn.title = !hasAccount
+        ? "Seleciona conta Deriv"
+        : !hasStrat
+          ? "Escolhe estratégia neste painel"
+          : !hasSym
+            ? "Sem símbolo"
+            : "PLAY neste mercado (uma sessão de cada vez)";
+      if (isActivePanel && running) btn.disabled = true;
+    });
+    document.querySelectorAll(".mkt-pause").forEach(function (btn) {
+      const p = btn.getAttribute("data-panel");
+      btn.disabled = !(running && p === state.panel && !isBybitWorld());
+    });
+    document.querySelectorAll(".mkt-stop").forEach(function (btn) {
+      const p = btn.getAttribute("data-panel");
+      const canStop = state.running || (state.session && state.session.status !== "STOPPED");
+      btn.disabled = !(canStop && p === state.panel && !isBybitWorld());
+    });
     void paused;
+    syncMarketCardsActive();
     updateNextStep();
     updateAnaliseButtons();
   }
@@ -1528,6 +1951,7 @@
       if (metrics) metrics.hidden = true;
       setAnaliseUI(null, statusText);
       updateAnaliseButtons();
+      updateProximityUI(null, false);
       return;
     }
     status.classList.add(result.allowed ? "open" : "closed");
@@ -1551,6 +1975,7 @@
         result.strategy && result.strategy.name ? result.strategy.name : "—";
     }
     setAnaliseUI(result, statusText);
+    updateProximityUI(result, !!(result && result.allowed));
     updateAnaliseButtons();
   }
 
@@ -1966,6 +2391,7 @@
       const kind = NL.marketOf(state.symbol);
       const costFraction = kind ? NL.MARKETS[kind].assumedCostFraction : 0.001;
       const history = await fetchHistory(state.symbol, state.granularity, 3500);
+      renderChart(history.slice(-80));
       const last = history[history.length - 1];
       if (!last || history.length < 1500) {
         pushHistory("Histórico insuficiente (" + history.length + " velas) — NO TRADE", "stop");
@@ -2183,37 +2609,94 @@
     document.querySelectorAll("#marketTabs .tab").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const nextPanel = btn.getAttribute("data-panel");
-        if (!nextPanel || nextPanel === state.panel) return;
-        if (state.running && sourceForPanel(nextPanel) !== state.dataSource) {
-          pushHistory("Para a sessão paper antes de mudar de painel (a fonte segue o painel).", "stop");
+        if (!nextPanel) return;
+        if (isBybitWorld()) {
+          pushHistory("Fecha Bybit (Voltar a Deriv) antes de mudar painel Deriv.", "stop");
           return;
         }
-        const prevPanel = state.panel;
-        document.querySelectorAll("#marketTabs .tab").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        state.panel = nextPanel;
-        if (nextPanel === "crypto" && !isBybitWorld()) {
-          await setWorld("bybit");
-          return;
-        }
-        if (nextPanel !== "crypto" && isBybitWorld()) {
-          await setWorld("deriv");
-          // re-apply panel after world switch
-          state.panel = nextPanel;
-          document.querySelectorAll("#marketTabs .tab").forEach(function (b) {
-            b.classList.toggle("active", b.getAttribute("data-panel") === nextPanel);
-          });
-        }
-        const ok = await applyPanelSource();
-        if (ok === false) {
-          state.panel = prevPanel;
-          document.querySelectorAll("#marketTabs .tab").forEach(function (b) {
-            b.classList.toggle("active", b.getAttribute("data-panel") === prevPanel);
-          });
-          updateSourceUI();
-        }
+        activateMarketPanel(nextPanel);
+        await applyPanelSource();
+        refreshChartPreview();
       });
     });
+
+    document.querySelectorAll(".mkt-card").forEach(function (card) {
+      card.addEventListener("click", function (ev) {
+        if (ev.target.closest("button, select, label, a")) return;
+        const p = card.getAttribute("data-panel");
+        if (p) activateMarketPanel(p);
+      });
+    });
+    document.querySelectorAll(".mkt-sym").forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        const p = sel.getAttribute("data-panel");
+        activateMarketPanel(p);
+        state.prePlayOk = false;
+        state.prePlayGate = null;
+        setPrePlayUI(null);
+        updateButtons();
+        refreshChartPreview();
+      });
+    });
+    document.querySelectorAll(".mkt-strat").forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        const p = sel.getAttribute("data-panel");
+        activateMarketPanel(p);
+        state.prePlayOk = false;
+        state.prePlayGate = null;
+        setPrePlayUI(null);
+        updateStrategyHint();
+        updateButtons();
+      });
+    });
+    document.querySelectorAll(".mkt-play").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const p = btn.getAttribute("data-panel");
+        if (!activateMarketPanel(p)) return;
+        syncSharedFormFromPanel(p);
+        startSession().then(function () { refreshChartPreview(); });
+      });
+    });
+    document.querySelectorAll(".mkt-pause").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const p = btn.getAttribute("data-panel");
+        if (p !== state.panel) return;
+        pauseSession();
+      });
+    });
+    document.querySelectorAll(".mkt-stop").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const p = btn.getAttribute("data-panel");
+        if (p !== state.panel) return;
+        stopSession();
+      });
+    });
+    const btnOpenBybit = el("btnOpenBybit");
+    if (btnOpenBybit) {
+      btnOpenBybit.addEventListener("click", function () {
+        setWorld("bybit").then(function () {
+          setActiveView("operar");
+          refreshChartPreview();
+        });
+      });
+    }
+    const btnCloseBybit = el("btnCloseBybit");
+    if (btnCloseBybit) {
+      btnCloseBybit.addEventListener("click", function () {
+        setWorld("deriv").then(function () {
+          state.panel = state.panel === "crypto" && !symbolsForPanel("crypto").length ? "digits" : state.panel;
+          if (!["digits", "forex", "metals", "crypto"].includes(state.panel)) state.panel = "digits";
+          state.dataSource = "deriv";
+          sessionStorage.setItem(SOURCE_KEY, "deriv");
+          applyPanelSource();
+          refreshChartPreview();
+        });
+      });
+    }
+    const btnBybitPause = el("btnBybitPause");
+    if (btnBybitPause) btnBybitPause.addEventListener("click", function () { pauseSession(); });
+    const btnBybitStop = el("btnBybitStop");
+    if (btnBybitStop) btnBybitStop.addEventListener("click", function () { stopSession(); });
     // Fonte não é escolhível à mão: Cripto=Bybit, Dígitos/Forex=Deriv.
     el("symbolSelect").addEventListener("change", () => {
       state.symbol = el("symbolSelect").value;
@@ -2384,43 +2867,61 @@
     try {
       await connectWs();
       await loadSymbols();
-      // Painel inicial Cripto → Bybit Linear USDT (sem toggle Deriv neste contexto).
-      state.panel = "crypto";
-      state.dataSource = "bybit";
-      sessionStorage.setItem(SOURCE_KEY, "bybit");
+      // Pós-login Deriv: painel dígitos por omissão. Bybit só via botão (após auth).
+      var savedWorld = sessionStorage.getItem(WORLD_KEY);
+      state.world = savedWorld === "bybit" ? "bybit" : "deriv";
       var savedMode = sessionStorage.getItem(TRADING_MODE_KEY);
       state.tradingMode = savedMode === "REAL" ? "REAL" : "PAPER";
       await loadBybitTradingStatus();
-      if (state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) state.tradingMode = "PAPER";
-      document.querySelectorAll("#marketTabs .tab").forEach(function (b) {
-        b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
-      });
-      await loadBybitSymbols();
-      state.symbol = (state.bybitSymbols[0] && state.bybitSymbols[0].symbol) || "BTCUSDT";
-      renderSymbolSelect();
-      renderChips();
-      renderBybitSymbolSelect();
-      applyWorldUI();
-      if (isBybitWorld()) {
+      if (state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
+        state.tradingMode = "PAPER";
+      }
+      // Pré-carrega símbolos Bybit (público) para o botão abrir rápido — sem misturar UI.
+      try {
+        await loadBybitSymbols();
+        renderBybitSymbolSelect();
+      } catch (be) {
+        pushHistory("Bybit: ainda em ligação (" + (be.message || String(be)) + ")", "stop");
+        const note = el("bybitLinkingNote");
+        if (note) {
+          note.hidden = false;
+          note.textContent = "Bybit: ainda em ligação…";
+        }
+      }
+      if (state.world === "bybit") {
+        state.panel = "crypto";
+        state.dataSource = "bybit";
+        sessionStorage.setItem(SOURCE_KEY, "bybit");
+        state.symbol = (state.bybitSymbols[0] && state.bybitSymbols[0].symbol) || "BTCUSDT";
+        applyWorldUI();
         await loadBybitBalance();
         await loadBybitLeverage(state.symbol);
         syncBybitFormFromState();
+      } else {
+        state.panel = "digits";
+        state.dataSource = "deriv";
+        sessionStorage.setItem(SOURCE_KEY, "deriv");
+        sessionStorage.setItem(WORLD_KEY, "deriv");
+        const digits = symbolsForPanel("digits");
+        state.symbol = (digits[0] && digits[0].symbol) || "R_100";
+        applyWorldUI();
       }
+      renderSymbolSelect();
+      renderChips();
+      renderAllMarketPanelSelects();
       pushHistory(
-        "Pronto · mundo " +
-          state.world +
-          " · Bybit Linear USDT (" +
+        "Pronto · Deriv ligado · painéis dígitos/forex/metais/cripto. Bybit = botão (futures USDT, " +
           state.bybitSymbols.length +
-          " perpetual). Modo " +
+          " pares" +
+          (state.bybitKeysConfigured ? ", chaves OK" : "") +
+          "). Modo " +
           state.tradingMode +
-          (state.bybitRealAvailable && state.bybitKeysConfigured
-            ? " · chaves servidor OK (REAL disponível)"
-            : " · PAPER (saldo precisa permissão Wallet na chave)") +
-          ". Alterna Deriv/Bybit no topo.",
+          ".",
         "",
       );
       updateSourceUI();
       updateButtons();
+      refreshChartPreview();
     } catch (e) {
       pushHistory("Falha WS/símbolos: " + (e.message || String(e)), "stop");
     }
