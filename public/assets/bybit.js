@@ -11,9 +11,14 @@
   var BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear";
   var TRADING_MODE_KEY = "nl_crypto_trading_mode";
   var POLL_CHART_MS = 2500;
-  var GATE_REEVAL_MS = 20000;
+  var GATE_REEVAL_MS = 25000;
+  var LIVE_PROX_MS = 1500;
   var CHART_HISTORY = 200;
   var GATE_HISTORY = 3500;
+  var RADAR_BATCH = 3;
+  var RADAR_GAP_MS = 450;
+  var RADAR_KLINES = 120;
+  var RADAR_IDLE_MS = 120;
 
   var NL = window.NL;
   if (!NL) {
@@ -43,6 +48,8 @@
     chartCandles: [],
     gateCandles: [],
     liveGates: { lucro_rapido: null, loss_zero: null },
+    liveProx: { lucro_rapido: null, loss_zero: null },
+    armState: "disarmed",
     feedMode: "idle",
     ws: null,
     wsTopic: null,
@@ -62,6 +69,23 @@
     prePlayOk: false,
     sessionPollTimer: null,
     revalidateEvery: 12,
+    liveProxTimer: null,
+    liveProxQueued: false,
+    liveProxRunning: false,
+    lastLiveProxAt: 0,
+    gateHeavyRunning: false,
+    radar: {
+      gen: 0,
+      paused: false,
+      cursor: 0,
+      scanned: 0,
+      total: 0,
+      rows: {},
+      preset: "lucro_rapido",
+      filter: "",
+      timer: null,
+      strategiesCache: {},
+    },
   };
 
   function pushHistory(text, cls) {
@@ -355,6 +379,7 @@
     if (![candle.open, candle.high, candle.low, candle.close].every(Number.isFinite)) return;
     state.chartCandles = mergeCandle(state.chartCandles, candle);
     updateLastBar(candle);
+    scheduleLiveProximity();
     var confirmed = raw.confirm === true || raw.confirm === "true";
     if (confirmed) {
       var closed = { epoch: candle.epoch, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
@@ -362,6 +387,7 @@
         state.gateCandles.push(closed);
         if (state.gateCandles.length > GATE_HISTORY) state.gateCandles = state.gateCandles.slice(-GATE_HISTORY);
         scheduleGateReeval();
+        if (state.running && state.session) pushClosedCandleToSession(closed);
       } else if (closed.epoch === state.gateCandles[state.gateCandles.length - 1].epoch) {
         state.gateCandles[state.gateCandles.length - 1] = closed;
       }
@@ -513,8 +539,10 @@
         try { state.chart.timeScale().fitContent(); } catch (_e2) {}
       }
       startWsFeed();
-      await reevaluateBothGates();
       startGateTimer();
+      scheduleLiveProximity();
+      // Heavy gate deferred so chart/WS never stutter on symbol switch
+      scheduleGateReeval();
     } catch (e) {
       setFeedMode("err");
       if (status) { status.className = "pill live-err"; status.textContent = "Gráfico: " + (e.message || String(e)); }
@@ -533,14 +561,105 @@
   var gateEvalQueued = false;
   function scheduleGateReeval() {
     gateEvalQueued = true;
-    if (gateEvalPending) return;
+    if (gateEvalPending || state.gateHeavyRunning) return;
     gateEvalPending = true;
-    Promise.resolve().then(async function () {
-      while (gateEvalQueued) {
-        gateEvalQueued = false;
-        await reevaluateBothGates();
+    // Defer heavy gate off the WS/UI tick
+    var run = function () {
+      Promise.resolve().then(async function () {
+        state.gateHeavyRunning = true;
+        try {
+          while (gateEvalQueued) {
+            gateEvalQueued = false;
+            await reevaluateBothGates();
+            await yieldToUi();
+          }
+        } finally {
+          state.gateHeavyRunning = false;
+          gateEvalPending = false;
+          if (gateEvalQueued) scheduleGateReeval();
+        }
+      });
+    };
+    if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 1200 });
+    else setTimeout(run, 0);
+  }
+
+  function yieldToUi(ms) {
+    return new Promise(function (resolve) {
+      var t = typeof ms === "number" ? ms : RADAR_IDLE_MS;
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(function () { setTimeout(resolve, t); });
+      } else setTimeout(resolve, t);
+    });
+  }
+
+  function scheduleLiveProximity() {
+    state.liveProxQueued = true;
+    if (state.liveProxRunning) return;
+    var due = LIVE_PROX_MS - (Date.now() - state.lastLiveProxAt);
+    if (due < 0) due = 0;
+    if (state.liveProxTimer) return;
+    state.liveProxTimer = setTimeout(function () {
+      state.liveProxTimer = null;
+      runLiveProximityTick();
+    }, Math.max(due, 16));
+  }
+
+  function liveCandleSeries() {
+    var base = (state.gateCandles && state.gateCandles.length)
+      ? state.gateCandles.slice()
+      : [];
+    var chart = state.chartCandles || [];
+    if (!chart.length) return base;
+    var last = chart[chart.length - 1];
+    if (!base.length) return chart.slice(-Math.min(CHART_HISTORY, chart.length));
+    var tip = base[base.length - 1];
+    if (last.epoch > tip.epoch) base.push(last);
+    else if (last.epoch === tip.epoch) base[base.length - 1] = last;
+    // Cap for live prox CPU — full history only for heavy gate
+    if (base.length > 400) base = base.slice(-400);
+    return base;
+  }
+
+  function strategiesRaw(presetId) {
+    if (state.radar.strategiesCache[presetId]) return state.radar.strategiesCache[presetId];
+    var raw;
+    if (typeof NL.strategiesForPreset === "function") raw = NL.strategiesForPreset(presetId);
+    else if (presetId === "lucro_rapido") raw = NL.lucroRapidoStrategySet();
+    else if (presetId === "loss_zero") raw = NL.lossZeroStrategySet();
+    else raw = NL.strategyLibrary();
+    state.radar.strategiesCache[presetId] = raw;
+    return raw;
+  }
+
+  async function runLiveProximityTick() {
+    if (state.liveProxRunning) return;
+    if (!state.liveProxQueued) return;
+    state.liveProxQueued = false;
+    state.liveProxRunning = true;
+    state.lastLiveProxAt = Date.now();
+    try {
+      var candles = liveCandleSeries();
+      if (candles.length < 40 || typeof NL.evaluateLiveEntry !== "function") {
+        syncArmUi();
+        return;
       }
-    }).finally(function () { gateEvalPending = false; });
+      var ids = ["lucro_rapido", "loss_zero"];
+      for (var i = 0; i < ids.length; i++) {
+        var id = ids[i];
+        try {
+          var live = NL.evaluateLiveEntry(candles, strategiesRaw(id), { hold: 3 });
+          state.liveProx[id] = live;
+          renderStratCard(id, state.liveGates[id], null);
+        } catch (_e) {}
+        if (i === 0) await yieldToUi(0);
+      }
+      syncPlayReadyFromSelection();
+      syncArmUi();
+    } finally {
+      state.liveProxRunning = false;
+      if (state.liveProxQueued) scheduleLiveProximity();
+    }
   }
 
   function setStratLoading() {
@@ -642,8 +761,11 @@
         state.liveGates[id] = null;
         renderStratCard(id, null, e.message || String(e));
       }
+      if (j === 0) await yieldToUi(30);
     }
+    scheduleLiveProximity();
     syncPlayReadyFromSelection();
+    syncArmUi();
     updateButtons();
   }
 
@@ -656,47 +778,65 @@
     var badge = el("badge" + key);
     var status = el("status" + key);
     var reason = el("reason" + key);
+    var proxEl = el("prox" + key);
     var fill = el("fill" + key);
     var bar = el("bar" + key);
     if (!card) return;
     var allowed = !!(result && result.allowed);
-    card.classList.toggle("open", allowed);
-    card.classList.toggle("closed", !allowed);
+    var live = state.liveProx[presetId];
+    var gateSc = proximityScore(result, allowed);
+    var combined = (typeof NL.combineGateAndLive === "function" && live)
+      ? NL.combineGateAndLive(allowed, gateSc, live)
+      : { score: live ? Math.max(gateSc, live.proximityPct) : gateSc, label: "", ready: false };
+    var score = combined.score;
+    card.classList.toggle("open", allowed && live && live.atTarget);
+    card.classList.toggle("closed", !(allowed && live && live.atTarget));
     card.classList.toggle("active-pick", state.strategySet === presetId);
-    var score = proximityScore(result, allowed);
     if (fill) {
       fill.style.width = score + "%";
-      fill.classList.toggle("ok", allowed);
-      fill.classList.toggle("warn", !allowed && score >= 40);
-      fill.classList.toggle("bad", !allowed && score < 40);
+      fill.classList.toggle("ok", allowed && live && live.atTarget);
+      fill.classList.toggle("warn", score >= 40 && !(allowed && live && live.atTarget));
+      fill.classList.toggle("bad", score < 40);
     }
     if (bar) bar.setAttribute("aria-valuenow", String(score));
-    if (dot) dot.className = "sem-dot " + (allowed ? "green" : score >= 40 ? "amber" : "red");
+    if (dot) {
+      var col = allowed && live && live.atTarget ? "green" : allowed || score >= 55 ? "amber" : "red";
+      dot.className = "sem-dot " + col;
+    }
+    if (proxEl) {
+      proxEl.textContent = live
+        ? ("Prox " + live.proximityPct + "% · " + (live.bias === "long" ? "compra" : live.bias === "short" ? "venda" : "neutro") +
+          (live.atTarget ? " · ALVO" : "") + " · " + live.agreeingLong + "↑/" + live.agreeingShort + "↓ de " + live.total)
+        : "Prox — (à espera de velas ao vivo)";
+    }
     if (errMsg) {
       if (badge) badge.textContent = "erro";
       if (status) status.textContent = "NO TRADE";
       if (reason) reason.textContent = errMsg;
       return;
     }
-    if (!result) {
+    if (!result && !live) {
       if (badge) badge.textContent = "…";
       if (status) status.textContent = "NO TRADE";
       if (reason) reason.textContent = "A aguardar evidência…";
       return;
     }
-    if (allowed) {
-      if (badge) badge.textContent = "PODE PLAY";
-      if (status) status.textContent = label + ": PODE PLAY";
-      if (reason) {
-        reason.textContent = (typeof NL.formatCandleGate === "function" ? NL.formatCandleGate(result) : result.reason) ||
-          "Porta aberta (evidência real)";
-      }
+    if (allowed && live && live.atTarget) {
+      if (badge) badge.textContent = "ALVO";
+      if (status) status.textContent = label + ": PORTA + ALVO";
+    } else if (allowed) {
+      if (badge) badge.textContent = "PORTA";
+      if (status) status.textContent = label + ": porta aberta · à espera do sinal";
     } else {
       if (badge) badge.textContent = "NO TRADE";
       if (status) status.textContent = label + ": NO TRADE";
-      var why = typeof NL.formatCandleGate === "function"
-        ? NL.formatCandleGate(result) : result.reason || result.label || "sem evidência";
-      if (reason) reason.textContent = why;
+    }
+    if (reason) {
+      var gateTxt = result
+        ? (typeof NL.formatCandleGate === "function" ? NL.formatCandleGate(result) : result.reason)
+        : "porta pendente";
+      var liveTxt = live ? live.detail : "";
+      reason.textContent = gateTxt + (liveTxt ? " · " + liveTxt : "");
     }
   }
 
@@ -1074,6 +1214,8 @@
     var running = state.session && state.session.status === "RUNNING";
     var paused = state.session && state.session.status === "PAUSED";
     var gateOk = !!(state.prePlayOk && state.prePlayGate && state.prePlayGate.allowed);
+    var live = state.strategySet ? state.liveProx[state.strategySet] : null;
+    var atTarget = !!(live && live.atTarget);
     var btnA = el("btnBybitAnalyze");
     var btnP = el("btnBybitPlay");
     var btnPause = el("btnBybitPause");
@@ -1081,20 +1223,27 @@
     if (btnA) btnA.disabled = !hasStrategy || !!running;
     if (btnP) {
       btnP.disabled = !hasStrategy || (!!running && !paused);
-      btnP.title = gateOk ? "Porta aberta — iniciar sessão"
-        : hasStrategy ? "NO TRADE — porta fechada para esta estratégia" : "Escolhe Lucro rápido ou Loss zero";
-      btnP.classList.toggle("gate-blocked", hasStrategy && !gateOk && !running);
+      btnP.textContent = running ? "ARMADO" : paused ? "RETOMAR" : "ARMAR";
+      btnP.title = !hasStrategy
+        ? "Escolhe Lucro rápido ou Loss zero"
+        : running
+          ? "Sessão armada — entrada só com porta + sinal"
+          : "ARMAR: vigia o alvo (porta + sinal). Sem entrada cega.";
+      btnP.classList.toggle("gate-blocked", false);
     }
     if (btnPause) btnPause.disabled = !running;
     if (btnStop) btnStop.disabled = !(running || paused || state.session);
     var next = el("nextStepText");
     if (next) {
-      if (running) next.textContent = "Sessão a decorrer — PAUSE ou STOP";
-      else if (paused) next.textContent = "Em pausa — PLAY para continuar ou STOP";
+      if (running && state.session && state.session.hasOpenPosition) next.textContent = "ENTROU — posição aberta · PAUSE/STOP";
+      else if (running) next.textContent = "ARMADO — à espera do alvo (porta + sinal) · futuros USDT";
+      else if (paused) next.textContent = "Em pausa — RETOMAR ou STOP";
       else if (!hasStrategy) next.textContent = "1 Escolhe Lucro rápido ou Loss zero";
-      else if (!gateOk) next.textContent = "2 À espera da porta (indicadores ao vivo) · depois PLAY";
-      else next.textContent = "3 Pronto — podes carregar PLAY (manual)";
+      else if (!gateOk) next.textContent = "2 Porta fechada (NO TRADE) — podes ARMAR; entrada só quando abrir + sinal";
+      else if (!atTarget) next.textContent = "3 Porta aberta — ARMAR e espera o sinal no gráfico";
+      else next.textContent = "4 Porta + alvo — ARMAR para entrar na próxima vela (manual)";
     }
+    syncArmUi();
   }
 
   function setStats(summary) {
@@ -1136,9 +1285,15 @@
     state.symbol = sym;
     state.prePlayOk = false;
     state.prePlayGate = null;
+    state.liveProx = { lucro_rapido: null, loss_zero: null };
+    // Cancel in-flight heavy gate for previous symbol; radar continues in background
+    gateEvalQueued = false;
     stopFeed();
     await loadBybitLeverage(state.symbol);
     await loadChartAndGates();
+    renderRadarList();
+    scheduleLiveProximity();
+    syncArmUi();
     updateButtons();
   }
 
@@ -1278,11 +1433,13 @@
 
     await reevaluateBothGates();
     var pre = state.liveGates[state.strategySet];
+    state.prePlayGate = pre;
+    state.prePlayOk = !!(pre && pre.allowed);
     if (!pre || !pre.allowed) {
-      pushHistory("PLAY bloqueado — NO TRADE: " + (pre ? pre.reason : "sem evidência"), "stop");
-      syncPlayReadyFromSelection();
-      updateButtons();
-      return;
+      pushHistory("ARMAR com porta fechada — " + (pre ? pre.reason : "sem evidência") +
+        " · sessão vigia; entrada só se a porta abrir E houver sinal (sem entrada cega).", "stop");
+    } else {
+      pushHistory("Porta aberta — ARMAR · à espera do sinal da estratégia no futuro USDT.", "open");
     }
 
     if (state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
@@ -1296,8 +1453,9 @@
     state.realOpenSide = null;
     var btnP = el("btnBybitPlay");
     if (btnP) btnP.disabled = true;
-    pushHistory((isRealTradingMode() ? "REAL · Bybit" : "PAPER / SIMULADO") +
-      " · " + state.symbol + " · " + state.strategySet, "open");
+    state.armState = "armed";
+    pushHistory((isRealTradingMode() ? "REAL · Bybit futuros" : "PAPER · Bybit futuros") +
+      " · ARMADO · " + state.symbol + " · " + state.strategySet, "open");
 
     try {
       var history = state.gateCandles;
@@ -1331,8 +1489,9 @@
       state.running = true;
       var startEvs = state.session.start(last.epoch * 1000);
       for (var i1 = 0; i1 < startEvs.length; i1++) pushHistory(NL.formatCandleEvent(startEvs[i1]), "open");
-      pushHistory("Sessão " + state.symbol + " | stake fixa " + state.stake + " | lev " +
+      pushHistory("ARMADO " + state.symbol + " (futuro USDT) | stake fixa " + state.stake + " | lev " +
         state.bybitLeverage + "× | " + NL.formatCandleGate(state.controller.result) +
+        " | entrada só com porta+sinal" +
         (isRealTradingMode() ? " | REAL" : " | PAPER — sem ordens reais"), "");
       setStats(state.session.summary());
       scheduleSessionPoll();
@@ -1361,7 +1520,9 @@
       }
     }
     state.running = false;
+    state.armState = "disarmed";
     setStats(state.session ? state.session.summary() : null);
+    syncArmUi();
     updateButtons();
   }
 
@@ -1388,7 +1549,7 @@
         for (var j = 0; j < events.length; j++) {
           var ev = events[j];
           var cls = "";
-          if (ev.type === "trade_opened") cls = "open";
+          if (ev.type === "trade_opened") { cls = "open"; state.armState = "entered"; }
           else if (ev.type === "trade_closed") cls = ev.r >= 0 ? "close-win" : "close-loss";
           else if (ev.type === "stopped" || ev.type === "paused") cls = "stop";
           pushHistory(NL.formatCandleEvent(ev), cls);
@@ -1407,6 +1568,238 @@
     }
     scheduleSessionPoll();
     updateButtons();
+  }
+
+
+  function syncArmUi() {
+    var box = el("armBox");
+    var title = el("armTitle");
+    var reason = el("armReason");
+    var fill = el("armFill");
+    var bar = el("armBar");
+    var pct = el("armPct");
+    var dot = el("armDot");
+    var pill = el("armPill");
+    var preset = state.strategySet;
+    var gate = preset ? state.liveGates[preset] : null;
+    var live = preset ? state.liveProx[preset] : null;
+    var running = !!(state.session && state.session.status === "RUNNING");
+    var hasPos = !!(state.session && state.session.hasOpenPosition);
+    var gateOk = !!(gate && gate.allowed);
+    var atTarget = !!(live && live.atTarget);
+    var gateSc = proximityScore(gate, gateOk);
+    var combined = (typeof NL.combineGateAndLive === "function" && live)
+      ? NL.combineGateAndLive(gateOk, gateSc, live)
+      : { score: live ? live.proximityPct : gateSc, label: "—", ready: false };
+    var score = combined.score;
+    var mode = "disarmed";
+    var titleTxt = "DESARMADO";
+    var reasonTxt = "ARMAR para vigiar o alvo no perpetual USDT. Entrada só com porta de evidência + sinal. Sem martingale.";
+    if (hasPos) {
+      mode = "entered";
+      titleTxt = "ENTROU";
+      reasonTxt = "Posição aberta (sinal + porta). Stake fixa.";
+      state.armState = "entered";
+    } else if (running) {
+      mode = "armed";
+      titleTxt = "ARMADO — à espera do alvo";
+      if (!gateOk) reasonTxt = "NO TRADE (porta) — " + (gate ? gate.reason : "sem evidência") + (live ? " · " + live.detail : "");
+      else if (!atTarget) reasonTxt = "Porta aberta · à espera do sinal · " + (live ? live.detail : "");
+      else reasonTxt = "Porta + alvo · entrada na abertura da próxima vela (motor paper/real)";
+      state.armState = "armed";
+    } else if (gateOk && atTarget) {
+      mode = "disarmed";
+      titleTxt = "PRONTO A ARMAR · porta + alvo";
+      reasonTxt = (live ? live.detail + " · " : "") + (gate ? gate.reason : "");
+    } else if (!gateOk) {
+      mode = "disarmed notrade";
+      titleTxt = "DESARMADO · NO TRADE";
+      reasonTxt = gate
+        ? (typeof NL.formatCandleGate === "function" ? NL.formatCandleGate(gate) : gate.reason)
+        : "Escolhe estratégia — indicadores ao vivo no gráfico.";
+    }
+    if (box) {
+      box.className = "arm-box " + mode;
+    }
+    if (title) title.textContent = titleTxt;
+    if (reason) reason.textContent = reasonTxt;
+    if (fill) {
+      fill.style.width = score + "%";
+      fill.classList.toggle("ok", mode === "entered" || (gateOk && atTarget));
+      fill.classList.toggle("warn", score >= 40 && mode !== "entered");
+      fill.classList.toggle("bad", score < 40);
+    }
+    if (bar) bar.setAttribute("aria-valuenow", String(score));
+    if (pct) pct.textContent = score + "%";
+    if (dot) {
+      dot.className = "sem-dot " + (mode === "entered" ? "green" : mode.indexOf("armed") >= 0 ? "amber" : score >= 55 ? "amber" : "red");
+    }
+    if (pill) {
+      if (mode === "entered") { pill.className = "pill arm-in"; pill.textContent = "ENTROU"; }
+      else if (running) { pill.className = "pill arm-on"; pill.textContent = "ARMADO"; }
+      else { pill.className = "pill warn"; pill.textContent = "DESARMADO"; }
+    }
+  }
+
+  async function pushClosedCandleToSession(c) {
+    if (!state.running || !state.session || !state.controller) return;
+    if (!(c.epoch > state.lastEpoch)) return;
+    state.lastEpoch = c.epoch;
+    try {
+      var changed = state.controller.push(c);
+      if (changed) setGateUI(state.controller.result, state.controller.isOpen);
+      var events = state.session.onCandle(c);
+      for (var j = 0; j < events.length; j++) {
+        var ev = events[j];
+        var cls = "";
+        if (ev.type === "trade_opened") { cls = "open"; state.armState = "entered"; }
+        else if (ev.type === "trade_closed") cls = ev.r >= 0 ? "close-win" : "close-loss";
+        else if (ev.type === "stopped" || ev.type === "paused") cls = "stop";
+        pushHistory(NL.formatCandleEvent(ev), cls);
+        if (isRealTradingMode() && (ev.type === "trade_opened" || ev.type === "trade_closed")) {
+          await mirrorRealBybitEvent(ev);
+        }
+      }
+      setGateUI(state.controller.result, state.controller.isOpen);
+      setStats(state.session.summary());
+      syncArmUi();
+      updateButtons();
+      if (state.session.status === "STOPPED" && !state.session.hasOpenPosition) {
+        state.running = false;
+        state.armState = "disarmed";
+        updateButtons();
+      }
+    } catch (e) {
+      pushHistory("Aviso vela sessão: " + (e.message || String(e)), "stop");
+    }
+  }
+
+  /* —— Radar: batched, cancelable, nunca bloqueia o gráfico —— */
+  function radarStrategies(presetId) {
+    return strategiesRaw(presetId || state.radar.preset || "lucro_rapido");
+  }
+
+  function renderRadarList() {
+    var box = el("radarList");
+    var meta = el("radarMeta");
+    var st = el("radarStatus");
+    if (!box) return;
+    var filter = String(state.radar.filter || "").trim().toUpperCase();
+    var rows = Object.keys(state.radar.rows).map(function (sym) { return state.radar.rows[sym]; });
+    rows.sort(function (a, b) { return (b.proximityPct || 0) - (a.proximityPct || 0); });
+    if (filter) {
+      rows = rows.filter(function (r) {
+        return r.symbol.indexOf(filter) >= 0 || String(r.displayName || "").toUpperCase().indexOf(filter) >= 0;
+      });
+    }
+    var top = rows.slice(0, 80);
+    if (!top.length) {
+      box.innerHTML = '<div class="radar-empty">Ainda sem scores — scan em curso (só futuros Linear USDT).</div>';
+    } else {
+      box.innerHTML = top.map(function (r) {
+        var hot = r.proximityPct >= 70 ? "hot" : r.proximityPct >= 45 ? "warm" : "";
+        var active = r.symbol === state.symbol ? " active" : "";
+        var bias = r.bias === "long" ? "long" : r.bias === "short" ? "short" : "";
+        return '<div class="radar-row ' + hot + active + '" role="listitem" data-symbol="' + escapeHtml(r.symbol) + '">' +
+          '<span class="sym">' + escapeHtml(r.symbol.replace(/USDT$/, "")) + '<small style="opacity:.55">USDT</small></span>' +
+          '<span class="bias ' + bias + '">' + (r.atTarget ? "ALVO" : (r.bias || "—")) + "</span>" +
+          '<span class="pct">' + Math.round(r.proximityPct || 0) + "%</span></div>";
+      }).join("");
+      box.querySelectorAll(".radar-row").forEach(function (row) {
+        row.addEventListener("click", function () {
+          var sym = row.getAttribute("data-symbol");
+          if (!sym || sym === state.symbol) return;
+          var sel = el("bybitSymbolSelect");
+          if (sel) {
+            // ensure option exists
+            if (![].some.call(sel.options, function (o) { return o.value === sym; })) {
+              filterSymbols("");
+              if (sel.querySelector) { /* refreshed */ }
+            }
+            sel.value = sym;
+          }
+          switchSymbol(sym);
+        });
+      });
+    }
+    var cov = state.radar.scanned + "/" + state.radar.total;
+    if (meta) {
+      meta.textContent = "Scan " + cov + " perpetuals · preset " +
+        (state.radar.preset === "loss_zero" ? "Loss zero" : "Lucro rápido") +
+        (state.radar.paused ? " · PAUSADO" : " · em fundo") +
+        " · ranks só com dados reais";
+    }
+    if (st) {
+      st.className = "pill " + (state.radar.paused ? "warn" : state.radar.scanned > 0 ? "live-ok" : "warn");
+      st.textContent = state.radar.paused ? "Pausado" : ("Scan " + cov);
+    }
+  }
+
+  function cancelRadar() {
+    state.radar.gen += 1;
+    if (state.radar.timer) { clearTimeout(state.radar.timer); state.radar.timer = null; }
+  }
+
+  function startRadarScan() {
+    cancelRadar();
+    var gen = state.radar.gen;
+    state.radar.total = state.bybitSymbolsAll.length;
+    state.radar.scanned = Object.keys(state.radar.rows).length;
+    state.radar.cursor = state.radar.cursor % Math.max(1, state.radar.total);
+    renderRadarList();
+
+    async function tick() {
+      if (gen !== state.radar.gen) return;
+      if (state.radar.paused) {
+        state.radar.timer = setTimeout(tick, 800);
+        return;
+      }
+      var all = state.bybitSymbolsAll;
+      if (!all.length) {
+        state.radar.timer = setTimeout(tick, 2000);
+        return;
+      }
+      var batch = [];
+      for (var n = 0; n < RADAR_BATCH && n < all.length; n++) {
+        var idx = (state.radar.cursor + n) % all.length;
+        batch.push(all[idx]);
+      }
+      state.radar.cursor = (state.radar.cursor + batch.length) % all.length;
+      var preset = state.radar.preset || "lucro_rapido";
+      var strats = radarStrategies(preset);
+      for (var i = 0; i < batch.length; i++) {
+        if (gen !== state.radar.gen) return;
+        var it = batch[i];
+        try {
+          var candles = await fetchKlinesRaw(it.symbol, state.granularity, RADAR_KLINES);
+          if (gen !== state.radar.gen) return;
+          var closed = closedOnly(candles, state.granularity);
+          var live = typeof NL.evaluateLiveEntry === "function"
+            ? NL.evaluateLiveEntry(closed.slice(-RADAR_KLINES), strats, { hold: 3 })
+            : { proximityPct: 0, bias: "neutral", atTarget: false };
+          state.radar.rows[it.symbol] = {
+            symbol: it.symbol,
+            displayName: it.displayName,
+            proximityPct: live.proximityPct || 0,
+            bias: live.bias || "neutral",
+            atTarget: !!live.atTarget,
+            detail: live.detail || "",
+            preset: preset,
+            at: Date.now(),
+          };
+        } catch (_e) {
+          // soft-fail one symbol
+        }
+        await yieldToUi(RADAR_IDLE_MS);
+      }
+      // recount scanned
+      var keys = Object.keys(state.radar.rows).filter(function (k) { return k !== "_seen"; });
+      state.radar.scanned = keys.length;
+      renderRadarList();
+      if (gen !== state.radar.gen) return;
+      state.radar.timer = setTimeout(tick, RADAR_GAP_MS);
+    }
+    state.radar.timer = setTimeout(tick, 300);
   }
 
   function bind() {
@@ -1459,6 +1852,24 @@
     if (modeReal) modeReal.addEventListener("click", function () { setTradingMode("REAL"); });
     var btnClear = el("btnClearLog");
     if (btnClear) btnClear.addEventListener("click", function () { state.historyLines = []; renderHistory(); });
+    var radarSearch = el("radarSearch");
+    if (radarSearch) radarSearch.addEventListener("input", function () {
+      state.radar.filter = radarSearch.value || "";
+      renderRadarList();
+    });
+    var radarPreset = el("radarPreset");
+    if (radarPreset) radarPreset.addEventListener("change", function () {
+      state.radar.preset = radarPreset.value || "lucro_rapido";
+      state.radar.rows = {};
+      state.radar.scanned = 0;
+      startRadarScan();
+    });
+    var btnRadarPause = el("btnRadarPause");
+    if (btnRadarPause) btnRadarPause.addEventListener("click", function () {
+      state.radar.paused = !state.radar.paused;
+      btnRadarPause.textContent = state.radar.paused ? "Retomar" : "Pausar";
+      renderRadarList();
+    });
     var btnGateToggle = el("btnGateToggle");
     if (btnGateToggle) {
       btnGateToggle.addEventListener("click", function () {
@@ -1485,7 +1896,9 @@
     try {
       await loadBybitSymbols();
       renderBybitSymbolSelect();
-      pushHistory("Símbolos Bybit: " + state.bybitSymbolsAll.length + " perpetual USDT", "open");
+      pushHistory("Futuros Linear USDT: " + state.bybitSymbolsAll.length + " perpetuals (sem spot/inverse)", "open");
+      state.radar.total = state.bybitSymbolsAll.length;
+      startRadarScan();
     } catch (e) {
       pushHistory("Símbolos: " + (e.message || String(e)), "stop");
       var note = el("bybitLinkingNote");
@@ -1494,6 +1907,8 @@
     await loadBybitBalance();
     await loadBybitLeverage(state.symbol);
     await loadChartAndGates();
+    scheduleLiveProximity();
+    syncArmUi();
     updateButtons();
   }
 

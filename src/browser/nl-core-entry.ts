@@ -104,3 +104,10 @@ export type { CandlePaperConfig, CandlePaperEvent, CandlePaperSummary } from "..
 
 export { MIN_STAKE, MAX_SESSION_MS } from "../core/paper.ts";
 export type { SessionStatus, StopReason } from "../core/paper.ts";
+
+export {
+  evaluateLiveEntry,
+  proximityForStrategyName,
+  combineGateAndLive,
+} from "../core/strategy-live.ts";
+export type { LiveEntryMetrics } from "../core/strategy-live.ts";
