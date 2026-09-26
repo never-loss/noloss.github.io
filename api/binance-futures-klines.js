@@ -12,6 +12,11 @@ const INTERVALS = new Set([
   "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d",
 ]);
 
+const FETCH_HEADERS = {
+  Accept: "application/json",
+  "User-Agent": "never-loss/0.1 (futures-usdtm; paper)",
+};
+
 export default async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "OPTIONS") {
     res.setHeader("Allow", "GET, OPTIONS");
@@ -43,9 +48,13 @@ export default async function handler(req, res) {
     let lastErr;
     for (const base of BASES) {
       try {
-        const upstream = await fetch(`${base}${path}`);
+        const upstream = await fetch(`${base}${path}`, { headers: FETCH_HEADERS });
         const text = await upstream.text();
         if (upstream.ok) {
+          if (!text || text.length < 2) {
+            lastErr = new Error(`${base} corpo vazio`);
+            continue;
+          }
           res.setHeader("Content-Type", "application/json");
           res.setHeader("Cache-Control", "public, s-maxage=15, stale-while-revalidate=60");
           return res.status(200).send(text);

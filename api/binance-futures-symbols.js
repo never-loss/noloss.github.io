@@ -8,13 +8,24 @@ const BASES = [
   "https://fapi3.binance.com",
 ];
 
+const FETCH_HEADERS = {
+  Accept: "application/json",
+  "User-Agent": "never-loss/0.1 (futures-usdtm; paper)",
+};
+
 async function fetchExchangeInfo() {
   let lastErr;
   for (const base of BASES) {
     try {
-      const res = await fetch(`${base}/fapi/v1/exchangeInfo`);
+      const res = await fetch(`${base}/fapi/v1/exchangeInfo`, { headers: FETCH_HEADERS });
       const text = await res.text();
-      if (res.ok) return text;
+      if (res.ok) {
+        if (!text || text.length < 20) {
+          lastErr = new Error(`${base} corpo vazio (${text.length} bytes)`);
+          continue;
+        }
+        return text;
+      }
       if (res.status === 451 || res.status === 403 || res.status === 418 || res.status === 429) {
         lastErr = new Error(`${base} HTTP ${res.status}`);
         continue;
