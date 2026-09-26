@@ -1,9 +1,15 @@
 {
-  "regions": ["fra1"],
+  "regions": [
+    "fra1"
+  ],
   "rewrites": [
     {
       "source": "/dashboard",
       "destination": "/dashboard.html"
+    },
+    {
+      "source": "/bybit",
+      "destination": "/bybit.html"
     },
     {
       "source": "/callback",
