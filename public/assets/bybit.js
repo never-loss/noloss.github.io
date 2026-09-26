@@ -10,15 +10,16 @@
   var BYBIT_LEVERAGE_URL = "/api/bybit-leverage";
   var BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear";
   var TRADING_MODE_KEY = "nl_crypto_trading_mode";
-  var POLL_CHART_MS = 2500;
-  var GATE_REEVAL_MS = 25000;
-  var LIVE_PROX_MS = 1500;
+  var POLL_CHART_MS = 2000;
+  var GATE_REEVAL_MS = 30000;
+  var LIVE_PROX_MS = 700;
+  var LIVE_PROX_CANDLES = 160;
   var CHART_HISTORY = 200;
   var GATE_HISTORY = 3500;
   var RADAR_BATCH = 3;
-  var RADAR_GAP_MS = 450;
+  var RADAR_GAP_MS = 400;
   var RADAR_KLINES = 120;
-  var RADAR_IDLE_MS = 120;
+  var RADAR_IDLE_MS = 80;
 
   var NL = window.NL;
   if (!NL) {
@@ -58,6 +59,9 @@
     renderPending: false,
     chart: null,
     candleSeries: null,
+    chartRo: null,
+    loadGen: 0,
+    feedGen: 0,
     session: null,
     controller: null,
     running: false,
@@ -150,24 +154,78 @@
     if (auth) { auth.className = "pill ok"; auth.textContent = "Deriv OK"; }
   }
 
-  function initChart() {
+  function chartHostSize(host) {
+    var w = host && host.clientWidth ? host.clientWidth : 0;
+    var h = host && host.clientHeight ? host.clientHeight : 0;
+    return { w: w > 40 ? w : 640, h: h > 80 ? h : 280 };
+  }
+
+  function applyChartSize() {
+    var host = el("bybitChart");
+    if (!state.chart || !host) return;
+    var sz = chartHostSize(host);
+    try { state.chart.applyOptions({ width: sz.w, height: sz.h }); } catch (_e) {}
+  }
+
+  function paintChartFromState(fit) {
+    var list = state.chartCandles || [];
+    var empty = el("chartEmpty");
+    if (!list.length) {
+      if (empty) empty.hidden = false;
+      return;
+    }
+    if (empty) empty.hidden = true;
+    if (state.candleSeries) {
+      try {
+        state.candleSeries.setData(list.map(toLcBar));
+        if (fit && state.chart) {
+          try { state.chart.timeScale().fitContent(); } catch (_e2) {}
+        }
+      } catch (_e) {
+        // Series/chart desynced — recreate once and reload immediately.
+        destroyChart();
+        ensureChart(true);
+        if (state.candleSeries) {
+          try { state.candleSeries.setData(list.map(toLcBar)); } catch (_e3) {}
+        }
+      }
+      return;
+    }
+    drawCanvasChart(list);
+  }
+
+  function destroyChart() {
+    if (state.chartRo) {
+      try { state.chartRo.disconnect(); } catch (_e) {}
+      state.chartRo = null;
+    }
+    if (state.chart) {
+      try { state.chart.remove(); } catch (_e2) {}
+    }
+    state.chart = null;
+    state.candleSeries = null;
+    var host = el("bybitChart");
+    if (host) host.innerHTML = "";
+  }
+
+  /** Keep chart mounted. Only create if missing. force=true recreates then caller must paint. */
+  function ensureChart(force) {
     var host = el("bybitChart");
     if (!host) return;
-    if (state.chart) {
-      try { state.chart.remove(); } catch (_e) {}
-      state.chart = null;
-      state.candleSeries = null;
+    if (state.chart && state.candleSeries && !force) {
+      applyChartSize();
+      return;
     }
+    if (force || state.chart) destroyChart();
     if (typeof window.LightweightCharts === "undefined") {
-      host.innerHTML = "";
-      var canvas = el("chartCanvas");
-      if (canvas) canvas.hidden = false;
+      var canvasFb = el("chartCanvas");
+      if (canvasFb) canvasFb.hidden = false;
       pushHistory("lightweight-charts indisponível — canvas.", "stop");
       return;
     }
     var canvas = el("chartCanvas");
     if (canvas) canvas.hidden = true;
-    host.innerHTML = "";
+    var sz = chartHostSize(host);
     var chart = window.LightweightCharts.createChart(host, {
       layout: { background: { type: "solid", color: "#0b1220" }, textColor: "#94a3b8", fontSize: 11 },
       grid: {
@@ -186,8 +244,8 @@
         horzLine: { color: "rgba(148,163,184,0.35)", labelBackgroundColor: "#1e293b" },
       },
       localization: { locale: "pt-PT" },
-      width: host.clientWidth || 640,
-      height: host.clientHeight || 280,
+      width: sz.w,
+      height: sz.h,
     });
     var series = chart.addCandlestickSeries({
       upColor: "#22c55e",
@@ -200,12 +258,19 @@
     state.chart = chart;
     state.candleSeries = series;
     if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(function () {
+      state.chartRo = new ResizeObserver(function () {
         if (!state.chart || !host) return;
-        state.chart.applyOptions({ width: host.clientWidth, height: host.clientHeight || 280 });
-      }).observe(host);
+        var w = host.clientWidth;
+        var h = host.clientHeight;
+        // Ignore transient 0-size layouts (strategy card toggles / mobile reflow) — blank-chart killer.
+        if (!(w > 40) || !(h > 40)) return;
+        try { state.chart.applyOptions({ width: w, height: h || 280 }); } catch (_e) {}
+      });
+      state.chartRo.observe(host);
     }
   }
+
+  function initChart() { ensureChart(false); }
 
   function toLcBar(c) {
     return { time: c.epoch, open: c.open, high: c.high, low: c.low, close: c.close };
@@ -238,17 +303,23 @@
       status.className = "pill " + (state.feedMode === "ws" ? "live-ok" : state.feedMode === "poll" ? "live-poll" : "warn");
       status.textContent = list.length + " velas · " + (state.symbol || "") + " · " + mode;
     }
-    if (state.candleSeries) {
-      try { state.candleSeries.setData(list.map(toLcBar)); } catch (_e) {}
-      return;
-    }
-    drawCanvasChart(list);
+    ensureChart(false);
+    paintChartFromState(false);
   }
 
   function updateLastBar(candle) {
     if (!candle) return;
+    if (!state.candleSeries) ensureChart(false);
     if (state.candleSeries) {
-      try { state.candleSeries.update(toLcBar(candle)); } catch (_e) { scheduleRender(); }
+      try { state.candleSeries.update(toLcBar(candle)); }
+      catch (_e) {
+        // Recover blank/desynced series without dropping the feed.
+        try {
+          ensureChart(true);
+          paintChartFromState(false);
+          if (state.candleSeries) state.candleSeries.update(toLcBar(candle));
+        } catch (_e2) { scheduleRender(); }
+      }
     } else {
       scheduleRender();
     }
@@ -378,8 +449,8 @@
     };
     if (![candle.open, candle.high, candle.low, candle.close].every(Number.isFinite)) return;
     state.chartCandles = mergeCandle(state.chartCandles, candle);
-    updateLastBar(candle);
-    scheduleLiveProximity();
+    try { updateLastBar(candle); } catch (_u) { try { scheduleRender(); } catch (_r) {} }
+    try { scheduleLiveProximity(); } catch (_p) {}
     var confirmed = raw.confirm === true || raw.confirm === "true";
     if (confirmed) {
       var closed = { epoch: candle.epoch, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
@@ -396,36 +467,41 @@
 
   function startWsFeed() {
     stopFeed();
+    var feedId = ++state.feedGen;
     setFeedMode("idle");
     var interval = intervalLabel();
-    if (!interval || !state.symbol) { setFeedMode("err"); return; }
-    var topic = "kline." + interval + "." + state.symbol;
+    var sym = state.symbol;
+    if (!interval || !sym) { setFeedMode("err"); return; }
+    var topic = "kline." + interval + "." + sym;
     var ws;
     try { ws = new WebSocket(BYBIT_WS_URL); }
     catch (e) {
       pushHistory("WS Bybit falhou: " + (e.message || String(e)) + " — poll.", "stop");
-      startPollFeed();
+      if (feedId === state.feedGen) startPollFeed();
       return;
     }
     state.ws = ws;
     state.wsTopic = topic;
     var opened = false;
     var failTimer = setTimeout(function () {
-      if (!opened) {
+      if (!opened && feedId === state.feedGen) {
         pushHistory("WS timeout — a usar poll.", "stop");
         try { ws.close(); } catch (_e) {}
         startPollFeed();
       }
     }, 6000);
     ws.onopen = function () {
+      if (feedId !== state.feedGen) { try { ws.close(); } catch (_e) {} return; }
       opened = true;
       clearTimeout(failTimer);
-      ws.send(JSON.stringify({ op: "subscribe", args: [topic] }));
+      try { ws.send(JSON.stringify({ op: "subscribe", args: [topic] })); } catch (_e2) {}
       setFeedMode("ws");
       var hint = el("liveFeedHint");
       if (hint) hint.textContent = "Subscrito " + topic;
     };
     ws.onmessage = function (ev) {
+      if (feedId !== state.feedGen || state.ws !== ws) return;
+      if (state.symbol !== sym) return;
       var msg;
       try { msg = JSON.parse(ev.data); } catch (_e) { return; }
       if (!msg) return;
@@ -435,14 +511,14 @@
     };
     ws.onerror = function () {
       clearTimeout(failTimer);
-      if (state.feedMode !== "poll") {
+      if (feedId === state.feedGen && state.feedMode !== "poll") {
         pushHistory("WS erro — fallback poll.", "stop");
         startPollFeed();
       }
     };
     ws.onclose = function () {
       clearTimeout(failTimer);
-      if (state.ws === ws && state.feedMode === "ws") startPollFeed();
+      if (feedId === state.feedGen && state.ws === ws && state.feedMode === "ws") startPollFeed();
     };
   }
 
@@ -522,28 +598,35 @@
   }
 
   async function loadChartAndGates() {
+    var gen = ++state.loadGen;
+    var sym = state.symbol;
+    var gran = state.granularity;
     var status = el("chartStatus");
-    if (status) { status.className = "pill warn"; status.textContent = "A carregar " + state.symbol + "…"; }
+    if (status) { status.className = "pill warn"; status.textContent = "A carregar " + sym + "…"; }
     setStratLoading();
+    ensureChart(false);
     try {
-      var hist = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+      var hist = await fetchBybitHistory(sym, gran, GATE_HISTORY);
+      if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
       state.gateCandles = hist.slice();
       var recent = hist.slice(-CHART_HISTORY);
       try {
-        var raw = await fetchKlinesRaw(state.symbol, state.granularity, CHART_HISTORY);
+        var raw = await fetchKlinesRaw(sym, gran, CHART_HISTORY);
+        if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
         if (raw.length) recent = raw.slice(-CHART_HISTORY);
       } catch (_e) {}
+      if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
       state.chartCandles = recent;
+      ensureChart(false);
+      paintChartFromState(true);
       scheduleRender();
-      if (state.chart && state.candleSeries) {
-        try { state.chart.timeScale().fitContent(); } catch (_e2) {}
-      }
       startWsFeed();
       startGateTimer();
       scheduleLiveProximity();
       // Heavy gate deferred so chart/WS never stutter on symbol switch
       scheduleGateReeval();
     } catch (e) {
+      if (gen !== state.loadGen) return;
       setFeedMode("err");
       if (status) { status.className = "pill live-err"; status.textContent = "Gráfico: " + (e.message || String(e)); }
       var empty = el("chartEmpty");
@@ -606,18 +689,19 @@
   }
 
   function liveCandleSeries() {
+    var cap = LIVE_PROX_CANDLES;
     var base = (state.gateCandles && state.gateCandles.length)
-      ? state.gateCandles.slice()
+      ? state.gateCandles.slice(-cap)
       : [];
     var chart = state.chartCandles || [];
     if (!chart.length) return base;
     var last = chart[chart.length - 1];
-    if (!base.length) return chart.slice(-Math.min(CHART_HISTORY, chart.length));
+    if (!base.length) return chart.slice(-Math.min(cap, chart.length));
     var tip = base[base.length - 1];
     if (last.epoch > tip.epoch) base.push(last);
     else if (last.epoch === tip.epoch) base[base.length - 1] = last;
     // Cap for live prox CPU — full history only for heavy gate
-    if (base.length > 400) base = base.slice(-400);
+    if (base.length > cap) base = base.slice(-cap);
     return base;
   }
 
@@ -645,12 +729,13 @@
         return;
       }
       var ids = ["lucro_rapido", "loss_zero"];
+      if (state.strategySet && ids.indexOf(state.strategySet) < 0) ids.push(state.strategySet);
       for (var i = 0; i < ids.length; i++) {
         var id = ids[i];
         try {
           var live = NL.evaluateLiveEntry(candles, strategiesRaw(id), { hold: 3 });
           state.liveProx[id] = live;
-          renderStratCard(id, state.liveGates[id], null);
+          if (id === "lucro_rapido" || id === "loss_zero") renderStratCard(id, state.liveGates[id], null);
         } catch (_e) {}
         if (i === 0) await yieldToUi(0);
       }
@@ -751,17 +836,18 @@
     } catch (_e) {}
 
     var ids = ["lucro_rapido", "loss_zero"];
+    if (state.strategySet && ids.indexOf(state.strategySet) < 0) ids.push(state.strategySet);
     for (var j = 0; j < ids.length; j++) {
       var id = ids[j];
       try {
         var result = evaluatePreset(id, candles);
         state.liveGates[id] = result;
-        renderStratCard(id, result, null);
+        if (id === "lucro_rapido" || id === "loss_zero") renderStratCard(id, result, null);
       } catch (e) {
         state.liveGates[id] = null;
-        renderStratCard(id, null, e.message || String(e));
+        if (id === "lucro_rapido" || id === "loss_zero") renderStratCard(id, null, e.message || String(e));
       }
-      if (j === 0) await yieldToUi(30);
+      if (j < ids.length - 1) await yieldToUi(30);
     }
     scheduleLiveProximity();
     syncPlayReadyFromSelection();
@@ -849,7 +935,13 @@
     var pct = el("playReadyPct");
     var dot = el("playReadyDot");
     var preset = state.strategySet;
-    var label = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : null;
+    var labelMap = {
+      lucro_rapido: "Lucro rápido",
+      loss_zero: "Loss zero",
+      tendencia_diaria: "Tendência diária",
+      biblioteca: "Biblioteca",
+    };
+    var label = preset && labelMap[preset] ? labelMap[preset] : null;
     var result = preset && state.liveGates[preset] ? state.liveGates[preset] : null;
     var c1 = el("cardLucroRapido");
     var c2 = el("cardLossZero");
@@ -858,8 +950,8 @@
 
     if (!label) {
       if (box) { box.classList.add("closed"); box.classList.remove("open"); }
-      if (title) title.textContent = "Escolhe Lucro rápido ou Loss zero";
-      if (reason) reason.textContent = "Indicadores acima atualizam em tempo real com velas Bybit. Verde só com porta real — sem auto-PLAY.";
+      if (title) title.textContent = "Escolhe uma estratégia";
+      if (reason) reason.textContent = "Indicadores ao vivo com velas Bybit. Verde só com porta real — sem auto-PLAY.";
       if (fill) fill.style.width = "0%";
       if (pct) pct.textContent = "0%";
       if (dot) dot.className = "sem-dot amber";
@@ -1282,13 +1374,17 @@
       if (sel) sel.value = state.symbol;
       return;
     }
+    if (!sym || sym === state.symbol) return;
     state.symbol = sym;
     state.prePlayOk = false;
     state.prePlayGate = null;
     state.liveProx = { lucro_rapido: null, loss_zero: null };
+    state.liveGates = { lucro_rapido: null, loss_zero: null };
     // Cancel in-flight heavy gate for previous symbol; radar continues in background
     gateEvalQueued = false;
     stopFeed();
+    // Keep chart mounted — never destroy on symbol change; only resubscribe WS + reload klines.
+    ensureChart(false);
     await loadBybitLeverage(state.symbol);
     await loadChartAndGates();
     renderRadarList();
@@ -1304,10 +1400,39 @@
       if (iv) iv.value = String(state.granularity);
       return;
     }
-    state.granularity = Number(gran) || 300;
+    var g = Number(gran) || 300;
+    if (g === state.granularity) return;
+    state.granularity = g;
     stopFeed();
-    initChart();
+    // Do NOT destroy/recreate chart — only update timescale + reload klines + resubscribe WS.
+    ensureChart(false);
+    if (state.chart) {
+      try {
+        state.chart.applyOptions({
+          timeScale: { timeVisible: true, secondsVisible: state.granularity <= 60 },
+        });
+      } catch (_e) {}
+    }
     await loadChartAndGates();
+  }
+
+  function onStrategyChange(preset) {
+    if (state.running) {
+      pushHistory("Para a sessão (STOP) antes de mudar a estratégia.", "stop");
+      var sel = el("bybitStrategy");
+      if (sel) sel.value = state.strategySet || "";
+      return;
+    }
+    state.strategySet = preset || "";
+    // Strategy-only: chart stays mounted, WS untouched, no kline reload.
+    syncPlayReadyFromSelection();
+    scheduleLiveProximity();
+    // Soft gate for newly selected preset if missing (never blocks UI / chart).
+    if (state.strategySet && !state.liveGates[state.strategySet] && state.gateCandles.length >= 100) {
+      scheduleGateReeval();
+    }
+    syncArmUi();
+    updateButtons();
   }
 
   function qtyFromFixedStake(stake, price) {
@@ -1385,7 +1510,7 @@
   async function runAnalyze() {
     readForm();
     if (!state.strategySet) {
-      pushHistory("Escolhe Lucro rápido ou Loss zero.", "stop");
+      pushHistory("Escolhe uma estratégia (Lucro rápido / Loss zero / …).", "stop");
       updateButtons();
       return null;
     }
@@ -1414,7 +1539,7 @@
   async function startSession() {
     readForm();
     if (!state.strategySet) {
-      pushHistory("Escolhe Lucro rápido ou Loss zero antes de PLAY.", "stop");
+      pushHistory("Escolhe uma estratégia antes de ARMAR.", "stop");
       updateButtons();
       return;
     }
@@ -1431,8 +1556,17 @@
     }
     if (state.running) return;
 
-    await reevaluateBothGates();
+    // Ensure selected preset has a fresh gate (wiring: strategy → evaluateCandleGate → arm).
+    if (!state.liveGates[state.strategySet] || state.gateCandles.length < 1500) {
+      await reevaluateBothGates();
+    } else if (!state.liveGates.lucro_rapido || !state.liveGates.loss_zero) {
+      await reevaluateBothGates();
+    }
     var pre = state.liveGates[state.strategySet];
+    if (!pre && state.gateCandles.length >= 100) {
+      try { pre = evaluatePreset(state.strategySet, state.gateCandles); state.liveGates[state.strategySet] = pre; }
+      catch (_eg) { pre = null; }
+    }
     state.prePlayGate = pre;
     state.prePlayOk = !!(pre && pre.allowed);
     if (!pre || !pre.allowed) {
@@ -1593,8 +1727,8 @@
       : { score: live ? live.proximityPct : gateSc, label: "—", ready: false };
     var score = combined.score;
     var mode = "disarmed";
-    var titleTxt = "DESARMADO";
-    var reasonTxt = "ARMAR para vigiar o alvo no perpetual USDT. Entrada só com porta de evidência + sinal. Sem martingale.";
+    var titleTxt = "DESARMADO · co-piloto";
+    var reasonTxt = "ARMAR para o co-piloto vigiar o alvo da estratégia no perpetual USDT. Entrada só com porta aberta + sinal. Sem martingale.";
     if (hasPos) {
       mode = "entered";
       titleTxt = "ENTROU";
@@ -1602,14 +1736,15 @@
       state.armState = "entered";
     } else if (running) {
       mode = "armed";
-      titleTxt = "ARMADO — à espera do alvo";
+      var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : (preset || "");
+      titleTxt = "ARMADO · " + stratLabel + " — à espera do alvo";
       if (!gateOk) reasonTxt = "NO TRADE (porta) — " + (gate ? gate.reason : "sem evidência") + (live ? " · " + live.detail : "");
-      else if (!atTarget) reasonTxt = "Porta aberta · à espera do sinal · " + (live ? live.detail : "");
-      else reasonTxt = "Porta + alvo · entrada na abertura da próxima vela (motor paper/real)";
+      else if (!atTarget) reasonTxt = "Porta aberta · co-piloto à espera do sinal · " + (live ? live.detail : "");
+      else reasonTxt = "Porta aberta + alvo · entrada na abertura da próxima vela (PAPER/REAL)";
       state.armState = "armed";
     } else if (gateOk && atTarget) {
       mode = "disarmed";
-      titleTxt = "PRONTO A ARMAR · porta + alvo";
+      titleTxt = "PRONTO A ARMAR · porta aberta + alvo";
       reasonTxt = (live ? live.detail + " · " : "") + (gate ? gate.reason : "");
     } else if (!gateOk) {
       mode = "disarmed notrade";
@@ -1697,13 +1832,17 @@
       box.innerHTML = '<div class="radar-empty">Ainda sem scores — scan em curso (só futuros Linear USDT).</div>';
     } else {
       box.innerHTML = top.map(function (r) {
-        var hot = r.proximityPct >= 70 ? "hot" : r.proximityPct >= 45 ? "warm" : "";
+        var pctN = Math.round(r.proximityPct || 0);
+        var near = !r.atTarget && pctN >= 55;
+        var hot = r.atTarget || pctN >= 70 ? "hot" : near ? "warm near-target" : pctN >= 45 ? "warm" : "";
         var active = r.symbol === state.symbol ? " active" : "";
         var bias = r.bias === "long" ? "long" : r.bias === "short" ? "short" : "";
+        var biasLabel = r.atTarget ? "ALVO" : near ? "quase" : (r.bias || "—");
+        var nearTag = near ? '<span class="tag-near">quase no alvo</span>' : "";
         return '<div class="radar-row ' + hot + active + '" role="listitem" data-symbol="' + escapeHtml(r.symbol) + '">' +
-          '<span class="sym">' + escapeHtml(r.symbol.replace(/USDT$/, "")) + '<small style="opacity:.55">USDT</small></span>' +
-          '<span class="bias ' + bias + '">' + (r.atTarget ? "ALVO" : (r.bias || "—")) + "</span>" +
-          '<span class="pct">' + Math.round(r.proximityPct || 0) + "%</span></div>";
+          '<span class="sym">' + escapeHtml(r.symbol.replace(/USDT$/, "")) + '<small style="opacity:.55">USDT</small>' + nearTag + "</span>" +
+          '<span class="bias ' + bias + '">' + biasLabel + "</span>" +
+          '<span class="pct">' + pctN + "%</span></div>";
       }).join("");
       box.querySelectorAll(".radar-row").forEach(function (row) {
         row.addEventListener("click", function () {
@@ -1814,9 +1953,7 @@
     var bybitStrat = el("bybitStrategy");
     if (bybitStrat) {
       bybitStrat.addEventListener("change", function () {
-        state.strategySet = bybitStrat.value || "";
-        syncPlayReadyFromSelection();
-        updateButtons();
+        onStrategyChange(bybitStrat.value || "");
       });
     }
     ["cardLucroRapido", "cardLossZero"].forEach(function (id) {
@@ -1828,9 +1965,7 @@
         var sel = el("bybitStrategy");
         if (sel && preset) {
           sel.value = preset;
-          state.strategySet = preset;
-          syncPlayReadyFromSelection();
-          updateButtons();
+          onStrategyChange(preset);
         }
       });
     });
@@ -1886,7 +2021,7 @@
     if (!token) { showLoginGate(); return; }
     showApp();
     bind();
-    initChart();
+    ensureChart(false);
     setStats(null);
     setGateUI(null, false);
     updateTradingModeUI();

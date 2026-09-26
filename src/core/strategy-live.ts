@@ -162,12 +162,22 @@ function proxAtrBreakout(
   return nearZero(best, pad + atrV * 0.5);
 }
 
+/** Cap history for live UI — enough for EMA50 / ATR48, cheap per tick. */
+export const LIVE_ENTRY_MAX_CANDLES = 160;
+
+function windowCandles(candles: readonly Candle[], max = LIVE_ENTRY_MAX_CANDLES): readonly Candle[] {
+  if (candles.length <= max) return candles;
+  return candles.slice(-max);
+}
+
 /**
  * Proximidade 0..1 para uma estratégia nomeada (mesmos parâmetros que strategies.ts).
  * Fallback: 0 se o nome não for reconhecido.
  */
 export function proximityForStrategyName(name: string, candles: readonly Candle[]): number {
   if (candles.length < 30) return 0;
+  // Caller usually already windowed; re-window is cheap (slice only if over cap).
+  candles = windowCandles(candles);
   let m: RegExpMatchArray | null;
 
   m = /^ema-cruza (\d+)\/(\d+)$/.exec(name);
@@ -206,22 +216,26 @@ export function proximityForStrategyName(name: string, candles: readonly Candle[
 }
 
 function signalStats(strategies: readonly Strategy[], candles: readonly Candle[], hold: number) {
-  const n = candles.length;
+  const win = windowCandles(candles);
+  const n = win.length;
   let lastSignal: Signal = 0;
   let barsSince = Infinity;
   let agreeingLong = 0;
   let agreeingShort = 0;
   let maxProx = 0;
   const details: string[] = [];
+  // Scan only recent bars for "since signal" — avoid full-history walks.
+  const sinceScan = Math.min(24, n);
 
   for (const s of strategies) {
-    const sigs = s.signals(candles);
+    // strategies.signals is O(n); keep n bounded via windowCandles.
+    const sigs = s.signals(win);
     const last = (sigs[n - 1] ?? 0) as Signal;
     if (last !== 0) {
       lastSignal = last;
       barsSince = 0;
     } else if (barsSince > 0) {
-      for (let j = n - 1; j >= 0 && j >= n - 40; j--) {
+      for (let j = n - 1; j >= 0 && j >= n - sinceScan; j--) {
         if (sigs[j] !== 0) {
           barsSince = Math.min(barsSince, n - 1 - j);
           break;
@@ -245,7 +259,8 @@ function signalStats(strategies: readonly Strategy[], candles: readonly Candle[]
       // approximate: fraction of hold-window agreement toward one side
       p = Math.max(agreeingLong, agreeingShort) / Math.max(1, strategies.length);
     } else {
-      p = proximityForStrategyName(s.name, candles);
+      // Cheap tip-only proximity on the same window (no second full-history pass).
+      p = proximityForStrategyName(s.name, win);
     }
     if (p > maxProx) {
       maxProx = p;

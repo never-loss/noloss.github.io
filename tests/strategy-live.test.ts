@@ -97,3 +97,18 @@ test("combineGateAndLive só ready com porta + alvo", () => {
   assert.equal(c.ready, false);
   assert.ok(/espera/i.test(c.label));
 });
+
+test("LIVE_ENTRY_MAX_CANDLES limita custo com histórico longo", () => {
+  const candles = synth(800);
+  const t0 = Date.now();
+  const m = evaluateLiveEntry(candles, lucroRapidoStrategySet());
+  const ms = Date.now() - t0;
+  assert.ok(m.proximityPct >= 0 && m.proximityPct <= 100);
+  assert.ok(ms < 2500, `proximidade demasiado lenta: ${ms}ms`);
+});
+
+test("evaluateLiveEntry com Loss zero (confluências) não rebenta", () => {
+  const m = evaluateLiveEntry(synth(200), lossZeroStrategySet());
+  assert.ok(m.total === lossZeroStrategySet().length);
+  assert.equal(typeof m.detail, "string");
+});
