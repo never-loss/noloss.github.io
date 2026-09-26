@@ -31,13 +31,17 @@ var NL = (() => {
     BYBIT_PUBLIC_BASES: () => BYBIT_PUBLIC_BASES,
     CandleGateController: () => CandleGateController,
     CandlePaperSession: () => CandlePaperSession,
+    EXPECTED_PCT: () => EXPECTED_PCT,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
     LIVE_ENTRY_MAX_CANDLES: () => LIVE_ENTRY_MAX_CANDLES,
     MARKETS: () => MARKETS,
     MARKET_ORDER: () => MARKET_ORDER,
     MAX_SESSION_MS: () => MAX_SESSION_MS,
+    MAX_WINDOW: () => MAX_WINDOW,
     MIN_STAKE: () => MIN_STAKE,
     STRATEGY_PRESETS: () => STRATEGY_PRESETS,
+    TickWindow: () => TickWindow,
+    WINDOW_SIZES: () => WINDOW_SIZES,
     binanceBaseAsset: () => binanceBaseAsset,
     binanceFetch: () => binanceFetch,
     binanceIntervalToSeconds: () => binanceIntervalToSeconds,
@@ -46,10 +50,13 @@ var NL = (() => {
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
     clampBybitLeverage: () => clampBybitLeverage,
     combineGateAndLive: () => combineGateAndLive,
+    countDigits: () => countDigits,
     cryptoBaseLabel: () => cryptoBaseLabel,
     cryptoSourceOf: () => cryptoSourceOf,
     dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
     dailyTrendStrategySet: () => dailyTrendStrategySet,
+    deviationColor: () => deviationColor,
+    deviationFromExpected: () => deviationFromExpected,
     evaluateCandleGate: () => evaluateCandleGate,
     evaluateLiveEntry: () => evaluateLiveEntry,
     feasible: () => feasible,
@@ -72,6 +79,7 @@ var NL = (() => {
     isOptionsFeedOnly: () => isOptionsFeedOnly,
     isScheduledOpen: () => isScheduledOpen,
     isUsdtmPerpetual: () => isUsdtmPerpetual,
+    lastDigit: () => lastDigit,
     listAllCryptoUsd: () => listAllCryptoUsd,
     lossZeroStrategySet: () => lossZeroStrategySet,
     lucroRapidoStrategySet: () => lucroRapidoStrategySet,
@@ -91,6 +99,8 @@ var NL = (() => {
     parseBybitKlines: () => parseBybitKlines,
     parseBybitLeverageInfo: () => parseBybitLeverageInfo,
     parseCandlesMessage: () => parseCandlesMessage,
+    parseTickMessage: () => parseMessage,
+    percentages: () => percentages,
     proximityForStrategyName: () => proximityForStrategyName,
     sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
     sortBybitUsdtPreferred: () => sortBybitUsdtPreferred,
@@ -1845,6 +1855,91 @@ var NL = (() => {
     }
   };
 
+  // src/core/digits.ts
+  var WINDOW_SIZES = [10, 25, 50, 100, 250, 500];
+  var MAX_WINDOW = 500;
+  var EXPECTED_PCT = 10;
+  function assertDigit(d) {
+    if (!Number.isInteger(d) || d < 0 || d > 9) {
+      throw new RangeError(`D\xEDgito inv\xE1lido: ${d}`);
+    }
+  }
+  function lastDigit(quote, pipSize) {
+    if (!Number.isInteger(pipSize) || pipSize < 0 || pipSize > 8) {
+      throw new RangeError(`pipSize inv\xE1lido: ${pipSize}`);
+    }
+    if (typeof quote === "string" && quote.trim() === "") {
+      throw new TypeError("Cota\xE7\xE3o vazia");
+    }
+    const value = typeof quote === "string" ? Number(quote) : quote;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new TypeError(`Cota\xE7\xE3o inv\xE1lida: ${String(quote)}`);
+    }
+    const text = value.toFixed(pipSize);
+    return Number(text[text.length - 1]);
+  }
+  function countDigits(digits) {
+    const counts = new Array(10).fill(0);
+    for (const d of digits) {
+      assertDigit(d);
+      counts[d] += 1;
+    }
+    return counts;
+  }
+  function percentages(counts) {
+    const total = counts.reduce((a, b) => a + b, 0);
+    if (total === 0) return counts.map(() => 0);
+    return counts.map((c) => c / total * 100);
+  }
+  function deviationFromExpected(pcts) {
+    return pcts.map((p) => p - EXPECTED_PCT);
+  }
+  function deviationColor(deviation) {
+    if (deviation > 0) return "blue";
+    if (deviation < 0) return "red";
+    return "neutral";
+  }
+  var TickWindow = class {
+    #digits = [];
+    #max;
+    constructor(max = MAX_WINDOW) {
+      if (!Number.isInteger(max) || max < 1) {
+        throw new RangeError(`Tamanho m\xE1ximo inv\xE1lido: ${max}`);
+      }
+      this.#max = max;
+    }
+    get size() {
+      return this.#digits.length;
+    }
+    push(digit) {
+      assertDigit(digit);
+      this.#digits.push(digit);
+      if (this.#digits.length > this.#max) this.#digits.shift();
+    }
+    last(n) {
+      if (!Number.isInteger(n) || n < 1) {
+        throw new RangeError(`n inv\xE1lido: ${n}`);
+      }
+      return this.#digits.slice(-n);
+    }
+    recent(n) {
+      return this.last(n).reverse();
+    }
+    stats(window) {
+      const digits = this.last(window);
+      const counts = countDigits(digits);
+      const pcts = percentages(counts);
+      return {
+        window,
+        total: digits.length,
+        ready: digits.length >= window,
+        counts,
+        percentages: pcts,
+        deviations: deviationFromExpected(pcts)
+      };
+    }
+  };
+
   // src/core/paper.ts
   var MIN_STAKE = 0.5;
   var MAX_SESSION_MS = 3 * 60 * 60 * 1e3;
@@ -2399,6 +2494,48 @@ var NL = (() => {
     }
     const score = Math.min(70, Math.round(gateScore * 0.5 + live.proximityPct * 0.5));
     return { score, label: "NO TRADE \xB7 " + live.detail, ready: false };
+  }
+
+  // src/core/ticks.ts
+  function parseMessage(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return { kind: "invalid", reason: "JSON inv\xE1lido" };
+    }
+    if (typeof data !== "object" || data === null) {
+      return { kind: "invalid", reason: "Mensagem n\xE3o \xE9 um objeto" };
+    }
+    const obj = data;
+    if (obj.error && typeof obj.error === "object") {
+      const e = obj.error;
+      return {
+        kind: "error",
+        code: String(e.code ?? "unknown"),
+        message: String(e.message ?? "")
+      };
+    }
+    if (obj.msg_type !== "tick") return { kind: "other" };
+    const t = obj.tick;
+    if (typeof t !== "object" || t === null) {
+      return { kind: "invalid", reason: "Tick sem objeto tick" };
+    }
+    const tick = t;
+    const quote = typeof tick.quote === "string" ? Number(tick.quote) : tick.quote;
+    if (typeof tick.symbol !== "string") return { kind: "invalid", reason: "symbol em falta" };
+    if (typeof tick.epoch !== "number") return { kind: "invalid", reason: "epoch em falta" };
+    if (typeof quote !== "number" || !Number.isFinite(quote)) {
+      return { kind: "invalid", reason: "quote inv\xE1lida" };
+    }
+    const pip = tick.pip_size;
+    return {
+      kind: "tick",
+      symbol: tick.symbol,
+      epoch: tick.epoch,
+      quote,
+      pipSize: typeof pip === "number" && Number.isInteger(pip) ? pip : null
+    };
   }
   return __toCommonJS(nl_core_entry_exports);
 })();

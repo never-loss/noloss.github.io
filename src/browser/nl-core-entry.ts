@@ -112,3 +112,19 @@ export {
   LIVE_ENTRY_MAX_CANDLES,
 } from "../core/strategy-live.ts";
 export type { LiveEntryMetrics } from "../core/strategy-live.ts";
+
+export {
+  WINDOW_SIZES,
+  MAX_WINDOW,
+  EXPECTED_PCT,
+  lastDigit,
+  countDigits,
+  percentages,
+  deviationFromExpected,
+  deviationColor,
+  TickWindow,
+} from "../core/digits.ts";
+export type { DigitColor, WindowStats } from "../core/digits.ts";
+
+export { parseMessage as parseTickMessage } from "../core/ticks.ts";
+export type { ParsedMessage as ParsedTickMessage } from "../core/ticks.ts";
