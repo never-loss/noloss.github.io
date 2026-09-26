@@ -20,6 +20,9 @@ var NL = (() => {
   // src/browser/nl-core-entry.ts
   var nl_core_entry_exports = {};
   __export(nl_core_entry_exports, {
+    BINANCE_FUTURES_PATH_EXCHANGE_INFO: () => BINANCE_FUTURES_PATH_EXCHANGE_INFO,
+    BINANCE_FUTURES_PATH_KLINES: () => BINANCE_FUTURES_PATH_KLINES,
+    BINANCE_FUTURES_PUBLIC_BASES: () => BINANCE_FUTURES_PUBLIC_BASES,
     BINANCE_PREFERRED_USDT: () => BINANCE_PREFERRED_USDT,
     BINANCE_PUBLIC_BASES: () => BINANCE_PUBLIC_BASES,
     CandleGateController: () => CandleGateController,
@@ -53,6 +56,7 @@ var NL = (() => {
     isCryptoUsd: () => isCryptoUsd,
     isOptionsFeedOnly: () => isOptionsFeedOnly,
     isScheduledOpen: () => isScheduledOpen,
+    isUsdtmPerpetual: () => isUsdtmPerpetual,
     listAllCryptoUsd: () => listAllCryptoUsd,
     lossZeroStrategySet: () => lossZeroStrategySet,
     lucroRapidoStrategySet: () => lucroRapidoStrategySet,
@@ -64,6 +68,8 @@ var NL = (() => {
     nextCandleEnd: () => nextCandleEnd,
     parseActiveSymbols: () => parseActiveSymbols,
     parseBinanceExchangeInfo: () => parseBinanceExchangeInfo,
+    parseBinanceFuturesExchangeInfo: () => parseBinanceFuturesExchangeInfo,
+    parseBinanceFuturesKlines: () => parseBinanceFuturesKlines,
     parseBinanceKlines: () => parseBinanceKlines,
     parseCandlesMessage: () => parseCandlesMessage,
     sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
@@ -304,9 +310,14 @@ var NL = (() => {
 
   // src/core/binance.ts
   var BINANCE_PUBLIC_BASES = [
-    "https://data-api.binance.vision",
-    "https://api.binance.com"
+    "https://fapi.binance.com",
+    "https://fapi1.binance.com",
+    "https://fapi2.binance.com",
+    "https://fapi3.binance.com"
   ];
+  var BINANCE_FUTURES_PUBLIC_BASES = BINANCE_PUBLIC_BASES;
+  var BINANCE_FUTURES_PATH_EXCHANGE_INFO = "/fapi/v1/exchangeInfo";
+  var BINANCE_FUTURES_PATH_KLINES = "/fapi/v1/klines";
   var GRANULARITY_TO_INTERVAL = {
     60: "1m",
     180: "3m",
@@ -360,14 +371,19 @@ var NL = (() => {
     }
     return null;
   }
-  function spotAllowed(e) {
-    if (e.isSpotTradingAllowed === false) return false;
-    if (Array.isArray(e.permissions) && e.permissions.length > 0) {
-      return e.permissions.includes("SPOT");
-    }
+  function isUsdtmPerpetual(e) {
+    const quote = typeof e.quoteAsset === "string" ? e.quoteAsset : null;
+    const status = typeof e.status === "string" ? e.status : null;
+    const contractType = typeof e.contractType === "string" ? e.contractType : null;
+    if (quote !== "USDT" || status !== "TRADING" || contractType !== "PERPETUAL") return false;
+    const symbol = typeof e.symbol === "string" ? e.symbol : null;
+    if (!symbol || !isBinanceUsdtSymbol(symbol)) return false;
     return true;
   }
   function parseBinanceExchangeInfo(raw) {
+    return parseBinanceFuturesExchangeInfo(raw);
+  }
+  function parseBinanceFuturesExchangeInfo(raw) {
     const obj = parseObject2(raw);
     if (typeof obj === "string") return { kind: "invalid", reason: obj };
     const err = binanceError(obj);
@@ -381,23 +397,17 @@ var NL = (() => {
         continue;
       }
       const e = entry;
-      const symbol = typeof e.symbol === "string" ? e.symbol : null;
-      const quote = typeof e.quoteAsset === "string" ? e.quoteAsset : null;
-      const status = typeof e.status === "string" ? e.status : null;
-      const base = typeof e.baseAsset === "string" ? e.baseAsset : null;
-      if (symbol === null || quote !== "USDT" || !isBinanceUsdtSymbol(symbol)) {
+      if (!isUsdtmPerpetual(e)) {
         skipped += 1;
         continue;
       }
-      if (status !== "TRADING" || !spotAllowed(e)) {
-        skipped += 1;
-        continue;
-      }
+      const symbol = e.symbol;
+      const base = typeof e.baseAsset === "string" ? e.baseAsset : binanceBaseAsset(symbol);
       items.push({
         symbol,
-        displayName: `${base ?? binanceBaseAsset(symbol)}/USDT (Binance Spot)`,
+        displayName: `${base}/USDT (Binance Futures USDT-M)`,
         market: "cryptocurrency",
-        submarket: "binance_usdt",
+        submarket: "binance_usdtm",
         open: true,
         suspended: false
       });
@@ -406,6 +416,9 @@ var NL = (() => {
     return { kind: "symbols", items, skipped };
   }
   function parseBinanceKlines(raw) {
+    return parseBinanceFuturesKlines(raw);
+  }
+  function parseBinanceFuturesKlines(raw) {
     let data;
     try {
       data = JSON.parse(raw);
@@ -477,8 +490,8 @@ var NL = (() => {
         const res = await fetchImpl(`${base}${path}`);
         const text = await res.text();
         if (res.ok) return { base, text, status: res.status };
-        if (res.status === 451 || res.status === 403 || res.status === 418) {
-          lastErr = new Error(`Binance ${res.status} em ${base}`);
+        if (res.status === 451 || res.status === 403 || res.status === 418 || res.status === 429) {
+          lastErr = new Error(`Binance Futures ${res.status} em ${base}`);
           continue;
         }
         return { base, text, status: res.status };
@@ -486,19 +499,19 @@ var NL = (() => {
         lastErr = e instanceof Error ? e : new Error(String(e));
       }
     }
-    throw lastErr ?? new Error("Binance inacess\xEDvel");
+    throw lastErr ?? new Error("Binance Futures inacess\xEDvel");
   }
   async function fetchBinanceUsdtSymbols(fetchImpl = fetch) {
-    const { text, status } = await binanceFetch("/api/v3/exchangeInfo", fetchImpl);
+    const { text, status } = await binanceFetch(BINANCE_FUTURES_PATH_EXCHANGE_INFO, fetchImpl);
     if (status < 200 || status >= 300) {
-      const parsed = parseBinanceExchangeInfo(text);
-      if (parsed.kind === "error") throw new Error(`Binance exchangeInfo: ${parsed.code} \u2014 ${parsed.message}`);
-      throw new Error(`Binance exchangeInfo HTTP ${status}`);
+      const parsed = parseBinanceFuturesExchangeInfo(text);
+      if (parsed.kind === "error") throw new Error(`Binance Futures exchangeInfo: ${parsed.code} \u2014 ${parsed.message}`);
+      throw new Error(`Binance Futures exchangeInfo HTTP ${status}`);
     }
-    const msg = parseBinanceExchangeInfo(text);
+    const msg = parseBinanceFuturesExchangeInfo(text);
     if (msg.kind !== "symbols") {
       const why = msg.kind === "error" ? `${msg.code} \u2014 ${msg.message}` : msg.reason;
-      throw new Error(`Binance exchangeInfo: ${why}`);
+      throw new Error(`Binance Futures exchangeInfo: ${why}`);
     }
     return sortBinanceUsdtPreferred(msg.items);
   }
@@ -507,17 +520,17 @@ var NL = (() => {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1e3) {
       throw new RangeError(`limit inv\xE1lido: ${limit}`);
     }
-    let path = `/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+    let path = `${BINANCE_FUTURES_PATH_KLINES}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
     if (endTimeMs !== void 0) {
       if (!Number.isInteger(endTimeMs) || endTimeMs < 0) throw new RangeError(`endTimeMs inv\xE1lido: ${endTimeMs}`);
       path += `&endTime=${endTimeMs}`;
     }
     const { text, status } = await binanceFetch(path, fetchImpl);
-    const msg = parseBinanceKlines(text);
+    const msg = parseBinanceFuturesKlines(text);
     if (status < 200 || status >= 300 || msg.kind !== "candles") {
-      if (msg.kind === "error") throw new Error(`Binance klines: ${msg.code} \u2014 ${msg.message}`);
-      if (msg.kind === "invalid") throw new Error(`Binance klines: ${msg.reason}`);
-      throw new Error(`Binance klines HTTP ${status}`);
+      if (msg.kind === "error") throw new Error(`Binance Futures klines: ${msg.code} \u2014 ${msg.message}`);
+      if (msg.kind === "invalid") throw new Error(`Binance Futures klines: ${msg.reason}`);
+      throw new Error(`Binance Futures klines HTTP ${status}`);
     }
     return msg.candles;
   }
@@ -1527,6 +1540,10 @@ var NL = (() => {
     }
     get status() {
       return this.#status;
+    }
+    /** Epoch ms do arranque da sessão (null se ainda não arrancou). */
+    get startedAtMs() {
+      return this.#startedAt;
     }
     get stopReason() {
       return this.#stopReason;

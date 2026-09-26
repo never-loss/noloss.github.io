@@ -74,15 +74,23 @@
         <div class="source-toggle" role="group" aria-label="Fonte de dados">
           <span class="source-label">Fonte</span>
           <button type="button" class="source-btn" id="srcDeriv" data-source="deriv" hidden>Deriv Options</button>
-          <button type="button" class="source-btn active binance-active" id="srcBinance" data-source="binance" disabled aria-pressed="true">Binance Spot</button>
+          <button type="button" class="source-btn active binance-active" id="srcBinance" data-source="binance" disabled aria-pressed="true">Binance Futures USDT-M</button>
         </div>
         <p id="sourceHint" class="footer-note" style="margin:0 0 10px;text-align:left">
-          Cripto = Binance Spot (pares *USDT públicos · só dados · paper). Dígitos e Forex = Deriv Options. Sem chaves nem trading Binance.
+          Cripto = Binance Futures USDT-M (perpetual *USDT · PAPER / SIMULADO por omissão). Dígitos e Forex = Deriv Options. OAuth Deriv intacto.
+        </p>
+        <div class="source-toggle" role="group" aria-label="Modo de trading Cripto" id="tradingModeToggle" hidden>
+          <span class="source-label">Modo Cripto</span>
+          <button type="button" class="source-btn active" id="modePaper" data-mode="PAPER" aria-pressed="true">PAPER / SIMULADO</button>
+          <button type="button" class="source-btn" id="modeReal" data-mode="REAL" aria-pressed="false" disabled title="Requer BINANCE_API_KEY + BINANCE_API_SECRET no servidor">REAL</button>
+        </div>
+        <p id="tradingModeHint" class="footer-note" style="margin:0 0 10px;text-align:left" hidden>
+          Omissão = PAPER. REAL só fica ativo se as chaves existirem no servidor — nunca colar secrets no chat.
         </p>
         <div class="tabs" role="tablist" id="marketTabs">
           <button type="button" class="tab" data-panel="digits">Dígitos</button>
           <button type="button" class="tab" data-panel="forex">Forex</button>
-          <button type="button" class="tab active" data-panel="crypto">Cripto (Binance)</button>
+          <button type="button" class="tab active" data-panel="crypto">Cripto (Futures USDT-M)</button>
         </div>
         <p id="panelHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
         <div class="controls">
@@ -161,7 +169,7 @@
 
       <p class="footer-note">
         Plataforma de pesquisa e paper trading. Não garante lucros nem “quase sem perdas”.
-        Cripto = Binance Spot · Dígitos/Forex = Deriv Options · saldos Deriv via REST · sessão sempre paper / simulado · sem trading Binance.
+        Cripto = Binance Futures USDT-M (PAPER por omissão; REAL só com chaves no servidor) · Dígitos/Forex = Deriv Options · OAuth Deriv intacto.
       </p>
     </div>
   </div>

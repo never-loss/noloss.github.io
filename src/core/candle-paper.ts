@@ -133,6 +133,11 @@ export class CandlePaperSession {
   get status(): SessionStatus {
     return this.#status;
   }
+
+  /** Epoch ms do arranque da sessão (null se ainda não arrancou). */
+  get startedAtMs(): number | null {
+    return this.#startedAt;
+  }
   get stopReason(): StopReason | null {
     return this.#stopReason;
   }

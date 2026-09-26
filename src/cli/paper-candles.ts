@@ -1,4 +1,4 @@
-// Paper trading AO VIVO em velas (Forex, metais, cripto Deriv OU Binance Spot) com PORTA DE EVIDÊNCIA.
+// Paper trading AO VIVO em velas (Forex, metais, cripto Deriv OU Binance Futures USDT-M) com PORTA DE EVIDÊNCIA.
 // Sem login, sem dinheiro. Binance = só dados públicos (sem trading Binance).
 // Uso Deriv: node src/cli/paper-candles.ts --symbol cryBTCUSD --granularity 300 --minutes 60
 // Uso Binance: node src/cli/paper-candles.ts --source binance --symbol BTCUSDT --granularity 300 --minutes 60
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
       ws.onerror = () => reject(new Error("Erro de ligação ao WebSocket"));
     });
   }
-  console.log(`Fonte: ${source === "binance" ? "Binance Spot (paper · só dados · sem trading)" : "Deriv Options"}`);
+  console.log(`Fonte: ${source === "binance" ? "Binance Futures USDT-M (paper · fapi perpetual · sem ordens por omissão)" : "Deriv Options"}`);
 
   const history = await fetchHistory();
   const last = history[history.length - 1];

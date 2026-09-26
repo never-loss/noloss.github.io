@@ -1,13 +1,22 @@
-// NEVER LOSS — Binance Spot public market data (sem API keys, sem trading).
-// exchangeInfo / klines → SymbolInfo / Candle. Só paper / pesquisa.
+// NEVER LOSS — Binance USDⓈ-M Futures (perpetual) public market data.
+// exchangeInfo / klines via fapi — sem API keys no browser. Paper por omissão; trading real
+// fica em binance-futures-trading.ts + proxies assinados no servidor.
 
 import type { Candle, SymbolInfo } from "./market-data.ts";
 
-/** Bases públicas (vision evita bloqueios geo em api.binance.com). */
+/** Bases públicas USDT-M Futures (fapi). Vision Spot NÃO serve perpetual. */
 export const BINANCE_PUBLIC_BASES: readonly string[] = [
-  "https://data-api.binance.vision",
-  "https://api.binance.com",
+  "https://fapi.binance.com",
+  "https://fapi1.binance.com",
+  "https://fapi2.binance.com",
+  "https://fapi3.binance.com",
 ] as const;
+
+/** Alias explícito para Futures. */
+export const BINANCE_FUTURES_PUBLIC_BASES = BINANCE_PUBLIC_BASES;
+
+export const BINANCE_FUTURES_PATH_EXCHANGE_INFO = "/fapi/v1/exchangeInfo";
+export const BINANCE_FUTURES_PATH_KLINES = "/fapi/v1/klines";
 
 export type BinanceInterval =
   | "1m"
@@ -50,7 +59,7 @@ export function binanceIntervalToSeconds(interval: string): number | null {
   return null;
 }
 
-/** Par Spot cotado em USDT (ex.: BTCUSDT). */
+/** Par USDT-M (ex.: BTCUSDT). */
 export function isBinanceUsdtSymbol(symbol: string): boolean {
   return /^[A-Z0-9]{2,20}USDT$/.test(symbol);
 }
@@ -95,19 +104,27 @@ function binanceError(obj: Record<string, unknown>): { kind: "error"; code: stri
   return null;
 }
 
-function spotAllowed(e: Record<string, unknown>): boolean {
-  if (e.isSpotTradingAllowed === false) return false;
-  if (Array.isArray(e.permissions) && e.permissions.length > 0) {
-    return e.permissions.includes("SPOT");
-  }
+/** USDT-M perpetual negociável (TRADING). */
+export function isUsdtmPerpetual(e: Record<string, unknown>): boolean {
+  const quote = typeof e.quoteAsset === "string" ? e.quoteAsset : null;
+  const status = typeof e.status === "string" ? e.status : null;
+  const contractType = typeof e.contractType === "string" ? e.contractType : null;
+  if (quote !== "USDT" || status !== "TRADING" || contractType !== "PERPETUAL") return false;
+  const symbol = typeof e.symbol === "string" ? e.symbol : null;
+  if (!symbol || !isBinanceUsdtSymbol(symbol)) return false;
   return true;
 }
 
 /**
- * Interpreta GET /api/v3/exchangeInfo.
- * Filtra quoteAsset=USDT, status=TRADING, Spot permitido.
+ * Interpreta GET /fapi/v1/exchangeInfo (USDⓈ-M).
+ * Filtra quoteAsset=USDT, contractType=PERPETUAL, status=TRADING.
  */
 export function parseBinanceExchangeInfo(raw: string): BinanceSymbolsMessage {
+  return parseBinanceFuturesExchangeInfo(raw);
+}
+
+/** Alias explícito Futures. */
+export function parseBinanceFuturesExchangeInfo(raw: string): BinanceSymbolsMessage {
   const obj = parseObject(raw);
   if (typeof obj === "string") return { kind: "invalid", reason: obj };
   const err = binanceError(obj);
@@ -122,23 +139,17 @@ export function parseBinanceExchangeInfo(raw: string): BinanceSymbolsMessage {
       continue;
     }
     const e = entry as Record<string, unknown>;
-    const symbol = typeof e.symbol === "string" ? e.symbol : null;
-    const quote = typeof e.quoteAsset === "string" ? e.quoteAsset : null;
-    const status = typeof e.status === "string" ? e.status : null;
-    const base = typeof e.baseAsset === "string" ? e.baseAsset : null;
-    if (symbol === null || quote !== "USDT" || !isBinanceUsdtSymbol(symbol)) {
+    if (!isUsdtmPerpetual(e)) {
       skipped += 1;
       continue;
     }
-    if (status !== "TRADING" || !spotAllowed(e)) {
-      skipped += 1;
-      continue;
-    }
+    const symbol = e.symbol as string;
+    const base = typeof e.baseAsset === "string" ? e.baseAsset : binanceBaseAsset(symbol);
     items.push({
       symbol,
-      displayName: `${base ?? binanceBaseAsset(symbol)}/USDT (Binance Spot)`,
+      displayName: `${base}/USDT (Binance Futures USDT-M)`,
       market: "cryptocurrency",
-      submarket: "binance_usdt",
+      submarket: "binance_usdtm",
       open: true,
       suspended: false,
     });
@@ -148,11 +159,15 @@ export function parseBinanceExchangeInfo(raw: string): BinanceSymbolsMessage {
 }
 
 /**
- * Interpreta GET /api/v3/klines — array de arrays:
+ * Interpreta GET /fapi/v1/klines — mesmo formato Spot:
  * [ openTime, open, high, low, close, volume, closeTime, ... ]
- * epoch em segundos (openTime ms / 1000), igual ao Candle da Deriv.
+ * epoch em segundos (openTime ms / 1000).
  */
 export function parseBinanceKlines(raw: string): BinanceKlinesMessage {
+  return parseBinanceFuturesKlines(raw);
+}
+
+export function parseBinanceFuturesKlines(raw: string): BinanceKlinesMessage {
   let data: unknown;
   try {
     data = JSON.parse(raw);
@@ -222,7 +237,7 @@ export function sortBinanceUsdtPreferred(items: readonly SymbolInfo[]): SymbolIn
 }
 
 /**
- * GET público com fallback entre bases. Sem headers de autenticação.
+ * GET público com fallback entre bases fapi. Sem headers de autenticação.
  */
 export async function binanceFetch(
   pathAndQuery: string,
@@ -235,9 +250,9 @@ export async function binanceFetch(
       const res = await fetchImpl(`${base}${path}`);
       const text = await res.text();
       if (res.ok) return { base, text, status: res.status };
-      // 451 geo / 403 — tenta a próxima base
-      if (res.status === 451 || res.status === 403 || res.status === 418) {
-        lastErr = new Error(`Binance ${res.status} em ${base}`);
+      // 451 geo / 403 / 418 / 429 — tenta a próxima base
+      if (res.status === 451 || res.status === 403 || res.status === 418 || res.status === 429) {
+        lastErr = new Error(`Binance Futures ${res.status} em ${base}`);
         continue;
       }
       return { base, text, status: res.status };
@@ -245,29 +260,29 @@ export async function binanceFetch(
       lastErr = e instanceof Error ? e : new Error(String(e));
     }
   }
-  throw lastErr ?? new Error("Binance inacessível");
+  throw lastErr ?? new Error("Binance Futures inacessível");
 }
 
-/** Lista pares USDT Spot via exchangeInfo (parse + filtro). */
+/** Lista perpetual USDT-M via exchangeInfo (parse + filtro). */
 export async function fetchBinanceUsdtSymbols(
   fetchImpl: typeof fetch = fetch,
 ): Promise<SymbolInfo[]> {
-  const { text, status } = await binanceFetch("/api/v3/exchangeInfo", fetchImpl);
+  const { text, status } = await binanceFetch(BINANCE_FUTURES_PATH_EXCHANGE_INFO, fetchImpl);
   if (status < 200 || status >= 300) {
-    const parsed = parseBinanceExchangeInfo(text);
-    if (parsed.kind === "error") throw new Error(`Binance exchangeInfo: ${parsed.code} — ${parsed.message}`);
-    throw new Error(`Binance exchangeInfo HTTP ${status}`);
+    const parsed = parseBinanceFuturesExchangeInfo(text);
+    if (parsed.kind === "error") throw new Error(`Binance Futures exchangeInfo: ${parsed.code} — ${parsed.message}`);
+    throw new Error(`Binance Futures exchangeInfo HTTP ${status}`);
   }
-  const msg = parseBinanceExchangeInfo(text);
+  const msg = parseBinanceFuturesExchangeInfo(text);
   if (msg.kind !== "symbols") {
     const why = msg.kind === "error" ? `${msg.code} — ${msg.message}` : msg.reason;
-    throw new Error(`Binance exchangeInfo: ${why}`);
+    throw new Error(`Binance Futures exchangeInfo: ${why}`);
   }
   return sortBinanceUsdtPreferred(msg.items);
 }
 
 /**
- * Busca até `limit` velas (máx. 1000 por pedido Binance).
+ * Busca até `limit` velas (máx. 1500 por pedido Futures; usamos ≤1000).
  * `endTimeMs` opcional (inclusive) para paginar para trás.
  */
 export async function fetchBinanceKlinesPage(
@@ -282,18 +297,18 @@ export async function fetchBinanceKlinesPage(
     throw new RangeError(`limit inválido: ${limit}`);
   }
   let path =
-    `/api/v3/klines?symbol=${encodeURIComponent(symbol)}` +
+    `${BINANCE_FUTURES_PATH_KLINES}?symbol=${encodeURIComponent(symbol)}` +
     `&interval=${encodeURIComponent(interval)}&limit=${limit}`;
   if (endTimeMs !== undefined) {
     if (!Number.isInteger(endTimeMs) || endTimeMs < 0) throw new RangeError(`endTimeMs inválido: ${endTimeMs}`);
     path += `&endTime=${endTimeMs}`;
   }
   const { text, status } = await binanceFetch(path, fetchImpl);
-  const msg = parseBinanceKlines(text);
+  const msg = parseBinanceFuturesKlines(text);
   if (status < 200 || status >= 300 || msg.kind !== "candles") {
-    if (msg.kind === "error") throw new Error(`Binance klines: ${msg.code} — ${msg.message}`);
-    if (msg.kind === "invalid") throw new Error(`Binance klines: ${msg.reason}`);
-    throw new Error(`Binance klines HTTP ${status}`);
+    if (msg.kind === "error") throw new Error(`Binance Futures klines: ${msg.code} — ${msg.message}`);
+    if (msg.kind === "invalid") throw new Error(`Binance Futures klines: ${msg.reason}`);
+    throw new Error(`Binance Futures klines HTTP ${status}`);
   }
   return msg.candles;
 }

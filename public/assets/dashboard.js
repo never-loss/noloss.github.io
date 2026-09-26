@@ -1,4 +1,4 @@
-/* NEVER LOSS dashboard — paper trading + porta de evidência. Sem compras reais. */
+/* NEVER LOSS dashboard — paper por omissão; Cripto = Binance Futures USDT-M; REAL atrás de chaves servidor. */
 (function () {
   "use strict";
 
@@ -7,8 +7,11 @@
   const PUBLIC_WS = "wss://api.derivws.com/trading/v1/options/ws/public";
   const ACCOUNT_KEY = "nl_selected_account_id";
   const SOURCE_KEY = "nl_market_source";
-  const BINANCE_SYMBOLS_URL = "/api/binance-symbols";
-  const BINANCE_KLINES_URL = "/api/binance-klines";
+  const BINANCE_SYMBOLS_URL = "/api/binance-futures-symbols";
+  const BINANCE_KLINES_URL = "/api/binance-futures-klines";
+  const BINANCE_STATUS_URL = "/api/binance-futures-status";
+  const BINANCE_ORDER_URL = "/api/binance-futures-order";
+  const TRADING_MODE_KEY = "nl_crypto_trading_mode";
 
   const NL = window.NL;
   if (!NL) {
@@ -30,8 +33,10 @@
     symbols: [],
     activeCrypto: [],
     binanceSymbols: [],
-    // Cripto = sempre Binance Spot; dígitos/forex = Deriv. Fonte segue o painel.
+    // Cripto = sempre Binance Futures USDT-M; dígitos/forex = Deriv. Fonte segue o painel.
     dataSource: "binance",
+    tradingMode: "PAPER",
+    binanceKeysConfigured: false,
     panel: "crypto",
     ws: null,
     nextId: 1,
@@ -335,7 +340,80 @@
   }
 
   function sourceLabel() {
-    return isBinanceSource() ? "Binance Spot (só dados · paper)" : "Deriv Options";
+    return isBinanceSource()
+      ? ("Binance Futures USDT-M · " + (state.tradingMode === "REAL" ? "REAL" : "PAPER / SIMULADO"))
+      : "Deriv Options";
+  }
+
+  function isRealTradingMode() {
+    return isBinanceSource() && state.tradingMode === "REAL" && state.binanceKeysConfigured;
+  }
+
+  function updateTradingModeUI() {
+    const toggle = el("tradingModeToggle");
+    const hint = el("tradingModeHint");
+    const paperBtn = el("modePaper");
+    const realBtn = el("modeReal");
+    const onBinance = isBinanceSource();
+    if (toggle) toggle.hidden = !onBinance;
+    if (hint) hint.hidden = !onBinance;
+    if (!onBinance) return;
+    if (paperBtn) {
+      paperBtn.classList.toggle("active", state.tradingMode !== "REAL");
+      paperBtn.setAttribute("aria-pressed", state.tradingMode !== "REAL" ? "true" : "false");
+    }
+    if (realBtn) {
+      const canReal = state.binanceKeysConfigured;
+      realBtn.disabled = !canReal;
+      realBtn.title = canReal
+        ? "REAL: ordens Futures USDT-M via servidor (porta de evidência + stake fixa + máx 3 h)"
+        : "Indisponível: configura BINANCE_API_KEY e BINANCE_API_SECRET no servidor (nunca no chat)";
+      realBtn.classList.toggle("active", state.tradingMode === "REAL" && canReal);
+      realBtn.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
+    }
+    if (hint) {
+      hint.textContent = state.binanceKeysConfigured
+        ? (state.tradingMode === "REAL"
+          ? "REAL ativo: ordens MARKET só com porta aberta, stake fixa, sem martingale, STOP aos 3 h. Chaves só no servidor."
+          : "PAPER / SIMULADO (omissão). Chaves detetadas no servidor — podes mudar para REAL explicitamente.")
+        : "PAPER / SIMULADO (omissão). REAL bloqueado até existirem BINANCE_API_KEY + BINANCE_API_SECRET no servidor. Não colar secrets no chat.";
+    }
+  }
+
+  async function loadBinanceTradingStatus() {
+    try {
+      const res = await fetch(BINANCE_STATUS_URL);
+      const payload = await res.json().catch(function () { return null; });
+      state.binanceKeysConfigured = !!(payload && payload.keysConfigured);
+      if (!state.binanceKeysConfigured && state.tradingMode === "REAL") {
+        state.tradingMode = "PAPER";
+        sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
+      }
+    } catch (_e) {
+      state.binanceKeysConfigured = false;
+      if (state.tradingMode === "REAL") {
+        state.tradingMode = "PAPER";
+        sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
+      }
+    }
+    updateTradingModeUI();
+  }
+
+  function setTradingMode(next) {
+    const mode = String(next || "").toUpperCase() === "REAL" ? "REAL" : "PAPER";
+    if (mode === "REAL" && !state.binanceKeysConfigured) {
+      pushHistory("REAL indisponível: faltam BINANCE_API_KEY / BINANCE_API_SECRET no servidor.", "stop");
+      return false;
+    }
+    if (state.running) {
+      pushHistory("Para a sessão antes de mudar PAPER/REAL.", "stop");
+      return false;
+    }
+    state.tradingMode = mode;
+    sessionStorage.setItem(TRADING_MODE_KEY, mode);
+    updateSourceUI();
+    pushHistory("Modo Cripto = " + mode + (mode === "PAPER" ? " / SIMULADO" : " (ordens via servidor)"), mode === "REAL" ? "open" : "");
+    return true;
   }
 
   function updateSourceUI() {
@@ -360,15 +438,24 @@
     }
     if (hint) {
       hint.textContent = onBinance
-        ? "Cripto = Binance Spot: pares *USDT via API pública (exchangeInfo/klines). PAPER / SIMULADO — sem API keys, sem ordens Binance. OAuth Deriv intacto (contas/saldo)."
-        : "Dígitos / Forex = Deriv Options (WS público + OAuth para contas). Sessão sempre paper / simulado. Painel Cripto usa só Binance Spot.";
+        ? "Cripto = Binance Futures USDT-M: perpetual *USDT via fapi (exchangeInfo/klines). Omissão PAPER / SIMULADO. REAL só com chaves no servidor. OAuth Deriv intacto."
+        : "Dígitos / Forex = Deriv Options (WS público + OAuth para contas). Sessão paper / simulado. Painel Cripto usa só Binance Futures USDT-M.";
     }
     if (pill) {
-      pill.textContent = onBinance
-        ? "PAPER · Cripto = Binance Spot"
-        : "PAPER / SIMULADO · Deriv Options";
+      if (onBinance) {
+        pill.textContent =
+          state.tradingMode === "REAL" && state.binanceKeysConfigured
+            ? "REAL · Cripto = Futures USDT-M"
+            : "PAPER / SIMULADO · Futures USDT-M";
+        pill.classList.toggle("warn", state.tradingMode !== "REAL" || !state.binanceKeysConfigured);
+        pill.classList.toggle("ok", state.tradingMode === "REAL" && state.binanceKeysConfigured);
+      } else {
+        pill.textContent = "PAPER / SIMULADO · Deriv Options";
+        pill.classList.add("warn");
+        pill.classList.remove("ok");
+      }
       pill.classList.toggle("binance", onBinance);
-      pill.classList.add("warn");
+      updateTradingModeUI();
     }
     const tabs = el("marketTabs");
     if (tabs) {
@@ -417,7 +504,7 @@
         try {
           await loadBinanceSymbols();
           pushHistory(
-            "Cripto = Binance Spot: " + state.binanceSymbols.length + " pares USDT · PAPER — sem trading Binance.",
+            "Cripto = Futures USDT-M: " + state.binanceSymbols.length + " perpetual USDT · " + state.tradingMode + ".",
             "open",
           );
         } catch (e) {
@@ -456,7 +543,7 @@
       const proxyFetch = async function (url) {
         const u = String(url);
         // Reescreve pedidos klines para o proxy Vercel (geo-friendly).
-        if (u.indexOf("/api/v3/klines") >= 0) {
+        if (u.indexOf("/fapi/v1/klines") >= 0 || u.indexOf("/api/v3/klines") >= 0) {
           const q = u.split("?")[1] || "";
           return fetch(BINANCE_KLINES_URL + (q ? "?" + q : ""));
         }
@@ -546,7 +633,7 @@
   }
 
   function panelSymbols() {
-    // Cripto = só Binance Spot (*USDT). Sem cry*USD / Deriv Options neste painel.
+    // Cripto = só Binance Futures USDT-M (*USDT perpetual). Sem cry*USD / Deriv Options neste painel.
     if (state.panel === "crypto" || isBinanceSource()) {
       return state.binanceSymbols.slice();
     }
@@ -618,7 +705,7 @@
         (it.symbol === state.symbol ? " active" : "");
       btn.textContent = it.symbol;
       btn.title = isBinanceSource()
-        ? (it.displayName || it.symbol) + " · Binance Spot · paper only"
+        ? (it.displayName || it.symbol) + " · Futures USDT-M · " + state.tradingMode
         : (it.displayName || it.symbol) +
           (on ? " · aberto" : " · fechado/suspenso") +
           (feedOnly ? " · feed Options (não em active_symbols)" : " · Options active");
@@ -634,9 +721,12 @@
     var activeN = state.activeCrypto.length;
     var feedN = Math.max(0, n - activeN);
     el("panelHint").textContent = state.panel === "crypto" || isBinanceSource()
-      ? "Cripto = Binance Spot: " +
+      ? "Cripto = Binance Futures USDT-M: " +
         n +
-        " pares *USDT (API pública). PAPER / SIMULADO — sem chaves, sem ordens Binance. Presets Lucro rápido / Loss zero + porta de evidência + stake fixa + máx 3 h + sem martingale."
+        " perpetual *USDT (fapi). Modo " +
+        state.tradingMode +
+        (state.tradingMode === "PAPER" ? " / SIMULADO" : "") +
+        ". Lucro rápido / Loss zero + porta de evidência + stake fixa + máx 3 h + sem martingale + NO TRADE."
       : state.panel === "forex"
           ? "Forex e metais (frx*). Mercado fecha ao fim de semana."
           : "Índices sintéticos / dígitos. Paper em velas (mesma porta de evidência).";
@@ -864,6 +954,40 @@
     }
   }
 
+
+  /** Envia ordem REAL via proxy assinado. Exige mode=REAL + evidenceAllowed. */
+  async function placeBinanceFuturesOrder(side, quantity) {
+    if (!isRealTradingMode()) {
+      throw new Error("Ordens reais só em modo REAL com chaves no servidor");
+    }
+    if (!state.controller || !state.controller.isOpen) {
+      throw new Error("Porta de evidência fechada — NO TRADE");
+    }
+    const started = state.session && state.session.startedAtMs;
+    const elapsed = typeof started === "number" ? Date.now() - started : 0;
+    const res = await fetch(BINANCE_ORDER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "REAL",
+        symbol: state.symbol,
+        side: side,
+        quantity: quantity,
+        stake: state.stake,
+        evidenceAllowed: true,
+        sessionElapsedMs: elapsed,
+      }),
+    });
+    const text = await res.text();
+    let payload = null;
+    try { payload = JSON.parse(text); } catch (_e) {}
+    if (!res.ok) {
+      const why = (payload && (payload.error_description || payload.msg || payload.error)) || ("HTTP " + res.status);
+      throw new Error("Ordem Futures: " + why);
+    }
+    return payload || text;
+  }
+
   async function startSession() {
     resolveSelectedAccount();
     if (!state.selectedAccount) {
@@ -902,8 +1026,15 @@
       state.selectedAccount.account_id +
       " | saldo Deriv " +
       accountBalanceText(state.selectedAccount);
+    if (isBinanceSource() && state.tradingMode === "REAL" && !state.binanceKeysConfigured) {
+      pushHistory("REAL pediu-se mas chaves em falta — a forçar PAPER.", "stop");
+      state.tradingMode = "PAPER";
+      sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
+      updateSourceUI();
+    }
     pushHistory(
-      "PAPER / SIMULADO · fonte " +
+      (isRealTradingMode() ? "REAL · Futures USDT-M" : "PAPER / SIMULADO") +
+        " · fonte " +
         sourceLabel() +
         " · contexto " +
         ctx,
@@ -1000,7 +1131,7 @@
           accountKind(state.selectedAccount) +
           " | " +
           NL.formatCandleGate(state.controller.result) +
-          (isBinanceSource() ? " | SEM trading Binance" : ""),
+          (isBinanceSource() ? (isRealTradingMode() ? " | REAL Futures (gate+stake fixa)" : " | PAPER — sem ordens reais") : ""),
         "",
       );
       setStats(state.session.summary());
@@ -1149,6 +1280,10 @@
     el("btnPause").addEventListener("click", () => pauseSession());
     el("btnStop").addEventListener("click", () => stopSession());
     el("btnDisconnect").addEventListener("click", () => disconnect());
+    const modePaper = el("modePaper");
+    const modeReal = el("modeReal");
+    if (modePaper) modePaper.addEventListener("click", () => setTradingMode("PAPER"));
+    if (modeReal) modeReal.addEventListener("click", () => setTradingMode("REAL"));
   }
 
 
@@ -1191,10 +1326,14 @@
     try {
       await connectWs();
       await loadSymbols();
-      // Painel inicial Cripto → Binance Spot only (sem toggle Deriv neste contexto).
+      // Painel inicial Cripto → Futures USDT-M (sem toggle Deriv neste contexto).
       state.panel = "crypto";
       state.dataSource = "binance";
       sessionStorage.setItem(SOURCE_KEY, "binance");
+      var savedMode = sessionStorage.getItem(TRADING_MODE_KEY);
+      state.tradingMode = savedMode === "REAL" ? "REAL" : "PAPER";
+      await loadBinanceTradingStatus();
+      if (state.tradingMode === "REAL" && !state.binanceKeysConfigured) state.tradingMode = "PAPER";
       document.querySelectorAll(".tab").forEach(function (b) {
         b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
       });
@@ -1203,9 +1342,12 @@
       renderSymbolSelect();
       renderChips();
       pushHistory(
-        "Pronto · Cripto = Binance Spot (" +
+        "Pronto · Cripto = Futures USDT-M (" +
           state.binanceSymbols.length +
-          " USDT). PAPER — sem trading Binance. Dígitos/Forex usam Deriv. Escolhe DEMO/REAL + Lucro rápido / Loss zero → Analisar → PLAY.",
+          " perpetual). Modo " +
+          state.tradingMode +
+          (state.binanceKeysConfigured ? " · chaves servidor OK" : " · sem chaves (REAL bloqueado)") +
+          ". Dígitos/Forex = Deriv. Escolhe conta + Lucro rápido / Loss zero → Analisar → PLAY.",
         "",
       );
       updateSourceUI();

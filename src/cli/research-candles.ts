@@ -1,4 +1,4 @@
-// Pesquisa em velas reais (Forex, ouro, cripto Deriv OU Binance Spot): sem login, sem operações.
+// Pesquisa em velas reais (Forex, ouro, cripto Deriv OU Binance Futures USDT-M): sem login, sem operações.
 // Uso Deriv: node src/cli/research-candles.ts --symbols cryBTCUSD,cryETHUSD --candles 6000 --granularity 300
 // Uso Binance: node src/cli/research-candles.ts --source binance --symbols BTCUSDT,ETHUSDT --candles 3500 --granularity 300
 import { parseCandlesMessage } from "../core/market-data.ts";
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
     });
     console.log(`Fonte: Deriv Options. A pedir até ${target} velas de ${granularity}s para ${symbols.length} símbolos...`);
   } else {
-    console.log(`Fonte: Binance Spot (público · paper/pesquisa · sem trading). Até ${target} velas de ${granularity}s…`);
+    console.log(`Fonte: Binance Futures USDT-M (fapi perpetual · paper/pesquisa). Até ${target} velas de ${granularity}s…`);
   }
 
   const data: Record<string, Candle[]> = {};

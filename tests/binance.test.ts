@@ -6,10 +6,15 @@ import {
   granularityToBinanceInterval,
   binanceIntervalToSeconds,
   parseBinanceExchangeInfo,
+  parseBinanceFuturesExchangeInfo,
   parseBinanceKlines,
+  parseBinanceFuturesKlines,
+  isUsdtmPerpetual,
   sortBinanceUsdtPreferred,
   fetchBinanceCandleHistory,
   BINANCE_PREFERRED_USDT,
+  BINANCE_FUTURES_PATH_EXCHANGE_INFO,
+  BINANCE_FUTURES_PATH_KLINES,
 } from "../src/core/binance.ts";
 import { marketOf } from "../src/core/markets.ts";
 
@@ -22,48 +27,55 @@ const SAMPLE_EXCHANGE_INFO = JSON.stringify({
       status: "TRADING",
       baseAsset: "BTC",
       quoteAsset: "USDT",
-      isSpotTradingAllowed: true,
-      permissions: ["SPOT"],
+      marginAsset: "USDT",
+      contractType: "PERPETUAL",
+      underlyingType: "COIN",
     },
     {
       symbol: "ETHUSDT",
       status: "TRADING",
       baseAsset: "ETH",
       quoteAsset: "USDT",
-      isSpotTradingAllowed: true,
-      permissions: ["SPOT"],
+      marginAsset: "USDT",
+      contractType: "PERPETUAL",
     },
     {
-      symbol: "BTCUSD",
+      symbol: "BTCUSD_PERP",
       status: "TRADING",
       baseAsset: "BTC",
       quoteAsset: "USD",
-      isSpotTradingAllowed: true,
-      permissions: ["SPOT"],
+      contractType: "PERPETUAL",
+    },
+    {
+      symbol: "BTCUSDT_250926",
+      status: "TRADING",
+      baseAsset: "BTC",
+      quoteAsset: "USDT",
+      contractType: "CURRENT_QUARTER",
     },
     {
       symbol: "ADAUSDT",
       status: "BREAK",
       baseAsset: "ADA",
       quoteAsset: "USDT",
-      isSpotTradingAllowed: true,
-      permissions: ["SPOT"],
-    },
-    {
-      symbol: "XYZUSDT",
-      status: "TRADING",
-      baseAsset: "XYZ",
-      quoteAsset: "USDT",
-      isSpotTradingAllowed: false,
-      permissions: ["SPOT"],
+      contractType: "PERPETUAL",
     },
     {
       symbol: "SOLUSDT",
       status: "TRADING",
       baseAsset: "SOL",
       quoteAsset: "USDT",
+      marginAsset: "USDT",
+      contractType: "PERPETUAL",
+    },
+    // Spot-shaped entry sem contractType — deve ser ignorado
+    {
+      symbol: "XYZUSDT",
+      status: "TRADING",
+      baseAsset: "XYZ",
+      quoteAsset: "USDT",
       isSpotTradingAllowed: true,
-      permissions: ["SPOT", "MARGIN"],
+      permissions: ["SPOT"],
     },
   ],
 });
@@ -129,8 +141,38 @@ test("granularity ↔ interval Binance", () => {
   assert.equal(binanceIntervalToSeconds("weird"), null);
 });
 
-test("parseBinanceExchangeInfo: só USDT Spot TRADING", () => {
-  const msg = parseBinanceExchangeInfo(SAMPLE_EXCHANGE_INFO);
+test("isUsdtmPerpetual filtra só PERPETUAL USDT TRADING", () => {
+  assert.equal(
+    isUsdtmPerpetual({
+      symbol: "BTCUSDT",
+      quoteAsset: "USDT",
+      status: "TRADING",
+      contractType: "PERPETUAL",
+    }),
+    true,
+  );
+  assert.equal(
+    isUsdtmPerpetual({
+      symbol: "BTCUSDT",
+      quoteAsset: "USDT",
+      status: "TRADING",
+      contractType: "CURRENT_QUARTER",
+    }),
+    false,
+  );
+  assert.equal(
+    isUsdtmPerpetual({
+      symbol: "BTCUSDT",
+      quoteAsset: "USDT",
+      status: "BREAK",
+      contractType: "PERPETUAL",
+    }),
+    false,
+  );
+});
+
+test("parseBinanceFuturesExchangeInfo: só USDT-M perpetual TRADING", () => {
+  const msg = parseBinanceFuturesExchangeInfo(SAMPLE_EXCHANGE_INFO);
   assert.equal(msg.kind, "symbols");
   if (msg.kind !== "symbols") return;
   const syms = msg.items.map((i) => i.symbol);
@@ -138,8 +180,11 @@ test("parseBinanceExchangeInfo: só USDT Spot TRADING", () => {
   assert.ok(msg.skipped >= 3);
   const btc = msg.items.find((i) => i.symbol === "BTCUSDT")!;
   assert.ok(btc.displayName.includes("BTC/USDT"));
-  assert.equal(btc.submarket, "binance_usdt");
+  assert.ok(btc.displayName.includes("Futures USDT-M"));
+  assert.equal(btc.submarket, "binance_usdtm");
   assert.equal(btc.open, true);
+  // alias
+  assert.equal(parseBinanceExchangeInfo(SAMPLE_EXCHANGE_INFO).kind, "symbols");
 });
 
 test("parseBinanceExchangeInfo: erros e inválidos", () => {
@@ -153,8 +198,8 @@ test("parseBinanceExchangeInfo: erros e inválidos", () => {
   assert.equal(parseBinanceExchangeInfo(JSON.stringify({ timezone: "UTC" })).kind, "invalid");
 });
 
-test("parseBinanceKlines: OHLC e epoch em segundos", () => {
-  const msg = parseBinanceKlines(SAMPLE_KLINES);
+test("parseBinanceFuturesKlines: OHLC e epoch em segundos", () => {
+  const msg = parseBinanceFuturesKlines(SAMPLE_KLINES);
   assert.equal(msg.kind, "candles");
   if (msg.kind !== "candles") return;
   assert.equal(msg.candles.length, 2);
@@ -167,6 +212,7 @@ test("parseBinanceKlines: OHLC e epoch em segundos", () => {
   const c1 = msg.candles[1]!;
   assert.equal(c1.epoch, 1_790_399_100);
   assert.equal(c1.close, 83993.04);
+  assert.equal(parseBinanceKlines(SAMPLE_KLINES).kind, "candles");
 });
 
 test("parseBinanceKlines: rejeita vela incoerente e erros API", () => {
@@ -184,17 +230,16 @@ test("parseBinanceKlines: rejeita vela incoerente e erros API", () => {
 
 test("sortBinanceUsdtPreferred põe BTC/ETH à frente", () => {
   const items = [
-    { symbol: "ZZZUSDT", displayName: "Z", market: "cryptocurrency", submarket: "binance_usdt", open: true, suspended: false },
-    { symbol: "ETHUSDT", displayName: "E", market: "cryptocurrency", submarket: "binance_usdt", open: true, suspended: false },
-    { symbol: "BTCUSDT", displayName: "B", market: "cryptocurrency", submarket: "binance_usdt", open: true, suspended: false },
+    { symbol: "ZZZUSDT", displayName: "Z", market: "cryptocurrency", submarket: "binance_usdtm", open: true, suspended: false },
+    { symbol: "ETHUSDT", displayName: "E", market: "cryptocurrency", submarket: "binance_usdtm", open: true, suspended: false },
+    { symbol: "BTCUSDT", displayName: "B", market: "cryptocurrency", submarket: "binance_usdtm", open: true, suspended: false },
   ];
   const sorted = sortBinanceUsdtPreferred(items).map((i) => i.symbol);
   assert.deepEqual(sorted, ["BTCUSDT", "ETHUSDT", "ZZZUSDT"]);
   assert.ok(BINANCE_PREFERRED_USDT.includes("BTCUSDT"));
 });
 
-test("fetchBinanceCandleHistory pagina e fecha a vela em formação", async () => {
-  // 5 velas de 5m; "agora" a meio da última → só 4 fechadas.
+test("fetchBinanceCandleHistory pagina fapi e fecha a vela em formação", async () => {
   const rows = Array.from({ length: 5 }, (_, i) => {
     const openMs = 1_700_000_000_000 + i * 300_000;
     const px = String(100 + i);
@@ -202,12 +247,11 @@ test("fetchBinanceCandleHistory pagina e fecha a vela em formação", async () =
   });
   const fetchImpl = async (url: string | URL | Request): Promise<Response> => {
     const u = String(url);
-    assert.ok(u.includes("/api/v3/klines"));
+    assert.ok(u.includes(BINANCE_FUTURES_PATH_KLINES) || u.includes("/fapi/v1/klines"));
     assert.ok(u.includes("symbol=BTCUSDT"));
     assert.ok(u.includes("interval=5m"));
     return new Response(JSON.stringify(rows), { status: 200 });
   };
-  // Agora = open da última + 150s → última ainda aberta
   const nowMs = 1_700_000_000_000 + 4 * 300_000 + 150_000;
   const candles = await fetchBinanceCandleHistory("BTCUSDT", 300, 10, fetchImpl, nowMs);
   assert.equal(candles.length, 4);
@@ -219,4 +263,9 @@ test("fetchBinanceCandleHistory rejeita granularity/símbolo inválidos", async 
   const noop = async () => new Response("[]", { status: 200 });
   await assert.rejects(() => fetchBinanceCandleHistory("BTCUSDT", 120, 100, noop), RangeError);
   await assert.rejects(() => fetchBinanceCandleHistory("cryBTCUSD", 300, 100, noop), RangeError);
+});
+
+test("paths fapi documentados", () => {
+  assert.equal(BINANCE_FUTURES_PATH_EXCHANGE_INFO, "/fapi/v1/exchangeInfo");
+  assert.equal(BINANCE_FUTURES_PATH_KLINES, "/fapi/v1/klines");
 });

@@ -22,13 +22,19 @@ export type { SymbolInfo, Candle, SymbolsMessage, CandlesMessage } from "../core
 
 export {
   BINANCE_PUBLIC_BASES,
+  BINANCE_FUTURES_PUBLIC_BASES,
+  BINANCE_FUTURES_PATH_EXCHANGE_INFO,
+  BINANCE_FUTURES_PATH_KLINES,
   BINANCE_PREFERRED_USDT,
   granularityToBinanceInterval,
   binanceIntervalToSeconds,
   isBinanceUsdtSymbol,
   binanceBaseAsset,
+  isUsdtmPerpetual,
   parseBinanceExchangeInfo,
+  parseBinanceFuturesExchangeInfo,
   parseBinanceKlines,
+  parseBinanceFuturesKlines,
   sortBinanceUsdtPreferred,
   binanceFetch,
   fetchBinanceUsdtSymbols,
@@ -36,6 +42,7 @@ export {
   fetchBinanceCandleHistory,
 } from "../core/binance.ts";
 export type { BinanceInterval, BinanceSymbolsMessage, BinanceKlinesMessage } from "../core/binance.ts";
+
 
 export { mergeCandlePages, nextCandleEnd } from "../core/candle-pages.ts";
 
