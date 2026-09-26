@@ -44,11 +44,13 @@ var NL = (() => {
     bybitFetch: () => bybitFetch,
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
     clampBybitLeverage: () => clampBybitLeverage,
+    combineGateAndLive: () => combineGateAndLive,
     cryptoBaseLabel: () => cryptoBaseLabel,
     cryptoSourceOf: () => cryptoSourceOf,
     dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
     dailyTrendStrategySet: () => dailyTrendStrategySet,
     evaluateCandleGate: () => evaluateCandleGate,
+    evaluateLiveEntry: () => evaluateLiveEntry,
     feasible: () => feasible,
     fetchBinanceCandleHistory: () => fetchBinanceCandleHistory,
     fetchBinanceKlinesPage: () => fetchBinanceKlinesPage,
@@ -88,6 +90,7 @@ var NL = (() => {
     parseBybitKlines: () => parseBybitKlines,
     parseBybitLeverageInfo: () => parseBybitLeverageInfo,
     parseCandlesMessage: () => parseCandlesMessage,
+    proximityForStrategyName: () => proximityForStrategyName,
     sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
     sortBybitUsdtPreferred: () => sortBybitUsdtPreferred,
     strategiesForPreset: () => strategiesForPreset,
@@ -991,15 +994,15 @@ var NL = (() => {
     }
     return out;
   }
-  function rsi(closes2, period = 14) {
+  function rsi(closes3, period = 14) {
     assertPeriod(period);
-    assertValues(closes2);
-    const out = empty(closes2.length);
-    if (closes2.length <= period) return out;
+    assertValues(closes3);
+    const out = empty(closes3.length);
+    if (closes3.length <= period) return out;
     let gain = 0;
     let loss = 0;
     for (let i = 1; i <= period; i++) {
-      const d = closes2[i] - closes2[i - 1];
+      const d = closes3[i] - closes3[i - 1];
       if (d > 0) gain += d;
       else loss -= d;
     }
@@ -1007,28 +1010,28 @@ var NL = (() => {
     let avgLoss = loss / period;
     const toRsi = (g, l) => g === 0 && l === 0 ? 50 : l === 0 ? 100 : 100 - 100 / (1 + g / l);
     out[period] = toRsi(avgGain, avgLoss);
-    for (let i = period + 1; i < closes2.length; i++) {
-      const d = closes2[i] - closes2[i - 1];
+    for (let i = period + 1; i < closes3.length; i++) {
+      const d = closes3[i] - closes3[i - 1];
       avgGain = (avgGain * (period - 1) + (d > 0 ? d : 0)) / period;
       avgLoss = (avgLoss * (period - 1) + (d < 0 ? -d : 0)) / period;
       out[i] = toRsi(avgGain, avgLoss);
     }
     return out;
   }
-  function macd(closes2, fast = 12, slow = 26, signalPeriod = 9) {
+  function macd(closes3, fast = 12, slow = 26, signalPeriod = 9) {
     assertPeriod(fast, "fast");
     assertPeriod(slow, "slow");
     assertPeriod(signalPeriod, "signal");
     if (fast >= slow) throw new RangeError("fast tem de ser menor que slow");
-    const f = ema(closes2, fast);
-    const s = ema(closes2, slow);
-    const line = empty(closes2.length);
-    for (let i = 0; i < closes2.length; i++) {
+    const f = ema(closes3, fast);
+    const s = ema(closes3, slow);
+    const line = empty(closes3.length);
+    for (let i = 0; i < closes3.length; i++) {
       if (f[i] !== null && s[i] !== null) line[i] = f[i] - s[i];
     }
     const first = line.findIndex((x) => x !== null);
-    const signal = empty(closes2.length);
-    const hist = empty(closes2.length);
+    const signal = empty(closes3.length);
+    const hist = empty(closes3.length);
     if (first >= 0) {
       const defined = line.slice(first);
       const sig = ema(defined, signalPeriod);
@@ -1041,16 +1044,16 @@ var NL = (() => {
     }
     return { macd: line, signal, hist };
   }
-  function bollinger(closes2, period = 20, k = 2) {
+  function bollinger(closes3, period = 20, k = 2) {
     assertPeriod(period);
     if (!Number.isFinite(k) || k <= 0) throw new RangeError(`k inv\xE1lido: ${k}`);
-    const mid = sma(closes2, period);
-    const upper = empty(closes2.length);
-    const lower = empty(closes2.length);
-    for (let i = period - 1; i < closes2.length; i++) {
+    const mid = sma(closes3, period);
+    const upper = empty(closes3.length);
+    const lower = empty(closes3.length);
+    for (let i = period - 1; i < closes3.length; i++) {
       const m = mid[i];
       let v = 0;
-      for (let j = i - period + 1; j <= i; j++) v += (closes2[j] - m) ** 2;
+      for (let j = i - period + 1; j <= i; j++) v += (closes3[j] - m) ** 2;
       const sd = Math.sqrt(v / period);
       upper[i] = m + k * sd;
       lower[i] = m - k * sd;
@@ -2121,6 +2124,272 @@ var NL = (() => {
     }
     lines.push("Aviso: poucas opera\xE7\xF5es n\xE3o provam nada. Resultado simulado n\xE3o garante resultado futuro.");
     return lines.join("\n");
+  }
+
+  // src/core/strategy-live.ts
+  function lastDefined(s, i) {
+    const v = s[i];
+    return v == null ? null : v;
+  }
+  function clamp01(x) {
+    if (!Number.isFinite(x)) return 0;
+    return Math.max(0, Math.min(1, x));
+  }
+  function pct(x) {
+    return Math.round(clamp01(x) * 100);
+  }
+  function nearZero(dist, scale) {
+    if (!(scale > 0) || !Number.isFinite(dist)) return 0;
+    return clamp01(1 - Math.abs(dist) / scale);
+  }
+  function closes2(candles) {
+    return candles.map((c) => c.close);
+  }
+  function proxEmaCross(candles, fast, slow) {
+    const i = candles.length - 1;
+    if (i < slow + 2) return 0;
+    const c = closes2(candles);
+    const f = ema(c, fast);
+    const s = ema(c, slow);
+    const a = atr(candles, 14);
+    const fv = lastDefined(f, i);
+    const sv = lastDefined(s, i);
+    const av = lastDefined(a, i);
+    if (fv == null || sv == null || av == null || av <= 0) return 0;
+    return nearZero(fv - sv, av * 0.35);
+  }
+  function proxRsi(candles, period, low, high) {
+    const i = candles.length - 1;
+    const r = rsi(closes2(candles), period);
+    const v = lastDefined(r, i);
+    if (v == null) return 0;
+    const dLow = Math.abs(v - low);
+    const dHigh = Math.abs(v - high);
+    const d = Math.min(dLow, dHigh);
+    return clamp01(1 - d / 25);
+  }
+  function proxMacd(candles, fast, slow, signal) {
+    const i = candles.length - 1;
+    if (i < slow + signal) return 0;
+    const m = macd(closes2(candles), fast, slow, signal);
+    const mv = lastDefined(m.macd, i);
+    const sv = lastDefined(m.signal, i);
+    const a = atr(candles, 14);
+    const av = lastDefined(a, i);
+    const px = candles[i].close;
+    if (mv == null || sv == null || av == null || av <= 0 || !(px > 0)) return 0;
+    const scale = av / px * px * 2e-3 + Math.abs(mv) * 0.15 + 1e-12;
+    return nearZero(mv - sv, Math.max(scale, av * 5e-4 * px));
+  }
+  function proxBollinger(candles, period, k, mode) {
+    const i = candles.length - 1;
+    if (i < period) return 0;
+    const c = closes2(candles);
+    const b = bollinger(c, period, k);
+    const lo = lastDefined(b.lower, i);
+    const up = lastDefined(b.upper, i);
+    const mid = lastDefined(b.mid, i);
+    if (lo == null || up == null || mid == null) return 0;
+    const px = c[i];
+    const half = (up - lo) / 2 || 1e-12;
+    if (mode === "reversion") {
+      const d = Math.min(Math.abs(px - lo), Math.abs(px - up));
+      return clamp01(1 - d / half);
+    }
+    if (px >= mid) return clamp01(1 - Math.abs(up - px) / half);
+    return clamp01(1 - Math.abs(px - lo) / half);
+  }
+  function proxStoch(candles, kPeriod, dPeriod, low, high) {
+    const i = candles.length - 1;
+    const s = stochastic(candles, kPeriod, dPeriod);
+    const kv = lastDefined(s.k, i);
+    const dv = lastDefined(s.d, i);
+    if (kv == null || dv == null) return 0;
+    const zone = Math.min(Math.abs(kv - low), Math.abs(kv - high));
+    const zoneScore = clamp01(1 - zone / 25);
+    const crossScore = nearZero(kv - dv, 8);
+    return clamp01(0.55 * zoneScore + 0.45 * crossScore);
+  }
+  function proxAdx(candles, period, minAdx) {
+    const i = candles.length - 1;
+    const a = adx(candles, period);
+    const adxV = lastDefined(a.adx, i);
+    const p = lastDefined(a.plusDI, i);
+    const m = lastDefined(a.minusDI, i);
+    if (adxV == null || p == null || m == null) return 0;
+    const adxScore = clamp01(adxV / Math.max(minAdx, 1));
+    const diScore = nearZero(p - m, 8);
+    return clamp01(0.5 * Math.min(1, adxScore) + 0.5 * diScore);
+  }
+  function proxAtrBreakout(candles, lookback, atrPeriod, atrMult, minAdx) {
+    const i = candles.length - 1;
+    if (i < lookback) return 0;
+    const a = atr(candles, atrPeriod);
+    const atrV = lastDefined(a, i);
+    if (atrV == null || atrV <= 0) return 0;
+    if (minAdx != null) {
+      const t = adx(candles, 14);
+      const adxV = lastDefined(t.adx, i);
+      if (adxV == null || adxV < minAdx * 0.7) return clamp01((adxV ?? 0) / minAdx) * 0.4;
+    }
+    let hi = -Infinity;
+    let lo = Infinity;
+    for (let j = i - lookback; j < i; j++) {
+      const c = candles[j];
+      if (c.high > hi) hi = c.high;
+      if (c.low < lo) lo = c.low;
+    }
+    const close = candles[i].close;
+    const pad = atrMult * atrV;
+    const upDist = hi + pad - close;
+    const dnDist = close - (lo - pad);
+    const best = Math.min(Math.max(upDist, 0), Math.max(dnDist, 0));
+    return nearZero(best, pad + atrV * 0.5);
+  }
+  function proximityForStrategyName(name, candles) {
+    if (candles.length < 30) return 0;
+    let m;
+    m = /^ema-cruza (\d+)\/(\d+)$/.exec(name);
+    if (m) return proxEmaCross(candles, Number(m[1]), Number(m[2]));
+    m = /^rsi-reversao (\d+) ([\d.]+)\/([\d.]+)$/.exec(name);
+    if (m) return proxRsi(candles, Number(m[1]), Number(m[2]), Number(m[3]));
+    m = /^macd-cruza (\d+)\/(\d+)\/(\d+)$/.exec(name);
+    if (m) return proxMacd(candles, Number(m[1]), Number(m[2]), Number(m[3]));
+    m = /^bollinger-reversao (\d+) k([\d.]+)$/.exec(name);
+    if (m) return proxBollinger(candles, Number(m[1]), Number(m[2]), "reversion");
+    m = /^bollinger-rompe (\d+) k([\d.]+)$/.exec(name);
+    if (m) return proxBollinger(candles, Number(m[1]), Number(m[2]), "breakout");
+    m = /^estocastico (\d+)\/(\d+) ([\d.]+)\/([\d.]+)$/.exec(name);
+    if (m) return proxStoch(candles, Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]));
+    m = /^adx-tendencia (\d+) min([\d.]+)$/.exec(name);
+    if (m) return proxAdx(candles, Number(m[1]), Number(m[2]));
+    m = /^tendência-diária breakout-ATR (\d+)×([\d.]+)(?: adx([\d.]+))?$/.exec(name);
+    if (m) {
+      const minAdx = m[3] != null ? Number(m[3]) : void 0;
+      return proxAtrBreakout(candles, Number(m[1]), 14, Number(m[2]), minAdx);
+    }
+    if (name.startsWith("confluencia(")) {
+      return 0;
+    }
+    return 0;
+  }
+  function signalStats(strategies, candles, hold) {
+    const n = candles.length;
+    let lastSignal = 0;
+    let barsSince = Infinity;
+    let agreeingLong = 0;
+    let agreeingShort = 0;
+    let maxProx = 0;
+    const details = [];
+    for (const s of strategies) {
+      const sigs = s.signals(candles);
+      const last = sigs[n - 1] ?? 0;
+      if (last !== 0) {
+        lastSignal = last;
+        barsSince = 0;
+      } else if (barsSince > 0) {
+        for (let j = n - 1; j >= 0 && j >= n - 40; j--) {
+          if (sigs[j] !== 0) {
+            barsSince = Math.min(barsSince, n - 1 - j);
+            break;
+          }
+        }
+      }
+      let recent = 0;
+      for (let j = n - 1; j >= 0 && j >= n - hold; j--) {
+        if (sigs[j] !== 0) {
+          recent = sigs[j];
+          break;
+        }
+      }
+      if (recent === 1) agreeingLong += 1;
+      else if (recent === -1) agreeingShort += 1;
+      let p = 0;
+      if (last !== 0) p = 1;
+      else if (s.name.startsWith("confluencia(")) {
+        p = Math.max(agreeingLong, agreeingShort) / Math.max(1, strategies.length);
+      } else {
+        p = proximityForStrategyName(s.name, candles);
+      }
+      if (p > maxProx) {
+        maxProx = p;
+        if (p >= 0.55) details.push(`${s.name.slice(0, 28)}\u2026 ${pct(p)}%`);
+      }
+    }
+    return { lastSignal, barsSince, agreeingLong, agreeingShort, maxProx, details };
+  }
+  function evaluateLiveEntry(candles, strategies, opts) {
+    if (!strategies.length) {
+      return {
+        proximityPct: 0,
+        lastSignal: 0,
+        barsSinceSignal: Infinity,
+        agreeingLong: 0,
+        agreeingShort: 0,
+        total: 0,
+        bias: "neutral",
+        atTarget: false,
+        detail: "sem estrat\xE9gias"
+      };
+    }
+    if (candles.length < 40) {
+      return {
+        proximityPct: 0,
+        lastSignal: 0,
+        barsSinceSignal: Infinity,
+        agreeingLong: 0,
+        agreeingShort: 0,
+        total: strategies.length,
+        bias: "neutral",
+        atTarget: false,
+        detail: `poucas velas (${candles.length})`
+      };
+    }
+    const hold = opts?.hold ?? 3;
+    const st = signalStats(strategies, candles, hold);
+    const atTarget = st.lastSignal !== 0;
+    const agree = Math.max(st.agreeingLong, st.agreeingShort);
+    const agreeFrac = agree / strategies.length;
+    let proximityPct = atTarget ? 100 : pct(Math.max(st.maxProx, agreeFrac * 0.85));
+    if (!atTarget && Number.isFinite(st.barsSince) && st.barsSince <= hold) {
+      proximityPct = Math.max(proximityPct, 70 + Math.round((hold - st.barsSince) * 8));
+      proximityPct = Math.min(95, proximityPct);
+    }
+    const bias = st.agreeingLong > st.agreeingShort && st.agreeingLong > 0 ? "long" : st.agreeingShort > st.agreeingLong && st.agreeingShort > 0 ? "short" : st.lastSignal === 1 ? "long" : st.lastSignal === -1 ? "short" : "neutral";
+    let detail;
+    if (atTarget) {
+      detail = st.lastSignal === 1 ? `ALVO \xB7 sinal COMPRA (${agree}/${strategies.length} concordam)` : `ALVO \xB7 sinal VENDA (${agree}/${strategies.length} concordam)`;
+    } else if (proximityPct >= 55) {
+      detail = `Quase no alvo \xB7 ${bias === "long" ? "compra" : bias === "short" ? "venda" : "neutro"} \xB7 ${agree}/${strategies.length}` + (st.details[0] ? ` \xB7 ${st.details[0]}` : "");
+    } else {
+      detail = `A afastar/aguardar \xB7 ${agree}/${strategies.length} \xB7 prox ${proximityPct}%`;
+    }
+    return {
+      proximityPct,
+      lastSignal: st.lastSignal,
+      barsSinceSignal: st.barsSince,
+      agreeingLong: st.agreeingLong,
+      agreeingShort: st.agreeingShort,
+      total: strategies.length,
+      bias,
+      atTarget,
+      detail
+    };
+  }
+  function combineGateAndLive(gateAllowed, gateScore, live) {
+    if (gateAllowed && live.atTarget) {
+      return { score: 100, label: "PORTA + ALVO", ready: true };
+    }
+    if (gateAllowed) {
+      const score2 = Math.max(gateScore, Math.min(95, 55 + Math.round(live.proximityPct * 0.4)));
+      return {
+        score: score2,
+        label: live.atTarget ? "PORTA ABERTA \xB7 alvo" : "PORTA ABERTA \xB7 \xE0 espera do sinal",
+        ready: false
+      };
+    }
+    const score = Math.min(70, Math.round(gateScore * 0.5 + live.proximityPct * 0.5));
+    return { score, label: "NO TRADE \xB7 " + live.detail, ready: false };
   }
   return __toCommonJS(nl_core_entry_exports);
 })();

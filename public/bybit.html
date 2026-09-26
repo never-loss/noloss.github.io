@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>NEVER LOSS — Bybit</title>
+  <title>NEVER LOSS — Bybit Futuros USDT</title>
   <link rel="stylesheet" href="/assets/dashboard.css">
   <link rel="stylesheet" href="/assets/bybit.css">
 </head>
@@ -12,13 +12,14 @@
     <div class="deck">
       <header class="glass header">
         <div class="brand">
-          <h1>Bybit · Linear USDT</h1>
-          <p>Futures · stake fixa · máx. 3 h · sem martingale</p>
+          <h1>Bybit · Co-piloto futuros</h1>
+          <p>Mercado futuro Linear USDT (perpetuals) · stake fixa · máx. 3 h · sem martingale</p>
         </div>
         <div class="header-actions">
           <span id="modePill" class="pill mode warn">PAPER</span>
           <span id="authPill" class="pill warn">Sessão…</span>
           <span id="feedPill" class="pill warn" title="Fonte do gráfico">Feed…</span>
+          <span id="armPill" class="pill warn" title="Estado de armamento">DESARMADO</span>
           <a class="ghost header-link" href="/dashboard" id="btnBackDeriv">← Deriv</a>
         </div>
       </header>
@@ -26,7 +27,7 @@
       <div id="loginGate" class="glass panel login-gate" hidden>
         <h2>Faz login na Deriv primeiro</h2>
         <p class="footer-note" style="margin:0 0 12px;text-align:left">
-          Bybit só fica disponível depois da sessão Deriv (OAuth). Volta ao início e autentica.
+          Bybit futuros só fica disponível depois da sessão Deriv (OAuth). Volta ao início e autentica.
         </p>
         <a class="ctrl play" href="/" id="btnGoLogin">Ir para login</a>
       </div>
@@ -34,7 +35,7 @@
       <div id="bybitApp" hidden>
         <div id="nextStep" class="glass next-step" role="status">
           <span class="next-step-label">Seguinte</span>
-          <span id="nextStepText">1 Par · 2 Estratégia · 3 Analisar · 4 PLAY</span>
+          <span id="nextStepText">1 Par futuro · 2 Estratégia · 3 ARMAR (à espera do alvo)</span>
         </div>
 
         <section class="glass panel bybit-balance-card" id="bybitBalanceCard" aria-live="polite">
@@ -55,188 +56,229 @@
           <p class="bybit-bal-err" id="bybitBalErr" hidden></p>
         </section>
 
-        <section class="glass panel chart-panel" style="margin-top:12px" id="chartPanel">
-          <div class="panel-head">
-            <h2>Gráfico · tempo real</h2>
-            <span class="pill warn" id="chartStatus">A carregar…</span>
-          </div>
-          <div class="chart-meta">
-            <span id="livePrice" class="live-price">—</span>
-            <span id="liveChange" class="live-change">—</span>
-            <span id="liveFeedHint" class="footer-note" style="margin:0;text-align:left">WS Bybit público</span>
-          </div>
-          <div id="chartCanvasWrap" class="chart-wrap bybit-chart-wrap">
-            <div id="bybitChart" class="bybit-tv-chart" role="img" aria-label="Velas Bybit em tempo real"></div>
-            <canvas id="chartCanvas" width="640" height="240" hidden aria-hidden="true"></canvas>
-            <p id="chartEmpty" class="chart-empty">Sem velas — escolhe um par.</p>
-          </div>
-          <p class="footer-note" style="margin:6px 0 0;text-align:left">
-            Última vela atualiza em direto (WebSocket). Sem dados inventados.
-          </p>
-          <div class="strat-live-grid" id="stratLiveGrid" aria-label="Indicadores em tempo real">
-            <article class="strat-live-card closed" id="cardLucroRapido" data-preset="lucro_rapido">
-              <header class="strat-live-head">
-                <span class="sem-dot amber" id="dotLucroRapido"></span>
-                <strong>Lucro rápido</strong>
-                <span class="strat-live-badge" id="badgeLucroRapido">…</span>
-              </header>
-              <div class="proximity-wrap">
-                <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barLucroRapido">
-                  <div class="proximity-fill" id="fillLucroRapido" style="width:0%"></div>
-                </div>
-              </div>
-              <p class="strat-live-status" id="statusLucroRapido">NO TRADE</p>
-              <p class="strat-live-reason" id="reasonLucroRapido">A carregar velas…</p>
-            </article>
-            <article class="strat-live-card closed" id="cardLossZero" data-preset="loss_zero">
-              <header class="strat-live-head">
-                <span class="sem-dot amber" id="dotLossZero"></span>
-                <strong>Loss zero</strong>
-                <span class="strat-live-badge" id="badgeLossZero">…</span>
-              </header>
-              <div class="proximity-wrap">
-                <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barLossZero">
-                  <div class="proximity-fill" id="fillLossZero" style="width:0%"></div>
-                </div>
-              </div>
-              <p class="strat-live-status" id="statusLossZero">NO TRADE</p>
-              <p class="strat-live-reason" id="reasonLossZero">A carregar velas…</p>
-            </article>
-          </div>
-          <div id="playReadyBox" class="play-ready-box closed" role="status" aria-live="polite">
-            <div class="play-ready-top">
-              <span class="sem-dot amber" id="playReadyDot"></span>
-              <strong id="playReadyTitle">Estratégia selecionada · NO TRADE</strong>
-              <span class="play-ready-pct" id="playReadyPct">0%</span>
+        <div class="copilot-layout">
+          <aside class="glass panel radar-panel" id="radarPanel" aria-label="Radar de futuros USDT">
+            <div class="panel-head">
+              <h2>Radar · futuros USDT</h2>
+              <span class="pill warn" id="radarStatus">—</span>
             </div>
-            <div class="proximity-wrap" style="margin-top:8px">
-              <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="playReadyBar">
-                <div class="proximity-fill" id="playReadyFill" style="width:0%"></div>
-              </div>
-            </div>
-            <p class="play-ready-reason" id="playReadyReason">Escolhe Lucro rápido ou Loss zero abaixo. Verde só com porta de evidência real aberta — sem auto-PLAY.</p>
-          </div>
-        </section>
-
-        <section class="glass panel session-hero" style="margin-top:12px" id="sessionHero">
-          <div class="session-hero-top">
-            <div>
-              <h2 class="hero-title">Sessão Bybit</h2>
-              <p class="hero-sub" id="sessionHeroSub">PAPER por omissão. REAL só com toggle + confirmação.</p>
-            </div>
-            <div id="modeBanner" class="mode-banner paper" aria-live="polite">PAPER</div>
-          </div>
-          <div class="stats stats-compact">
-            <div class="stat"><div class="k">Estado</div><div class="v" id="statStatus">—</div></div>
-            <div class="stat"><div class="k">Resultado</div><div class="v" id="statPnl">—</div></div>
-            <div class="stat"><div class="k">Ops</div><div class="v" id="statTrades">—</div></div>
-            <div class="stat"><div class="k">Queda</div><div class="v" id="statDd">—</div></div>
-          </div>
-        </section>
-
-        <section class="glass panel gate-simple" style="margin-top:12px">
-          <div id="gateBox" class="gate-box closed">
-            <div class="gate-simple-row">
-              <div>
-                <div class="gate-title">Porta · proximidade</div>
-                <div class="gate-state" id="gateState">NO TRADE</div>
-                <div class="gate-reason" id="gateReason">A aguardar…</div>
-              </div>
-              <button type="button" class="ghost gate-toggle" id="btnGateToggle" aria-expanded="false">Detalhes</button>
-            </div>
-            <div class="proximity-wrap" id="proximityWrap" aria-live="polite">
-              <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="proximityBar">
-                <div class="proximity-fill" id="proximityFill" style="width:0%"></div>
-              </div>
-              <div class="proximity-sem" id="proximitySem">
-                <span class="sem-dot amber" id="proximityDot"></span>
-                <span id="proximityLabel">Informativo — só “pronto” com porta aberta</span>
-              </div>
-            </div>
-            <div class="gate-metrics" id="gateMetrics" hidden>
-              <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="gateLabel">—</span></div>
-              <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="gateOos">—</span></div>
-              <div class="gm"><span class="gk">Média R</span><span class="gv" id="gateMeanR">—</span></div>
-              <div class="gm"><span class="gk">p-valor</span><span class="gv" id="gateP">—</span></div>
-              <div class="gm"><span class="gk">Estratégia</span><span class="gv" id="gateStrat">—</span></div>
-            </div>
-          </div>
-        </section>
-
-        <section class="glass panel bybit-world-panel" style="margin-top:12px">
-          <h2>Operar · Bybit</h2>
-          <p class="footer-note" style="margin:0 0 10px;text-align:left">
-            Linear USDT. Saldo = carteira real (só leitura). PAPER por omissão — REAL só com toggle + confirmação.
-          </p>
-          <div class="controls controls-primary">
-            <div class="field field-search">
-              <label for="bybitSymbolSearch">Procurar</label>
-              <input id="bybitSymbolSearch" type="search" placeholder="BTC, ETH, SOL…" autocomplete="off" inputmode="search">
-            </div>
-            <div class="field">
-              <label for="bybitSymbolSelect">Futures USDT</label>
-              <select id="bybitSymbolSelect"></select>
-            </div>
-            <div class="field">
-              <label for="bybitInterval">Vela</label>
-              <select id="bybitInterval">
-                <option value="60">1m</option>
-                <option value="300" selected>5m</option>
-                <option value="900">15m</option>
-                <option value="3600">1h</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="bybitLeverage">Alavancagem</label>
-              <input id="bybitLeverage" type="number" min="1" step="1" value="1" inputmode="decimal" title="Predefinição conservadora 1x">
-            </div>
-            <div class="field">
-              <label for="bybitStake">Stake (USDT)</label>
-              <input id="bybitStake" type="number" min="0.5" step="0.5" value="1" inputmode="decimal">
-            </div>
-            <div class="field required">
-              <label for="bybitStrategy">Estratégia</label>
-              <select id="bybitStrategy" required>
-                <option value="" selected disabled>— Escolhe —</option>
+            <p class="footer-note radar-note">
+              Só perpetuals Linear USDT (categoria linear). Proximidade = indicadores reais do preset — não inventa ranks. Cobertura honesta abaixo.
+            </p>
+            <div class="radar-controls">
+              <input id="radarSearch" type="search" placeholder="Filtrar BTC, ETH…" autocomplete="off" inputmode="search">
+              <select id="radarPreset" title="Preset para ranking">
                 <option value="lucro_rapido">Lucro rápido</option>
                 <option value="loss_zero">Loss zero</option>
-                <option value="tendencia_diaria">Tendência diária</option>
-                <option value="biblioteca">Biblioteca</option>
               </select>
+              <button type="button" class="ghost" id="btnRadarPause" title="Pausar/retomar scan">Pausar</button>
             </div>
-            <div class="field">
-              <label for="minutes">Duração (min)</label>
-              <input id="minutes" type="number" min="1" max="180" value="60" inputmode="numeric">
-            </div>
+            <div class="radar-meta" id="radarMeta">A iniciar scan…</div>
+            <div class="radar-list" id="radarList" role="list"></div>
+          </aside>
+
+          <div class="copilot-main">
+            <section class="glass panel chart-panel" id="chartPanel">
+              <div class="panel-head">
+                <h2>Gráfico · tempo real · futuro USDT</h2>
+                <span class="pill warn" id="chartStatus">A carregar…</span>
+              </div>
+              <div class="chart-meta">
+                <span id="livePrice" class="live-price">—</span>
+                <span id="liveChange" class="live-change">—</span>
+                <span id="liveFeedHint" class="footer-note" style="margin:0;text-align:left">WS Bybit público linear</span>
+              </div>
+              <div id="chartCanvasWrap" class="chart-wrap bybit-chart-wrap">
+                <div id="bybitChart" class="bybit-tv-chart" role="img" aria-label="Velas Bybit futuros em tempo real"></div>
+                <canvas id="chartCanvas" width="640" height="240" hidden aria-hidden="true"></canvas>
+                <p id="chartEmpty" class="chart-empty">Sem velas — escolhe um perpetual USDT.</p>
+              </div>
+
+              <div class="strat-live-grid" id="stratLiveGrid" aria-label="Estratégias ao vivo">
+                <article class="strat-live-card closed" id="cardLucroRapido" data-preset="lucro_rapido">
+                  <header class="strat-live-head">
+                    <span class="sem-dot amber" id="dotLucroRapido"></span>
+                    <strong>Lucro rápido</strong>
+                    <span class="strat-live-badge" id="badgeLucroRapido">…</span>
+                  </header>
+                  <div class="proximity-wrap">
+                    <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barLucroRapido">
+                      <div class="proximity-fill" id="fillLucroRapido" style="width:0%"></div>
+                    </div>
+                  </div>
+                  <p class="strat-live-status" id="statusLucroRapido">NO TRADE</p>
+                  <p class="strat-live-reason" id="reasonLucroRapido">A carregar…</p>
+                  <p class="strat-live-prox" id="proxLucroRapido">Prox —</p>
+                </article>
+                <article class="strat-live-card closed" id="cardLossZero" data-preset="loss_zero">
+                  <header class="strat-live-head">
+                    <span class="sem-dot amber" id="dotLossZero"></span>
+                    <strong>Loss zero</strong>
+                    <span class="strat-live-badge" id="badgeLossZero">…</span>
+                  </header>
+                  <div class="proximity-wrap">
+                    <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barLossZero">
+                      <div class="proximity-fill" id="fillLossZero" style="width:0%"></div>
+                    </div>
+                  </div>
+                  <p class="strat-live-status" id="statusLossZero">NO TRADE</p>
+                  <p class="strat-live-reason" id="reasonLossZero">A carregar…</p>
+                  <p class="strat-live-prox" id="proxLossZero">Prox —</p>
+                </article>
+              </div>
+
+              <div id="armBox" class="arm-box disarmed" role="status" aria-live="polite">
+                <div class="arm-top">
+                  <span class="sem-dot amber" id="armDot"></span>
+                  <strong id="armTitle">DESARMADO</strong>
+                  <span class="arm-pct" id="armPct">0%</span>
+                </div>
+                <div class="proximity-wrap" style="margin-top:8px">
+                  <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="armBar">
+                    <div class="proximity-fill" id="armFill" style="width:0%"></div>
+                  </div>
+                </div>
+                <p class="arm-reason" id="armReason">
+                  PLAY = ARMAR. Entrada só quando a porta de evidência abrir E o sinal da estratégia atingir o alvo. Sem auto-PLAY · sem martingale.
+                </p>
+              </div>
+
+              <div id="playReadyBox" class="play-ready-box closed" role="status" aria-live="polite" hidden>
+                <div class="play-ready-top">
+                  <span class="sem-dot amber" id="playReadyDot"></span>
+                  <strong id="playReadyTitle">Estratégia · NO TRADE</strong>
+                  <span class="play-ready-pct" id="playReadyPct">0%</span>
+                </div>
+                <div class="proximity-wrap" style="margin-top:8px">
+                  <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="playReadyBar">
+                    <div class="proximity-fill" id="playReadyFill" style="width:0%"></div>
+                  </div>
+                </div>
+                <p class="play-ready-reason" id="playReadyReason">—</p>
+              </div>
+            </section>
+
+            <section class="glass panel session-hero" style="margin-top:12px" id="sessionHero">
+              <div class="session-hero-top">
+                <div>
+                  <h2 class="hero-title">Sessão · futuros USDT</h2>
+                  <p class="hero-sub" id="sessionHeroSub">PAPER por omissão. REAL só com toggle + confirmação.</p>
+                </div>
+                <div id="modeBanner" class="mode-banner paper" aria-live="polite">PAPER</div>
+              </div>
+              <div class="stats stats-compact">
+                <div class="stat"><div class="k">Estado</div><div class="v" id="statStatus">—</div></div>
+                <div class="stat"><div class="k">Resultado</div><div class="v" id="statPnl">—</div></div>
+                <div class="stat"><div class="k">Ops</div><div class="v" id="statTrades">—</div></div>
+                <div class="stat"><div class="k">Queda</div><div class="v" id="statDd">—</div></div>
+              </div>
+            </section>
+
+            <section class="glass panel gate-simple" style="margin-top:12px">
+              <div id="gateBox" class="gate-box closed">
+                <div class="gate-simple-row">
+                  <div>
+                    <div class="gate-title">Porta · evidência</div>
+                    <div class="gate-state" id="gateState">NO TRADE</div>
+                    <div class="gate-reason" id="gateReason">A aguardar…</div>
+                  </div>
+                  <button type="button" class="ghost gate-toggle" id="btnGateToggle" aria-expanded="false">Detalhes</button>
+                </div>
+                <div class="proximity-wrap" id="proximityWrap" aria-live="polite">
+                  <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="proximityBar">
+                    <div class="proximity-fill" id="proximityFill" style="width:0%"></div>
+                  </div>
+                  <div class="proximity-sem" id="proximitySem">
+                    <span class="sem-dot amber" id="proximityDot"></span>
+                    <span id="proximityLabel">Informativo — verde só com porta real</span>
+                  </div>
+                </div>
+                <div class="gate-metrics" id="gateMetrics" hidden>
+                  <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="gateLabel">—</span></div>
+                  <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="gateOos">—</span></div>
+                  <div class="gm"><span class="gk">Média R</span><span class="gv" id="gateMeanR">—</span></div>
+                  <div class="gm"><span class="gk">p-valor</span><span class="gv" id="gateP">—</span></div>
+                  <div class="gm"><span class="gk">Estratégia</span><span class="gv" id="gateStrat">—</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="glass panel bybit-world-panel" style="margin-top:12px">
+              <h2>Operar · mercado futuro USDT</h2>
+              <p class="footer-note" style="margin:0 0 10px;text-align:left">
+                Apenas Bybit Linear USDT perpetual. Spot / inverse / opções excluídos. PAPER por omissão.
+              </p>
+              <div class="controls controls-primary">
+                <div class="field field-search">
+                  <label for="bybitSymbolSearch">Procurar futuro</label>
+                  <input id="bybitSymbolSearch" type="search" placeholder="BTC, ETH, SOL…" autocomplete="off" inputmode="search">
+                </div>
+                <div class="field">
+                  <label for="bybitSymbolSelect">Perpetual USDT</label>
+                  <select id="bybitSymbolSelect"></select>
+                </div>
+                <div class="field">
+                  <label for="bybitInterval">Vela</label>
+                  <select id="bybitInterval">
+                    <option value="60">1m</option>
+                    <option value="300" selected>5m</option>
+                    <option value="900">15m</option>
+                    <option value="3600">1h</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="bybitLeverage">Alavancagem</label>
+                  <input id="bybitLeverage" type="number" min="1" step="1" value="1" inputmode="decimal" title="Predefinição conservadora 1x">
+                </div>
+                <div class="field">
+                  <label for="bybitStake">Stake (USDT)</label>
+                  <input id="bybitStake" type="number" min="0.5" step="0.5" value="1" inputmode="decimal">
+                </div>
+                <div class="field required">
+                  <label for="bybitStrategy">Estratégia</label>
+                  <select id="bybitStrategy" required>
+                    <option value="" selected disabled>— Escolhe —</option>
+                    <option value="lucro_rapido">Lucro rápido</option>
+                    <option value="loss_zero">Loss zero</option>
+                    <option value="tendencia_diaria">Tendência diária</option>
+                    <option value="biblioteca">Biblioteca</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="minutes">Duração (min)</label>
+                  <input id="minutes" type="number" min="1" max="180" value="60" inputmode="numeric">
+                </div>
+              </div>
+              <p id="bybitLeverageHint" class="footer-note" style="margin:0 0 10px;text-align:left">
+                Alavancagem do perpetual. Stake fixa — sem martingale.
+              </p>
+              <div class="mode-toggle-wrap" id="bybitTradingModeToggle">
+                <span class="source-label">Modo Bybit</span>
+                <div class="mode-toggle" role="group" aria-label="Modo PAPER ou REAL Bybit">
+                  <button type="button" class="mode-btn paper active" id="bybitModePaper" data-mode="PAPER" aria-pressed="true">
+                    <strong>PAPER</strong><small>Simulado</small>
+                  </button>
+                  <button type="button" class="mode-btn real" id="bybitModeReal" data-mode="REAL" aria-pressed="false" disabled title="Precisa de chaves no servidor">
+                    <strong>REAL</strong><small>Dinheiro real</small>
+                  </button>
+                </div>
+              </div>
+              <div class="btn-row btn-row-analise two-col" style="margin-top:14px">
+                <button type="button" class="ctrl analyze" id="btnBybitAnalyze" disabled title="Escolhe estratégia">Analisar</button>
+                <button type="button" class="ctrl play" id="btnBybitPlay" disabled title="Escolhe estratégia">ARMAR</button>
+              </div>
+              <div class="btn-row btn-row-hero" style="margin-top:10px">
+                <button type="button" class="ctrl pause" id="btnBybitPause" disabled>PAUSE</button>
+                <button type="button" class="ctrl stop" id="btnBybitStop" disabled>STOP</button>
+              </div>
+              <p id="bybitActionHint" class="footer-note" style="margin:10px 0 0;text-align:left">
+                ARMAR = à espera do alvo (porta + sinal). Entrada não é imediata. REAL exige confirmação.
+              </p>
+              <div id="bybitLinkingNote" class="bybit-linking" hidden>Bybit: ainda em ligação…</div>
+              <p id="prePlayStatus" class="preplay-status muted" style="margin:10px 0 0">Escolhe perpetual e estratégia.</p>
+            </section>
           </div>
-          <p id="bybitLeverageHint" class="footer-note" style="margin:0 0 10px;text-align:left">
-            Alavancagem: intervalo do par (Bybit). Stake fixa — sem martingale.
-          </p>
-          <div class="mode-toggle-wrap" id="bybitTradingModeToggle">
-            <span class="source-label">Modo Bybit</span>
-            <div class="mode-toggle" role="group" aria-label="Modo PAPER ou REAL Bybit">
-              <button type="button" class="mode-btn paper active" id="bybitModePaper" data-mode="PAPER" aria-pressed="true">
-                <strong>PAPER</strong><small>Simulado</small>
-              </button>
-              <button type="button" class="mode-btn real" id="bybitModeReal" data-mode="REAL" aria-pressed="false" disabled title="Precisa de chaves no servidor">
-                <strong>REAL</strong><small>Dinheiro real</small>
-              </button>
-            </div>
-          </div>
-          <div class="btn-row btn-row-analise two-col" style="margin-top:14px">
-            <button type="button" class="ctrl analyze" id="btnBybitAnalyze" disabled title="Escolhe estratégia">Analisar</button>
-            <button type="button" class="ctrl play" id="btnBybitPlay" disabled title="Escolhe estratégia">PLAY</button>
-          </div>
-          <div class="btn-row btn-row-hero" style="margin-top:10px">
-            <button type="button" class="ctrl pause" id="btnBybitPause" disabled>PAUSE</button>
-            <button type="button" class="ctrl stop" id="btnBybitStop" disabled>STOP</button>
-          </div>
-          <p id="bybitActionHint" class="footer-note" style="margin:10px 0 0;text-align:left">
-            Analisar = porta (paper). PLAY = sessão (PAPER por omissão).
-          </p>
-          <div id="bybitLinkingNote" class="bybit-linking" hidden>Bybit: ainda em ligação…</div>
-          <p id="prePlayStatus" class="preplay-status muted" style="margin:10px 0 0">Escolhe par e estratégia, depois Analisar.</p>
-        </section>
+        </div>
 
         <section class="glass panel" style="margin-top:12px">
           <div class="panel-head">
@@ -247,7 +289,8 @@
         </section>
 
         <p class="footer-note">
-          Pesquisa e paper trading. Não garante lucro. Bybit separado · OAuth Deriv intacto.
+          Co-piloto de futuros Linear USDT. Porta de evidência real · NO TRADE honesto · sem martingale.
+          OAuth Deriv intacto. Não garante lucro.
         </p>
       </div>
     </div>
