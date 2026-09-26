@@ -310,11 +310,68 @@
 
   function clearTradeJournal() {
     if (!state.tradeJournal.length) return;
-    if (!confirm("Apagar o diário de operações guardado neste browser? A sessão actual não pára.")) return;
+    if (!confirm("Apagar o diário neste aparelho? A sessão actual não pára.")) return;
     state.tradeJournal = [];
     saveJournal();
     renderTradeJournal();
     renderPerfas();
+  }
+
+  function updateNextStep() {
+    const box = el("nextStepText");
+    if (!box) return;
+    const hasAccount = !!resolveSelectedAccount();
+    const hasStrategy = !!(el("strategySet") && el("strategySet").value);
+    const running = state.session && state.session.status === "RUNNING";
+    const paused = state.session && state.session.status === "PAUSED";
+    if (running) {
+      box.textContent = "Sessão a correr · usa PAUSE ou STOP quando quiseres";
+      return;
+    }
+    if (paused) {
+      box.textContent = "Em pausa · PLAY para continuar ou STOP para terminar";
+      return;
+    }
+    if (!hasAccount) {
+      box.textContent = "1 Conta · 2 Estratégia · 3 Analisar · 4 PLAY";
+      return;
+    }
+    if (!hasStrategy) {
+      box.textContent = "2 Escolhe a estratégia · 3 Analisar · 4 PLAY";
+      return;
+    }
+    if (!state.prePlayOk) {
+      box.textContent = "3 Clica Analisar · 4 PLAY se a porta abrir";
+      return;
+    }
+    box.textContent = "4 Pronto — clica PLAY";
+  }
+
+  function updateModeBanner() {
+    const banner = el("modeBanner");
+    const sub = el("sessionHeroSub");
+    const real = isRealTradingMode();
+    if (banner) {
+      banner.textContent = real ? "REAL" : "PAPER";
+      banner.classList.toggle("paper", !real);
+      banner.classList.toggle("real", real);
+    }
+    if (sub) {
+      sub.textContent = real
+        ? "ATENÇÃO: modo REAL — ordens com dinheiro."
+        : "Modo simulado — sem dinheiro real.";
+    }
+  }
+
+  function toggleGateDetails() {
+    const metrics = el("gateMetrics");
+    const btn = el("btnGateToggle");
+    if (!metrics || !btn) return;
+    const open = metrics.hasAttribute("hidden");
+    if (open) metrics.removeAttribute("hidden");
+    else metrics.setAttribute("hidden", "");
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    btn.textContent = open ? "Ocultar" : "Detalhes";
   }
 
   function accountKind(acc) {
@@ -342,26 +399,28 @@
 
   function renderAccountContext() {
     const box = el("accountContext");
-    const mode = el("modePill");
-    mode.className = "pill mode";
-    mode.textContent = "PAPER / SIMULADO";
+    // modePill / banner reflect Cripto PAPER|REAL — não forçar PAPER aqui
+    if (typeof updateModeBanner === "function") updateModeBanner();
+    if (typeof updateSourceUI === "function") {
+      /* pill text owned by updateSourceUI when available */
+    }
     const acc = resolveSelectedAccount();
     if (!acc) {
       box.className = "account-context muted";
-      box.textContent = "Seleciona DEMO ou REAL abaixo antes de PLAY. Sessão sempre paper / simulado.";
+      box.textContent = "Escolhe DEMO ou REAL abaixo. Depois estratégia → Analisar → PLAY.";
       return;
     }
     const kind = accountKind(acc);
     box.className = "account-context ready";
     box.innerHTML =
-      "Contexto <b>" +
+      "<b>" +
       escapeHtml(kind) +
-      "</b> · conta <b>" +
+      "</b> · " +
       escapeHtml(acc.account_id || "?") +
-      "</b> · saldo Deriv <span class=\"bal\">" +
+      ' · <span class="bal">' +
       escapeHtml(accountBalanceText(acc)) +
-      '</span> <span class="sim-tag">PAPER / SIMULADO</span><br>' +
-      "<small>O saldo acima é real (REST). PnL da sessão é simulado — sem compras reais.</small>";
+      '</span> <span class="sim-tag">contexto</span><br>' +
+      "<small>Saldo Deriv (REST). O modo Cripto PAPER/REAL está no banner acima.</small>";
   }
 
   function selectAccount(accountId) {
@@ -590,9 +649,9 @@
     if (hint) {
       hint.textContent = state.bybitRealAvailable && state.bybitKeysConfigured
         ? (state.tradingMode === "REAL"
-          ? "REAL ativo: ordens MARKET só com porta aberta, stake fixa, sem martingale, STOP aos 3 h. Chaves só no servidor."
-          : "PAPER / SIMULADO (omissão). Chaves detetadas no servidor — podes mudar para REAL explicitamente.")
-        : "PAPER / SIMULADO (omissão). REAL bloqueado sem BYBIT_API_KEY + BYBIT_API_SECRET no servidor. Não colar secrets no chat.";
+          ? "REAL ligado — dinheiro de verdade. Porta + stake fixa + máx. 3 h."
+          : "PAPER (seguro). Chaves OK no servidor — podes mudar para REAL (pede confirmação).")
+        : "PAPER (seguro). REAL bloqueado: faltam chaves no servidor.";
     }
   }
 
@@ -617,8 +676,9 @@
     updateTradingModeUI();
   }
 
-  function setTradingMode(next) {
+  function setTradingMode(next, opts) {
     const mode = String(next || "").toUpperCase() === "REAL" ? "REAL" : "PAPER";
+    const skipConfirm = opts && opts.skipConfirm;
     if (mode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
       pushHistory("REAL indisponível: falta BYBIT_API_KEY + BYBIT_API_SECRET no servidor.", "stop");
       return false;
@@ -627,9 +687,19 @@
       pushHistory("Para a sessão antes de mudar PAPER/REAL.", "stop");
       return false;
     }
+    if (mode === "REAL" && !skipConfirm) {
+      const ok = confirm(
+        "Ativar modo REAL?\n\n" +
+          "As próximas operações Cripto enviam ordens reais na Bybit.\n" +
+          "Só continua se tiveres a certeza.\n\n" +
+          "OK = REAL · Cancelar = ficar em PAPER",
+      );
+      if (!ok) return false;
+    }
     state.tradingMode = mode;
     sessionStorage.setItem(TRADING_MODE_KEY, mode);
     updateSourceUI();
+    updateModeBanner();
     pushHistory("Modo Cripto = " + mode + (mode === "PAPER" ? " / SIMULADO" : " (ordens via servidor)"), mode === "REAL" ? "open" : "");
     return true;
   }
@@ -656,24 +726,29 @@
     }
     if (hint) {
       hint.textContent = onBybit
-        ? "Cripto = Bybit Linear USDT: perpetual *USDT via v5 (instruments/kline). Omissão PAPER / SIMULADO. REAL só com chaves no servidor + toggle explícito. OAuth Deriv intacto."
-        : "Dígitos / Forex = Deriv Options (WS público + OAuth para contas). Sessão paper / simulado. Painel Cripto usa só Bybit Linear USDT.";
+        ? "Cripto = Bybit USDT. Começa em PAPER. REAL só com chaves no servidor."
+        : "Dígitos / Forex = Deriv. Sessão paper. Cripto usa Bybit.";
     }
     if (pill) {
+      const realOn =
+        onBybit &&
+        state.tradingMode === "REAL" &&
+        state.bybitKeysConfigured &&
+        state.bybitRealAvailable;
       if (onBybit) {
-        pill.textContent =
-          state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable
-            ? "REAL · Cripto = Bybit Linear USDT"
-            : "PAPER / SIMULADO · Bybit Linear USDT";
-        pill.classList.toggle("warn", state.tradingMode !== "REAL" || !state.bybitKeysConfigured || !state.bybitRealAvailable);
-        pill.classList.toggle("ok", state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable);
+        pill.textContent = realOn ? "REAL · Bybit" : "PAPER · Bybit";
+        pill.classList.toggle("warn", !realOn);
+        pill.classList.toggle("ok", false);
+        pill.classList.toggle("real-live", realOn);
       } else {
-        pill.textContent = "PAPER / SIMULADO · Deriv Options";
+        pill.textContent = "PAPER · Deriv";
         pill.classList.add("warn");
         pill.classList.remove("ok");
+        pill.classList.remove("real-live");
       }
       pill.classList.toggle("binance", onBybit);
       updateTradingModeUI();
+      updateModeBanner();
     }
     const tabs = el("marketTabs");
     if (tabs) {
@@ -1017,6 +1092,7 @@
     el("btnPause").disabled = !running;
     el("btnStop").disabled = stopped && !state.running;
     void paused;
+    updateNextStep();
   }
 
 
@@ -1535,6 +1611,8 @@
     });
     const btnClearJournal = el("btnClearJournal");
     if (btnClearJournal) btnClearJournal.addEventListener("click", clearTradeJournal);
+    const btnGateToggle = el("btnGateToggle");
+    if (btnGateToggle) btnGateToggle.addEventListener("click", toggleGateDetails);
 
     document.querySelectorAll("#marketTabs .tab").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -1618,7 +1696,11 @@
     renderHistory();
     renderTradeJournal();
     renderPerfas();
+    updateModeBanner();
+    updateNextStep();
     setActiveView("operar");
+    const gm = el("gateMetrics");
+    if (gm) gm.setAttribute("hidden", "");
     renderAccountContext();
     renderMt5Panel();
     updateButtons();

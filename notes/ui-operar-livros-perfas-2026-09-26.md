@@ -1,13 +1,13 @@
 # UI: Operar / Livros / Perfas (2026-09-26)
 
 ## Antes
-Uma página longa: conta + sessão + porta + mercados (Dígitos/Forex/Cripto) + MT5 + histórico misturados.
+Uma página longa: conta + sessão + porta + mercados + MT5 + histórico misturados.
 
-## Depois
-Abas de topo:
-- **Operar** — conta, PLAY/PAUSE/STOP, porta, mercados (Dígitos/Forex/Cripto + PAPER/REAL), MT5
-- **Livros** — diário de operações (aberturas/fechos PAPER|REAL, stake, resultado) + log de eventos da sessão
-- **Perfas** — wins/perdas/taxa/PnL da sessão actual + agregado do diário (localStorage `nl_trade_journal`)
+## Depois (amigável)
+Abas de topo + fluxo claro:
+- **Operar** — faixa "Seguinte" (1 Conta · 2 Estratégia · 3 Analisar · 4 PLAY), controlos grandes PLAY/PAUSE/STOP, banner PAPER/REAL impossível de confundir (REAL vermelho + confirm), porta com status simples (detalhes ocultos), opções avançadas e MT5 em `<details>`
+- **Livros** — diário de operações escaneável + log da sessão recolhido
+- **Perfas** — 4–5 números grandes (Ganhos, Perdas, Taxa, PnL, Estado/Fechos)
 
 ## Não tocado
 OAuth (`index.html`, `callback.html`, `api/token.js`), Bybit signing/order gates, evidence gate, martingale ban, 3h stop.
