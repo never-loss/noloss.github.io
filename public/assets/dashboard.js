@@ -13,6 +13,8 @@
   // REAL order path (signed server proxy). PAPER never calls this — only placeBybitOrder when isRealTradingMode().
   const BYBIT_ORDER_URL = "/api/bybit-order";
   const TRADING_MODE_KEY = "nl_crypto_trading_mode";
+  const JOURNAL_KEY = "nl_trade_journal";
+  const JOURNAL_MAX = 400;
 
   const NL = window.NL;
   if (!NL) {
@@ -53,6 +55,8 @@
     session: null,
     lastEpoch: 0,
     historyLines: [],
+    tradeJournal: loadJournal(),
+    activeView: "operar",
     symbol: "BTCUSDT",
     granularity: 300,
     stake: 1,
@@ -107,6 +111,210 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function loadJournal() {
+    try {
+      const raw = localStorage.getItem(JOURNAL_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  function saveJournal() {
+    try {
+      localStorage.setItem(JOURNAL_KEY, JSON.stringify(state.tradeJournal.slice(0, JOURNAL_MAX)));
+    } catch (_e) {
+      /* quota / private mode — ignore */
+    }
+  }
+
+  function clockLocal(ms) {
+    try {
+      return new Date(ms).toLocaleString("pt-PT", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+    } catch (_e) {
+      return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+    }
+  }
+
+  function recordJournalFromEvent(e) {
+    if (!e || (e.type !== "trade_opened" && e.type !== "trade_closed")) return;
+    const mode = isRealTradingMode() ? "REAL" : "PAPER";
+    const row = {
+      id: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+      at: typeof e.at === "number" ? e.at : Date.now(),
+      kind: e.type === "trade_opened" ? "open" : "close",
+      symbol: state.symbol || "—",
+      direction: e.direction === 1 ? "COMPRA" : e.direction === -1 ? "VENDA" : "—",
+      mode: mode,
+      stake: state.stake,
+      entry: e.entry,
+      exit: e.type === "trade_closed" ? e.exit : null,
+      reason: e.type === "trade_closed" ? e.reason || "" : "",
+      r: e.type === "trade_closed" && typeof e.r === "number" ? e.r : null,
+      pnl: e.type === "trade_closed" && typeof e.pnl === "number" ? e.pnl : null,
+      source: typeof sourceLabel === "function" ? sourceLabel() : state.dataSource || "",
+      strategy: (e.strategy && e.strategy.name) || e.strategy || state.strategySet || "",
+    };
+    state.tradeJournal.unshift(row);
+    if (state.tradeJournal.length > JOURNAL_MAX) state.tradeJournal.length = JOURNAL_MAX;
+    saveJournal();
+    renderTradeJournal();
+    renderPerfas();
+  }
+
+  function renderTradeJournal() {
+    const box = el("tradeJournal");
+    if (!box) return;
+    if (!state.tradeJournal.length) {
+      box.innerHTML =
+        '<div class="empty">Sem operações no diário. Aberturas e fechos aparecem aqui após PLAY (dados reais da sessão).</div>';
+      return;
+    }
+    const rows = state.tradeJournal
+      .map(function (t) {
+        const modeCls = t.mode === "REAL" ? "real" : "paper";
+        const kindLabel = t.kind === "open" ? "ABRE" : "FECHA";
+        let kindCls = "kind-open";
+        if (t.kind === "close") kindCls = t.pnl != null && t.pnl >= 0 ? "kind-close-win" : "kind-close-loss";
+        const pnlCell =
+          t.pnl == null
+            ? "—"
+            : '<span class="' + (t.pnl >= 0 ? "pnl-pos" : "pnl-neg") + '">' + escapeHtml(signed(t.pnl)) + "</span>";
+        const rCell = t.r == null ? "—" : escapeHtml(signed(t.r) + "R");
+        const exitCell = t.exit == null ? "—" : escapeHtml(String(Number(Number(t.exit).toPrecision(8))));
+        const entryCell = t.entry == null ? "—" : escapeHtml(String(Number(Number(t.entry).toPrecision(8))));
+        const reason = t.reason === "sl" ? "stop" : t.reason === "tp" ? "alvo" : t.reason === "time" ? "tempo" : t.reason || "—";
+        return (
+          "<tr>" +
+          "<td>" + escapeHtml(clockLocal(t.at)) + "</td>" +
+          '<td><span class="mode-tag ' + modeCls + '">' + escapeHtml(t.mode) + "</span></td>" +
+          '<td class="' + kindCls + '">' + kindLabel + "</td>" +
+          "<td>" + escapeHtml(t.symbol) + "</td>" +
+          "<td>" + escapeHtml(t.direction) + "</td>" +
+          "<td>" + escapeHtml(String(t.stake)) + "</td>" +
+          "<td>" + entryCell + "</td>" +
+          "<td>" + exitCell + "</td>" +
+          "<td>" + escapeHtml(reason) + "</td>" +
+          "<td>" + rCell + "</td>" +
+          "<td>" + pnlCell + "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+    box.innerHTML =
+      '<table class="journal-table"><thead><tr>' +
+      "<th>Quando</th><th>Modo</th><th>Tipo</th><th>Símbolo</th><th>Dir.</th><th>Stake</th>" +
+      "<th>Entrada</th><th>Saída</th><th>Motivo</th><th>R</th><th>Resultado</th>" +
+      "</tr></thead><tbody>" +
+      rows +
+      "</tbody></table>";
+  }
+
+  function renderPerfas() {
+    const summary = state.session ? state.session.summary() : null;
+    const pfStatus = el("pfStatus");
+    if (!pfStatus) return;
+
+    if (!summary) {
+      pfStatus.textContent = "—";
+      el("pfWins").textContent = "—";
+      el("pfLosses").textContent = "—";
+      el("pfWinRate").textContent = "—";
+      el("pfPnl").textContent = "—";
+      el("pfMeanR").textContent = "—";
+      el("pfTrades").textContent = "—";
+      el("pfDd").textContent = "—";
+      el("pfSessionNote").textContent = "Sem sessão activa. Arranca PLAY em Operar para ver números reais.";
+    } else {
+      const m = summary.metrics || {};
+      const closed = summary.closed || 0;
+      const wins = typeof m.wins === "number" ? m.wins : 0;
+      const losses = closed > 0 ? closed - wins : 0;
+      pfStatus.textContent = summary.status + (summary.stopReason ? " (" + summary.stopReason + ")" : "");
+      el("pfWins").textContent = closed ? String(wins) : "0";
+      el("pfLosses").textContent = closed ? String(losses) : "0";
+      el("pfWinRate").textContent =
+        closed && typeof m.winRate === "number" ? (m.winRate * 100).toFixed(1) + "%" : closed ? "0%" : "—";
+      el("pfPnl").textContent = signed(summary.totalPnl) + (isRealTradingMode() ? " (REAL)" : " (sim)");
+      el("pfMeanR").textContent =
+        closed && typeof m.meanR === "number" ? signed(m.meanR) + "R" : "—";
+      el("pfTrades").textContent = String(summary.closed) + " / " + summary.opened;
+      el("pfDd").textContent = typeof summary.maxDrawdown === "number" ? summary.maxDrawdown.toFixed(2) : "—";
+      el("pfSessionNote").textContent = closed
+        ? "Sessão com " + closed + " fecho(s) · stake fixa " + summary.stake + "."
+        : "Sessão sem fechos ainda (NO TRADE ou só abertas).";
+    }
+
+    const closes = state.tradeJournal.filter(function (t) {
+      return t.kind === "close" && typeof t.pnl === "number";
+    });
+    if (!closes.length) {
+      el("pjClosed").textContent = "—";
+      el("pjWins").textContent = "—";
+      el("pjLosses").textContent = "—";
+      el("pjWinRate").textContent = "—";
+      el("pjPnl").textContent = "—";
+      el("pjModes").textContent = "—";
+      el("pjNote").textContent = "Sem fechos no diário ainda. Os números só aparecem após operações reais da sessão.";
+      return;
+    }
+    let winsJ = 0;
+    let pnlJ = 0;
+    let paperN = 0;
+    let realN = 0;
+    for (const t of closes) {
+      pnlJ += t.pnl;
+      if (t.pnl >= 0) winsJ += 1;
+      if (t.mode === "REAL") realN += 1;
+      else paperN += 1;
+    }
+    const n = closes.length;
+    const lossesJ = n - winsJ;
+    el("pjClosed").textContent = String(n);
+    el("pjWins").textContent = String(winsJ);
+    el("pjLosses").textContent = String(lossesJ);
+    el("pjWinRate").textContent = ((winsJ / n) * 100).toFixed(1) + "%";
+    el("pjPnl").textContent = signed(pnlJ);
+    el("pjModes").textContent = paperN + " PAPER / " + realN + " REAL";
+    el("pjNote").textContent =
+      "Agregado de " + n + " fecho(s) guardados neste browser. Não inventa saldos.";
+  }
+
+  function setActiveView(view) {
+    const allowed = { operar: 1, livros: 1, perfas: 1 };
+    if (!allowed[view]) view = "operar";
+    state.activeView = view;
+    ["operar", "livros", "perfas"].forEach(function (v) {
+      const pane = el("view-" + v);
+      if (pane) pane.hidden = v !== view;
+    });
+    document.querySelectorAll(".view-tab").forEach(function (btn) {
+      const on = btn.getAttribute("data-view") === view;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    if (view === "livros") renderTradeJournal();
+    if (view === "perfas") renderPerfas();
+  }
+
+  function clearTradeJournal() {
+    if (!state.tradeJournal.length) return;
+    if (!confirm("Apagar o diário de operações guardado neste browser? A sessão actual não pára.")) return;
+    state.tradeJournal = [];
+    saveJournal();
+    renderTradeJournal();
+    renderPerfas();
   }
 
   function accountKind(acc) {
@@ -246,9 +454,12 @@
 
   function setStats(summary) {
     el("statStatus").textContent = summary ? summary.status : "—";
-    el("statPnl").textContent = summary ? signed(summary.totalPnl) + " (sim)" : "—";
+    el("statPnl").textContent = summary
+      ? signed(summary.totalPnl) + (isRealTradingMode() ? " (REAL)" : " (sim)")
+      : "—";
     el("statTrades").textContent = summary ? String(summary.closed) + " / " + summary.opened : "—";
     el("statDd").textContent = summary ? summary.maxDrawdown.toFixed(2) : "—";
+    renderPerfas();
   }
 
   function signed(x) {
@@ -1283,6 +1494,9 @@
           else if (e.type === "trade_closed") cls = e.r >= 0 ? "close-win" : "close-loss";
           else if (e.type === "stopped" || e.type === "paused") cls = "stop";
           pushHistory(NL.formatCandleEvent(e), cls);
+          if (e.type === "trade_opened" || e.type === "trade_closed") {
+            recordJournalFromEvent(e);
+          }
           // REAL: mirror paper opens/closes to signed Bybit MARKET. PAPER never hits /api/bybit-order.
           if (isRealTradingMode() && (e.type === "trade_opened" || e.type === "trade_closed")) {
             await mirrorRealBybitEvent(e);
@@ -1313,7 +1527,16 @@
   }
 
   function bind() {
-    document.querySelectorAll(".tab").forEach((btn) => {
+    document.querySelectorAll(".view-tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const view = btn.getAttribute("data-view");
+        if (view) setActiveView(view);
+      });
+    });
+    const btnClearJournal = el("btnClearJournal");
+    if (btnClearJournal) btnClearJournal.addEventListener("click", clearTradeJournal);
+
+    document.querySelectorAll("#marketTabs .tab").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const nextPanel = btn.getAttribute("data-panel");
         if (!nextPanel || nextPanel === state.panel) return;
@@ -1322,13 +1545,13 @@
           return;
         }
         const prevPanel = state.panel;
-        document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+        document.querySelectorAll("#marketTabs .tab").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         state.panel = nextPanel;
         const ok = await applyPanelSource();
         if (ok === false) {
           state.panel = prevPanel;
-          document.querySelectorAll(".tab").forEach(function (b) {
+          document.querySelectorAll("#marketTabs .tab").forEach(function (b) {
             b.classList.toggle("active", b.getAttribute("data-panel") === prevPanel);
           });
           updateSourceUI();
@@ -1393,6 +1616,9 @@
     setGateUI(null, false);
     setStats(null);
     renderHistory();
+    renderTradeJournal();
+    renderPerfas();
+    setActiveView("operar");
     renderAccountContext();
     renderMt5Panel();
     updateButtons();
@@ -1408,7 +1634,7 @@
       state.tradingMode = savedMode === "REAL" ? "REAL" : "PAPER";
       await loadBybitTradingStatus();
       if (state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) state.tradingMode = "PAPER";
-      document.querySelectorAll(".tab").forEach(function (b) {
+      document.querySelectorAll("#marketTabs .tab").forEach(function (b) {
         b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
       });
       await loadBybitSymbols();

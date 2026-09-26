@@ -22,150 +22,214 @@
         </div>
       </header>
 
-      <section class="glass panel account-panel">
-        <h2>Escolhe a conta (DEMO ou REAL)</h2>
-        <p class="footer-note pick-hint" style="margin:0 0 10px;text-align:left">
-          Obrigatório antes de PLAY. Mostra o saldo real da Deriv como contexto.
-          A sessão continua <strong>paper / simulado</strong> — sem compras reais de dinheiro.
-        </p>
-        <div id="accountContext" class="account-context muted">Nenhuma conta selecionada.</div>
-        <div id="accounts" class="accounts"><div class="loading">…</div></div>
-      </section>
+      <nav class="glass view-nav" id="viewTabs" role="tablist" aria-label="Secções do painel">
+        <button type="button" class="view-tab active" role="tab" aria-selected="true" data-view="operar" id="tabOperar">Operar</button>
+        <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="livros" id="tabLivros">Livros</button>
+        <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="perfas" id="tabPerfas">Perfas</button>
+      </nav>
 
-      <div class="grid" style="margin-top:14px">
-        <section class="glass panel">
-          <h2>Sessão paper / simulado</h2>
-          <div class="stats">
-            <div class="stat"><div class="k">Estado</div><div class="v" id="statStatus">—</div></div>
-            <div class="stat"><div class="k">PnL simulado</div><div class="v" id="statPnl">—</div></div>
-            <div class="stat"><div class="k">Fechadas / abertas</div><div class="v" id="statTrades">—</div></div>
-            <div class="stat"><div class="k">Pior queda</div><div class="v" id="statDd">—</div></div>
-          </div>
-          <div class="btn-row" style="margin-bottom:12px">
-            <button type="button" class="ctrl play" id="btnPlay" disabled title="Seleciona conta + estratégia primeiro">PLAY</button>
-            <button type="button" class="ctrl pause" id="btnPause" disabled>PAUSE</button>
-            <button type="button" class="ctrl stop" id="btnStop" disabled>STOP</button>
-          </div>
-          <p class="footer-note" style="margin:0;text-align:left">
-            Stake fixa. NO TRADE quando a porta falha. Sem martingale. Sem compras reais.
+      <!-- ========== OPERAR ========== -->
+      <div id="view-operar" class="view-pane" role="tabpanel" aria-labelledby="tabOperar">
+        <section class="glass panel account-panel">
+          <h2>Escolhe a conta (DEMO ou REAL)</h2>
+          <p class="footer-note pick-hint" style="margin:0 0 10px;text-align:left">
+            Obrigatório antes de PLAY. Mostra o saldo real da Deriv como contexto.
+            A sessão continua <strong>paper / simulado</strong> — sem compras reais de dinheiro.
           </p>
+          <div id="accountContext" class="account-context muted">Nenhuma conta selecionada.</div>
+          <div id="accounts" class="accounts"><div class="loading">…</div></div>
         </section>
 
-        <section class="glass panel">
-          <h2>Porta de evidência</h2>
-          <div id="gateBox" class="gate-box closed">
-            <div class="gate-title">Estado em tempo real</div>
-            <div class="gate-state" id="gateState">NO TRADE</div>
-            <div class="gate-reason" id="gateReason">A aguardar…</div>
-            <div class="gate-metrics" id="gateMetrics">
-              <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="gateLabel">—</span></div>
-              <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="gateOos">—</span></div>
-              <div class="gm"><span class="gk">Média R</span><span class="gv" id="gateMeanR">—</span></div>
-              <div class="gm"><span class="gk">p-valor</span><span class="gv" id="gateP">—</span></div>
-              <div class="gm"><span class="gk">Estratégia</span><span class="gv" id="gateStrat">—</span></div>
+        <div class="grid" style="margin-top:14px">
+          <section class="glass panel">
+            <h2>Sessão paper / simulado</h2>
+            <div class="stats">
+              <div class="stat"><div class="k">Estado</div><div class="v" id="statStatus">—</div></div>
+              <div class="stat"><div class="k">PnL simulado</div><div class="v" id="statPnl">—</div></div>
+              <div class="stat"><div class="k">Fechadas / abertas</div><div class="v" id="statTrades">—</div></div>
+              <div class="stat"><div class="k">Pior queda</div><div class="v" id="statDd">—</div></div>
             </div>
+            <div class="btn-row" style="margin-bottom:12px">
+              <button type="button" class="ctrl play" id="btnPlay" disabled title="Seleciona conta + estratégia primeiro">PLAY</button>
+              <button type="button" class="ctrl pause" id="btnPause" disabled>PAUSE</button>
+              <button type="button" class="ctrl stop" id="btnStop" disabled>STOP</button>
+            </div>
+            <p class="footer-note" style="margin:0;text-align:left">
+              Stake fixa. NO TRADE quando a porta falha. Sem martingale. Sem compras reais.
+              Histórico completo → aba <strong>Livros</strong> · resumo → <strong>Perfas</strong>.
+            </p>
+          </section>
+
+          <section class="glass panel">
+            <h2>Porta de evidência</h2>
+            <div id="gateBox" class="gate-box closed">
+              <div class="gate-title">Estado em tempo real</div>
+              <div class="gate-state" id="gateState">NO TRADE</div>
+              <div class="gate-reason" id="gateReason">A aguardar…</div>
+              <div class="gate-metrics" id="gateMetrics">
+                <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="gateLabel">—</span></div>
+                <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="gateOos">—</span></div>
+                <div class="gm"><span class="gk">Média R</span><span class="gv" id="gateMeanR">—</span></div>
+                <div class="gm"><span class="gk">p-valor</span><span class="gv" id="gateP">—</span></div>
+                <div class="gm"><span class="gk">Estratégia</span><span class="gv" id="gateStrat">—</span></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="glass panel" style="margin-top:14px">
+          <h2>Mercados</h2>
+          <div class="source-toggle" role="group" aria-label="Fonte de dados">
+            <span class="source-label">Fonte</span>
+            <button type="button" class="source-btn" id="srcDeriv" data-source="deriv" hidden>Deriv Options</button>
+            <button type="button" class="source-btn active binance-active" id="srcBinance" data-source="bybit" disabled aria-pressed="true">Bybit Linear USDT</button>
+          </div>
+          <p id="sourceHint" class="footer-note" style="margin:0 0 10px;text-align:left">
+            Cripto = Bybit Linear USDT (perpetual *USDT · PAPER / SIMULADO por omissão). Dígitos e Forex = Deriv Options. OAuth Deriv intacto.
+          </p>
+          <div class="source-toggle" role="group" aria-label="Modo de trading Cripto" id="tradingModeToggle" hidden>
+            <span class="source-label">Modo Cripto</span>
+            <button type="button" class="source-btn active" id="modePaper" data-mode="PAPER" aria-pressed="true">PAPER / SIMULADO</button>
+            <button type="button" class="source-btn" id="modeReal" data-mode="REAL" aria-pressed="false" disabled title="Requer BYBIT_API_KEY + BYBIT_API_SECRET no servidor (paper por omissão)">REAL</button>
+          </div>
+          <p id="tradingModeHint" class="footer-note" style="margin:0 0 10px;text-align:left" hidden>
+            Omissão = PAPER. REAL só fica ativo se as chaves existirem no servidor — nunca colar secrets no chat.
+          </p>
+          <div class="tabs" role="tablist" id="marketTabs" aria-label="Tipo de mercado">
+            <button type="button" class="tab" data-panel="digits">Dígitos</button>
+            <button type="button" class="tab" data-panel="forex">Forex</button>
+            <button type="button" class="tab active" data-panel="crypto">Cripto (Bybit Linear USDT)</button>
+          </div>
+          <p id="panelHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
+          <div class="controls">
+            <div class="field">
+              <label for="symbolSelect">Símbolo</label>
+              <select id="symbolSelect"></select>
+            </div>
+            <div class="field">
+              <label for="granularity">Vela (s)</label>
+              <select id="granularity">
+                <option value="60">60</option>
+                <option value="300" selected>300</option>
+                <option value="900">900</option>
+                <option value="3600">3600</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="stake">Stake fixa</label>
+              <input id="stake" type="number" min="0.5" step="0.5" value="1">
+            </div>
+            <div class="field">
+              <label for="minutes">Duração (min ≤180)</label>
+              <input id="minutes" type="number" min="1" max="180" value="60">
+            </div>
+            <div class="field">
+              <label for="minMultiplier">Mult. mín.</label>
+              <input id="minMultiplier" type="number" min="1" step="1" value="100">
+            </div>
+            <div class="field required" id="strategyField">
+              <label for="strategySet">Estratégia (obrigatório)</label>
+              <select id="strategySet" required>
+                <option value="" selected disabled>— Escolhe uma estratégia —</option>
+                <option value="lucro_rapido">Lucro rápido</option>
+                <option value="loss_zero">Loss zero</option>
+                <option value="tendencia_diaria">Tendência diária / breakout-ATR</option>
+                <option value="biblioteca">Biblioteca completa</option>
+              </select>
+            </div>
+          </div>
+          <p id="strategyHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
+          <div class="preplay-box" id="prePlayBox">
+            <div class="preplay-head">
+              <strong>Análise pré-PLAY</strong>
+              <button type="button" class="ghost" id="btnAnalyze" disabled title="Escolhe conta + estratégia">Analisar</button>
+            </div>
+            <p id="prePlayStatus" class="preplay-status muted">Escolhe conta DEMO/REAL e uma estratégia (ex.: Lucro rápido ou Loss zero), depois Analisar. Sem martingale · stake fixa · paper.</p>
+            <div class="preplay-metrics" id="prePlayMetrics" hidden>
+              <div class="gm"><span class="gk">Resultado</span><span class="gv" id="prePlayResult">—</span></div>
+              <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="prePlayLabel">—</span></div>
+              <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="prePlayOos">—</span></div>
+              <div class="gm"><span class="gk">Média R</span><span class="gv" id="prePlayMeanR">—</span></div>
+              <div class="gm"><span class="gk">p-valor</span><span class="gv" id="prePlayP">—</span></div>
+              <div class="gm"><span class="gk">Melhor</span><span class="gv" id="prePlayStrat">—</span></div>
+            </div>
+          </div>
+          <div class="symbols-grid" id="symbolChips"></div>
+        </section>
+
+        <section class="glass panel mt5-panel" style="margin-top:14px" id="mt5Panel">
+          <h2>MT5 / CFD cripto</h2>
+          <div class="mt5-box">
+            <div class="mt5-badge">BLOQUEADO — sem API pública</div>
+            <p id="mt5Summary" class="mt5-summary"></p>
+            <p class="mt5-sub"><strong>Options (disponível):</strong> <span id="mt5OptionsPath"></span></p>
+            <p class="mt5-sub"><strong>Para desbloquear MT5/CFD seria preciso:</strong></p>
+            <ul id="mt5Needed" class="mt5-needed"></ul>
+            <p class="mt5-sub muted">Exemplos CFD/MT5 no site Deriv (não negociáveis nem cotados aqui): <span id="mt5Examples"></span></p>
+            <p class="mt5-sub muted">Docs: <a id="mt5Docs" href="#" target="_blank" rel="noopener">Deriv MT5 API</a></p>
           </div>
         </section>
       </div>
 
-      
-<section class="glass panel" style="margin-top:14px">
-        <h2>Mercados</h2>
-        <div class="source-toggle" role="group" aria-label="Fonte de dados">
-          <span class="source-label">Fonte</span>
-          <button type="button" class="source-btn" id="srcDeriv" data-source="deriv" hidden>Deriv Options</button>
-          <button type="button" class="source-btn active binance-active" id="srcBinance" data-source="bybit" disabled aria-pressed="true">Bybit Linear USDT</button>
-        </div>
-        <p id="sourceHint" class="footer-note" style="margin:0 0 10px;text-align:left">
-          Cripto = Bybit Linear USDT (perpetual *USDT · PAPER / SIMULADO por omissão). Dígitos e Forex = Deriv Options. OAuth Deriv intacto.
-        </p>
-        <div class="source-toggle" role="group" aria-label="Modo de trading Cripto" id="tradingModeToggle" hidden>
-          <span class="source-label">Modo Cripto</span>
-          <button type="button" class="source-btn active" id="modePaper" data-mode="PAPER" aria-pressed="true">PAPER / SIMULADO</button>
-          <button type="button" class="source-btn" id="modeReal" data-mode="REAL" aria-pressed="false" disabled title="Requer BYBIT_API_KEY + BYBIT_API_SECRET no servidor (paper por omissão)">REAL</button>
-        </div>
-        <p id="tradingModeHint" class="footer-note" style="margin:0 0 10px;text-align:left" hidden>
-          Omissão = PAPER. REAL só fica ativo se as chaves existirem no servidor — nunca colar secrets no chat.
-        </p>
-        <div class="tabs" role="tablist" id="marketTabs">
-          <button type="button" class="tab" data-panel="digits">Dígitos</button>
-          <button type="button" class="tab" data-panel="forex">Forex</button>
-          <button type="button" class="tab active" data-panel="crypto">Cripto (Bybit Linear USDT)</button>
-        </div>
-        <p id="panelHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
-        <div class="controls">
-          <div class="field">
-            <label for="symbolSelect">Símbolo</label>
-            <select id="symbolSelect"></select>
+      <!-- ========== LIVROS (diário de operações) ========== -->
+      <div id="view-livros" class="view-pane" role="tabpanel" aria-labelledby="tabLivros" hidden>
+        <section class="glass panel">
+          <div class="panel-head">
+            <h2>Livros — diário de operações</h2>
+            <button type="button" class="ghost" id="btnClearJournal" title="Apaga só o diário guardado neste browser">Limpar diário</button>
           </div>
-          <div class="field">
-            <label for="granularity">Vela (s)</label>
-            <select id="granularity">
-              <option value="60">60</option>
-              <option value="300" selected>300</option>
-              <option value="900">900</option>
-              <option value="3600">3600</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="stake">Stake fixa</label>
-            <input id="stake" type="number" min="0.5" step="0.5" value="1">
-          </div>
-          <div class="field">
-            <label for="minutes">Duração (min ≤180)</label>
-            <input id="minutes" type="number" min="1" max="180" value="60">
-          </div>
-          <div class="field">
-            <label for="minMultiplier">Mult. mín.</label>
-            <input id="minMultiplier" type="number" min="1" step="1" value="100">
-          </div>
-          <div class="field required" id="strategyField">
-            <label for="strategySet">Estratégia (obrigatório)</label>
-            <select id="strategySet" required>
-              <option value="" selected disabled>— Escolhe uma estratégia —</option>
-              <option value="lucro_rapido">Lucro rápido</option>
-              <option value="loss_zero">Loss zero</option>
-              <option value="tendencia_diaria">Tendência diária / breakout-ATR</option>
-              <option value="biblioteca">Biblioteca completa</option>
-            </select>
-          </div>
-        </div>
-        <p id="strategyHint" class="footer-note" style="margin:0 0 10px;text-align:left"></p>
-        <div class="preplay-box" id="prePlayBox">
-          <div class="preplay-head">
-            <strong>Análise pré-PLAY</strong>
-            <button type="button" class="ghost" id="btnAnalyze" disabled title="Escolhe conta + estratégia">Analisar</button>
-          </div>
-          <p id="prePlayStatus" class="preplay-status muted">Escolhe conta DEMO/REAL e uma estratégia (ex.: Lucro rápido ou Loss zero), depois Analisar. Sem martingale · stake fixa · paper.</p>
-          <div class="preplay-metrics" id="prePlayMetrics" hidden>
-            <div class="gm"><span class="gk">Resultado</span><span class="gv" id="prePlayResult">—</span></div>
-            <div class="gm"><span class="gk">Rótulo</span><span class="gv" id="prePlayLabel">—</span></div>
-            <div class="gm"><span class="gk">Ops OOS</span><span class="gv" id="prePlayOos">—</span></div>
-            <div class="gm"><span class="gk">Média R</span><span class="gv" id="prePlayMeanR">—</span></div>
-            <div class="gm"><span class="gk">p-valor</span><span class="gv" id="prePlayP">—</span></div>
-            <div class="gm"><span class="gk">Melhor</span><span class="gv" id="prePlayStrat">—</span></div>
-          </div>
-        </div>
-        <div class="symbols-grid" id="symbolChips"></div>
-      </section>
+          <p class="footer-note" style="margin:0 0 10px;text-align:left">
+            Aberturas e fechos reais da sessão (PAPER ou REAL). Sem saldos inventados.
+            Guardado neste browser (localStorage).
+          </p>
+          <div id="tradeJournal" class="journal"></div>
+        </section>
 
-      <section class="glass panel mt5-panel" style="margin-top:14px" id="mt5Panel">
-        <h2>MT5 / CFD cripto</h2>
-        <div class="mt5-box">
-          <div class="mt5-badge">BLOQUEADO — sem API pública</div>
-          <p id="mt5Summary" class="mt5-summary"></p>
-          <p class="mt5-sub"><strong>Options (disponível):</strong> <span id="mt5OptionsPath"></span></p>
-          <p class="mt5-sub"><strong>Para desbloquear MT5/CFD seria preciso:</strong></p>
-          <ul id="mt5Needed" class="mt5-needed"></ul>
-          <p class="mt5-sub muted">Exemplos CFD/MT5 no site Deriv (não negociáveis nem cotados aqui): <span id="mt5Examples"></span></p>
-          <p class="mt5-sub muted">Docs: <a id="mt5Docs" href="#" target="_blank" rel="noopener">Deriv MT5 API</a></p>
-        </div>
-      </section>
+        <section class="glass panel" style="margin-top:14px">
+          <h2>Eventos da sessão actual</h2>
+          <p class="footer-note" style="margin:0 0 10px;text-align:left">
+            Log em tempo real (PLAY / PAUSE / STOP / porta / avisos). Reinicia em cada nova sessão PLAY.
+          </p>
+          <div id="history" class="history"></div>
+        </section>
+      </div>
 
-      <section class="glass panel" style="margin-top:14px">
-        <h2>Histórico da sessão (paper)</h2>
-        <div id="history" class="history"></div>
-      </section>
+      <!-- ========== PERFAS (desempenho) ========== -->
+      <div id="view-perfas" class="view-pane" role="tabpanel" aria-labelledby="tabPerfas" hidden>
+        <section class="glass panel">
+          <h2>Perfas — sessão actual</h2>
+          <p class="footer-note" style="margin:0 0 10px;text-align:left">
+            Dados só da sessão em curso (ou última ainda em memória). Vazio se ainda não houve PLAY.
+          </p>
+          <div class="stats" id="perfasSessionStats">
+            <div class="stat"><div class="k">Estado</div><div class="v" id="pfStatus">—</div></div>
+            <div class="stat"><div class="k">Wins</div><div class="v" id="pfWins">—</div></div>
+            <div class="stat"><div class="k">Perdas</div><div class="v" id="pfLosses">—</div></div>
+            <div class="stat"><div class="k">Taxa acerto</div><div class="v" id="pfWinRate">—</div></div>
+            <div class="stat"><div class="k">PnL líquido</div><div class="v" id="pfPnl">—</div></div>
+            <div class="stat"><div class="k">Média R</div><div class="v" id="pfMeanR">—</div></div>
+            <div class="stat"><div class="k">Fechadas / abertas</div><div class="v" id="pfTrades">—</div></div>
+            <div class="stat"><div class="k">Pior queda</div><div class="v" id="pfDd">—</div></div>
+          </div>
+          <p id="pfSessionNote" class="footer-note" style="margin:0;text-align:left">Sem sessão activa.</p>
+        </section>
+
+        <section class="glass panel" style="margin-top:14px">
+          <h2>Perfas — diário guardado</h2>
+          <p class="footer-note" style="margin:0 0 10px;text-align:left">
+            Agregado só dos fechos guardados no diário (Livros). PAPER e REAL contam à parte quando existirem.
+          </p>
+          <div class="stats" id="perfasJournalStats">
+            <div class="stat"><div class="k">Fechos</div><div class="v" id="pjClosed">—</div></div>
+            <div class="stat"><div class="k">Wins</div><div class="v" id="pjWins">—</div></div>
+            <div class="stat"><div class="k">Perdas</div><div class="v" id="pjLosses">—</div></div>
+            <div class="stat"><div class="k">Taxa acerto</div><div class="v" id="pjWinRate">—</div></div>
+            <div class="stat"><div class="k">PnL líquido</div><div class="v" id="pjPnl">—</div></div>
+            <div class="stat"><div class="k">PAPER / REAL</div><div class="v" id="pjModes">—</div></div>
+          </div>
+          <p id="pjNote" class="footer-note" style="margin:0;text-align:left">Sem fechos no diário ainda.</p>
+        </section>
+      </div>
 
       <p class="footer-note">
         Plataforma de pesquisa e paper trading. Não garante lucros nem “quase sem perdas”.
