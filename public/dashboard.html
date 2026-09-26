@@ -41,10 +41,10 @@
             <div class="sub" id="heroBalDemoMeta">Deriv</div>
           </div>
           <div class="hero-bal-actions">
-            <button type="button" class="ctrl bybit-entry" id="btnOpenBybit" title="Bybit futures USDT (após login Deriv)">
+            <a class="ctrl bybit-entry" id="btnOpenBybit" href="/bybit" title="Bybit futures USDT (página separada, após login Deriv)">
               Bybit
-            </button>
-            <p class="footer-note" style="margin:4px 0 0;text-align:left">Futures USDT · secção aparte</p>
+            </a>
+            <p class="footer-note" style="margin:4px 0 0;text-align:left">Futures USDT · página separada</p>
           </div>
         </div>
       </section>
@@ -61,7 +61,7 @@
         <section class="glass panel">
           <h2 id="analiseTitle">Análise · mercado simulado</h2>
           <p class="footer-note" id="analiseNote" style="margin:0 0 12px;text-align:left">
-            Isto é simulado (paper). REAL só em Bybit, à mão, com confirmação.
+            Isto é simulado (paper). REAL só na página Bybit, à mão, com confirmação.
           </p>
           <div class="controls controls-primary">
             <div class="field">
@@ -303,7 +303,7 @@
                 <button type="button" class="ctrl pause mkt-pause" data-panel="crypto" disabled>PAUSE</button>
                 <button type="button" class="ctrl stop mkt-stop" data-panel="crypto" disabled>STOP</button>
               </div>
-              <p class="mkt-empty" id="mktEmpty-crypto" hidden>Sem símbolos Deriv — usa <strong>Bybit</strong> para futures USDT.</p>
+              <p class="mkt-empty" id="mktEmpty-crypto" hidden>Sem símbolos Deriv — abre a página <strong>Bybit</strong> para futures USDT.</p>
             </article>
           </div>
 
@@ -387,7 +387,7 @@
         </section>
 
         <!-- Bybit independent section -->
-        <section class="glass panel bybit-world-panel" style="margin-top:12px" id="bybitWorldPanel" hidden>
+        <section class="glass panel bybit-world-panel" style="margin-top:12px" id="bybitWorldPanel" hidden data-deprecated="moved-to-/bybit" hidden>
           <div class="panel-head">
             <h2>Bybit · independente</h2>
             <button type="button" class="ghost" id="btnCloseBybit">Voltar a Deriv</button>
@@ -536,7 +536,7 @@
 
       <p class="footer-note">
         Pesquisa e paper trading. Não garante lucro.
-        Deriv (dígitos/forex/metais) · Bybit (futures USDT) separado · OAuth intacto.
+        Deriv (dígitos/forex/metais) · Bybit em /bybit (futures USDT) · OAuth intacto.
       </p>
     </div>
   </div>

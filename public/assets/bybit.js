@@ -1,0 +1,1501 @@
+/* NEVER LOSS — Bybit page: live WS chart + dual gate (Loss zero / Lucro rápido). */
+(function () {
+  "use strict";
+
+  var BYBIT_SYMBOLS_URL = "/api/bybit-symbols";
+  var BYBIT_KLINES_URL = "/api/bybit-klines";
+  var BYBIT_STATUS_URL = "/api/bybit-status";
+  var BYBIT_ORDER_URL = "/api/bybit-order";
+  var BYBIT_BALANCE_URL = "/api/bybit-balance";
+  var BYBIT_LEVERAGE_URL = "/api/bybit-leverage";
+  var BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear";
+  var TRADING_MODE_KEY = "nl_crypto_trading_mode";
+  var POLL_CHART_MS = 2500;
+  var GATE_REEVAL_MS = 20000;
+  var CHART_HISTORY = 200;
+  var GATE_HISTORY = 3500;
+
+  var NL = window.NL;
+  if (!NL) {
+    document.body.innerHTML = "<p style='padding:24px;color:#f87171'>Falha a carregar nl-core.js</p>";
+    return;
+  }
+
+  var token = sessionStorage.getItem("nl_access_token");
+  var el = function (id) { return document.getElementById(id); };
+
+  var state = {
+    tradingMode: sessionStorage.getItem(TRADING_MODE_KEY) === "REAL" ? "REAL" : "PAPER",
+    bybitKeysConfigured: false,
+    bybitRealAvailable: false,
+    bybitSymbols: [],
+    bybitSymbolsAll: [],
+    bybitBalance: null,
+    bybitBalanceError: null,
+    bybitLeverageInfo: null,
+    bybitLeverage: 1,
+    symbol: "BTCUSDT",
+    granularity: 300,
+    stake: 1,
+    minutes: 60,
+    minMultiplier: 100,
+    strategySet: "",
+    chartCandles: [],
+    gateCandles: [],
+    liveGates: { lucro_rapido: null, loss_zero: null },
+    feedMode: "idle",
+    ws: null,
+    wsTopic: null,
+    pollTimer: null,
+    gateTimer: null,
+    renderPending: false,
+    chart: null,
+    candleSeries: null,
+    session: null,
+    controller: null,
+    running: false,
+    lastEpoch: 0,
+    realOpenQty: null,
+    realOpenSide: null,
+    historyLines: [],
+    prePlayGate: null,
+    prePlayOk: false,
+    sessionPollTimer: null,
+    revalidateEvery: 12,
+  };
+
+  function pushHistory(text, cls) {
+    state.historyLines.unshift({ t: Date.now(), text: String(text), cls: cls || "" });
+    if (state.historyLines.length > 200) state.historyLines.length = 200;
+    renderHistory();
+  }
+
+  function renderHistory() {
+    var box = el("history");
+    if (!box) return;
+    box.innerHTML = state.historyLines.slice(0, 80).map(function (h) {
+      return '<div class="hist-line ' + (h.cls || "") + '">' + escapeHtml(h.text) + "</div>";
+    }).join("");
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function signed(x) {
+    return (x >= 0 ? "+" : "") + Number(x).toFixed(2);
+  }
+
+  function formatUsdt(v) {
+    if (v == null || v === "") return "—";
+    var n = Number(v);
+    if (!Number.isFinite(n)) return String(v);
+    return n.toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 4 }) + " USDT";
+  }
+
+  function isRealTradingMode() {
+    return state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable;
+  }
+
+  function intervalLabel() {
+    return typeof NL.granularityToBybitInterval === "function"
+      ? NL.granularityToBybitInterval(state.granularity)
+      : "5";
+  }
+
+  function closedOnly(candles, granularity) {
+    var nowSec = Date.now() / 1000;
+    return (candles || []).filter(function (c) { return c.epoch + granularity <= nowSec; });
+  }
+
+  function showLoginGate() {
+    var gate = el("loginGate");
+    var app = el("bybitApp");
+    if (gate) gate.hidden = false;
+    if (app) app.hidden = true;
+    var auth = el("authPill");
+    if (auth) { auth.className = "pill warn"; auth.textContent = "Sem sessão Deriv"; }
+  }
+
+  function showApp() {
+    var gate = el("loginGate");
+    var app = el("bybitApp");
+    if (gate) gate.hidden = true;
+    if (app) app.hidden = false;
+    var auth = el("authPill");
+    if (auth) { auth.className = "pill ok"; auth.textContent = "Deriv OK"; }
+  }
+
+  function initChart() {
+    var host = el("bybitChart");
+    if (!host) return;
+    if (state.chart) {
+      try { state.chart.remove(); } catch (_e) {}
+      state.chart = null;
+      state.candleSeries = null;
+    }
+    if (typeof window.LightweightCharts === "undefined") {
+      host.innerHTML = "";
+      var canvas = el("chartCanvas");
+      if (canvas) canvas.hidden = false;
+      pushHistory("lightweight-charts indisponível — canvas.", "stop");
+      return;
+    }
+    var canvas = el("chartCanvas");
+    if (canvas) canvas.hidden = true;
+    host.innerHTML = "";
+    var chart = window.LightweightCharts.createChart(host, {
+      layout: { background: { type: "solid", color: "#0b1220" }, textColor: "#94a3b8", fontSize: 11 },
+      grid: {
+        vertLines: { color: "rgba(148,163,184,0.08)" },
+        horzLines: { color: "rgba(148,163,184,0.08)" },
+      },
+      rightPriceScale: { borderColor: "rgba(148,163,184,0.2)", scaleMargins: { top: 0.08, bottom: 0.12 } },
+      timeScale: {
+        borderColor: "rgba(148,163,184,0.2)",
+        timeVisible: true,
+        secondsVisible: state.granularity <= 60,
+      },
+      crosshair: {
+        mode: window.LightweightCharts.CrosshairMode.Normal,
+        vertLine: { color: "rgba(148,163,184,0.35)", labelBackgroundColor: "#1e293b" },
+        horzLine: { color: "rgba(148,163,184,0.35)", labelBackgroundColor: "#1e293b" },
+      },
+      localization: { locale: "pt-PT" },
+      width: host.clientWidth || 640,
+      height: host.clientHeight || 280,
+    });
+    var series = chart.addCandlestickSeries({
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+    });
+    state.chart = chart;
+    state.candleSeries = series;
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(function () {
+        if (!state.chart || !host) return;
+        state.chart.applyOptions({ width: host.clientWidth, height: host.clientHeight || 280 });
+      }).observe(host);
+    }
+  }
+
+  function toLcBar(c) {
+    return { time: c.epoch, open: c.open, high: c.high, low: c.low, close: c.close };
+  }
+
+  function scheduleRender() {
+    if (state.renderPending) return;
+    state.renderPending = true;
+    requestAnimationFrame(function () {
+      state.renderPending = false;
+      renderChart();
+    });
+  }
+
+  function renderChart() {
+    var list = state.chartCandles || [];
+    var empty = el("chartEmpty");
+    var status = el("chartStatus");
+    if (!list.length) {
+      if (empty) empty.hidden = false;
+      if (status) { status.className = "pill warn"; status.textContent = "A carregar…"; }
+      updateLivePrice(null);
+      return;
+    }
+    if (empty) empty.hidden = true;
+    var last = list[list.length - 1];
+    updateLivePrice(last, list.length > 1 ? list[list.length - 2] : null);
+    if (status) {
+      var mode = state.feedMode === "ws" ? "WS ao vivo" : state.feedMode === "poll" ? "Poll" : "…";
+      status.className = "pill " + (state.feedMode === "ws" ? "live-ok" : state.feedMode === "poll" ? "live-poll" : "warn");
+      status.textContent = list.length + " velas · " + (state.symbol || "") + " · " + mode;
+    }
+    if (state.candleSeries) {
+      try { state.candleSeries.setData(list.map(toLcBar)); } catch (_e) {}
+      return;
+    }
+    drawCanvasChart(list);
+  }
+
+  function updateLastBar(candle) {
+    if (!candle) return;
+    if (state.candleSeries) {
+      try { state.candleSeries.update(toLcBar(candle)); } catch (_e) { scheduleRender(); }
+    } else {
+      scheduleRender();
+    }
+    updateLivePrice(candle, state.chartCandles.length > 1 ? state.chartCandles[state.chartCandles.length - 2] : null);
+    var status = el("chartStatus");
+    if (status && state.feedMode === "ws") {
+      status.className = "pill live-ok";
+      status.textContent = state.chartCandles.length + " velas · " + state.symbol + " · WS ao vivo";
+    }
+  }
+
+  function updateLivePrice(last, prev) {
+    var priceEl = el("livePrice");
+    var chEl = el("liveChange");
+    if (!priceEl) return;
+    if (!last) {
+      priceEl.textContent = "—";
+      priceEl.className = "live-price";
+      if (chEl) { chEl.textContent = "—"; chEl.className = "live-change"; }
+      return;
+    }
+    var px = Number(last.close);
+    priceEl.textContent = px.toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+    var up = prev ? px >= Number(prev.close) : last.close >= last.open;
+    priceEl.className = "live-price " + (up ? "up" : "down");
+    if (chEl) {
+      var base = prev ? Number(prev.close) : Number(last.open);
+      var diff = px - base;
+      var pct = base ? (diff / base) * 100 : 0;
+      chEl.textContent = (diff >= 0 ? "+" : "") + diff.toLocaleString("pt-PT", { maximumFractionDigits: 4 }) +
+        " (" + (pct >= 0 ? "+" : "") + pct.toFixed(3) + "%)";
+      chEl.className = "live-change " + (diff >= 0 ? "up" : "down");
+    }
+  }
+
+  function drawCanvasChart(list) {
+    var canvas = el("chartCanvas");
+    if (!canvas || canvas.hidden) return;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth || 640;
+    var cssH = 240;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.fillStyle = "#0b1220";
+    ctx.fillRect(0, 0, cssW, cssH);
+    var min = Infinity, max = -Infinity, i;
+    for (i = 0; i < list.length; i++) {
+      min = Math.min(min, list[i].low);
+      max = Math.max(max, list[i].high);
+    }
+    if (!(max > min)) max = min + 1;
+    var pad = (max - min) * 0.08;
+    min -= pad; max += pad;
+    var left = 8, right = 48, top = 10, bottom = 18;
+    var w = cssW - left - right;
+    var h = cssH - top - bottom;
+    var n = list.length;
+    var slot = w / n;
+    var yOf = function (v) { return top + ((max - v) / (max - min)) * h; };
+    ctx.strokeStyle = "rgba(148,163,184,0.12)";
+    ctx.fillStyle = "#64748b";
+    ctx.font = "10px sans-serif";
+    for (var g = 0; g < 4; g++) {
+      var y = top + (h * g) / 3;
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + w, y); ctx.stroke();
+      var pv = max - ((max - min) * g) / 3;
+      ctx.fillText(pv.toFixed(pv > 100 ? 2 : 4), left + w + 4, y + 3);
+    }
+    for (var j = 0; j < n; j++) {
+      var c = list[j];
+      var x = left + j * slot + slot * 0.5;
+      var upC = c.close >= c.open;
+      ctx.strokeStyle = upC ? "#22c55e" : "#ef4444";
+      ctx.fillStyle = upC ? "rgba(34,197,94,0.45)" : "rgba(239,68,68,0.45)";
+      ctx.beginPath(); ctx.moveTo(x, yOf(c.high)); ctx.lineTo(x, yOf(c.low)); ctx.stroke();
+      var bodyTop = yOf(Math.max(c.open, c.close));
+      var bodyBot = yOf(Math.min(c.open, c.close));
+      var bw = Math.max(2, slot * 0.55);
+      ctx.fillRect(x - bw / 2, bodyTop, bw, Math.max(1, bodyBot - bodyTop));
+    }
+  }
+
+  function setFeedMode(mode) {
+    state.feedMode = mode;
+    var pill = el("feedPill");
+    var hint = el("liveFeedHint");
+    if (pill) {
+      if (mode === "ws") { pill.className = "pill live-ok"; pill.textContent = "WS ao vivo"; }
+      else if (mode === "poll") { pill.className = "pill live-poll"; pill.textContent = "Poll"; }
+      else if (mode === "err") { pill.className = "pill live-err"; pill.textContent = "Feed erro"; }
+      else { pill.className = "pill warn"; pill.textContent = "Feed…"; }
+    }
+    if (hint) {
+      hint.textContent = mode === "ws" ? "WebSocket Bybit público (linear)"
+        : mode === "poll" ? "Fallback poll /api/bybit-klines" : "A ligar feed…";
+    }
+  }
+
+  function stopFeed() {
+    if (state.ws) { try { state.ws.close(); } catch (_e) {} state.ws = null; }
+    state.wsTopic = null;
+    if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  }
+
+  function mergeCandle(list, candle) {
+    if (!list.length) return [candle];
+    var last = list[list.length - 1];
+    if (candle.epoch === last.epoch) { list[list.length - 1] = candle; return list; }
+    if (candle.epoch > last.epoch) {
+      list.push(candle);
+      if (list.length > CHART_HISTORY) list.splice(0, list.length - CHART_HISTORY);
+      return list;
+    }
+    return list;
+  }
+
+  function applyLiveKline(raw) {
+    var startMs = Number(raw.start);
+    if (!Number.isFinite(startMs)) return;
+    var candle = {
+      epoch: Math.floor(startMs / 1000),
+      open: Number(raw.open), high: Number(raw.high), low: Number(raw.low), close: Number(raw.close),
+    };
+    if (![candle.open, candle.high, candle.low, candle.close].every(Number.isFinite)) return;
+    state.chartCandles = mergeCandle(state.chartCandles, candle);
+    updateLastBar(candle);
+    var confirmed = raw.confirm === true || raw.confirm === "true";
+    if (confirmed) {
+      var closed = { epoch: candle.epoch, open: candle.open, high: candle.high, low: candle.low, close: candle.close };
+      if (!state.gateCandles.length || closed.epoch > state.gateCandles[state.gateCandles.length - 1].epoch) {
+        state.gateCandles.push(closed);
+        if (state.gateCandles.length > GATE_HISTORY) state.gateCandles = state.gateCandles.slice(-GATE_HISTORY);
+        scheduleGateReeval();
+      } else if (closed.epoch === state.gateCandles[state.gateCandles.length - 1].epoch) {
+        state.gateCandles[state.gateCandles.length - 1] = closed;
+      }
+    }
+  }
+
+  function startWsFeed() {
+    stopFeed();
+    setFeedMode("idle");
+    var interval = intervalLabel();
+    if (!interval || !state.symbol) { setFeedMode("err"); return; }
+    var topic = "kline." + interval + "." + state.symbol;
+    var ws;
+    try { ws = new WebSocket(BYBIT_WS_URL); }
+    catch (e) {
+      pushHistory("WS Bybit falhou: " + (e.message || String(e)) + " — poll.", "stop");
+      startPollFeed();
+      return;
+    }
+    state.ws = ws;
+    state.wsTopic = topic;
+    var opened = false;
+    var failTimer = setTimeout(function () {
+      if (!opened) {
+        pushHistory("WS timeout — a usar poll.", "stop");
+        try { ws.close(); } catch (_e) {}
+        startPollFeed();
+      }
+    }, 6000);
+    ws.onopen = function () {
+      opened = true;
+      clearTimeout(failTimer);
+      ws.send(JSON.stringify({ op: "subscribe", args: [topic] }));
+      setFeedMode("ws");
+      var hint = el("liveFeedHint");
+      if (hint) hint.textContent = "Subscrito " + topic;
+    };
+    ws.onmessage = function (ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (_e) { return; }
+      if (!msg) return;
+      if (msg.topic === topic && Array.isArray(msg.data)) {
+        for (var i = 0; i < msg.data.length; i++) applyLiveKline(msg.data[i]);
+      }
+    };
+    ws.onerror = function () {
+      clearTimeout(failTimer);
+      if (state.feedMode !== "poll") {
+        pushHistory("WS erro — fallback poll.", "stop");
+        startPollFeed();
+      }
+    };
+    ws.onclose = function () {
+      clearTimeout(failTimer);
+      if (state.ws === ws && state.feedMode === "ws") startPollFeed();
+    };
+  }
+
+  function startPollFeed() {
+    if (state.ws) { try { state.ws.close(); } catch (_e) {} state.ws = null; }
+    setFeedMode("poll");
+    if (state.pollTimer) clearInterval(state.pollTimer);
+    var tick = async function () {
+      try {
+        var raw = await fetchKlinesRaw(state.symbol, state.granularity, CHART_HISTORY);
+        if (!raw.length) return;
+        state.chartCandles = raw.slice(-CHART_HISTORY);
+        scheduleRender();
+        updateLastBar(state.chartCandles[state.chartCandles.length - 1]);
+      } catch (e) {
+        setFeedMode("err");
+        var status = el("chartStatus");
+        if (status) { status.className = "pill live-err"; status.textContent = "Erro: " + (e.message || String(e)); }
+      }
+    };
+    tick();
+    state.pollTimer = setInterval(tick, POLL_CHART_MS);
+  }
+
+  async function fetchKlinesRaw(symbol, granularity, count) {
+    var interval = typeof NL.granularityToBybitInterval === "function"
+      ? NL.granularityToBybitInterval(granularity) : null;
+    if (!interval) throw new Error("intervalo inválido");
+    var url = BYBIT_KLINES_URL + "?symbol=" + encodeURIComponent(symbol) +
+      "&interval=" + encodeURIComponent(interval) +
+      "&limit=" + Math.min(1000, Math.max(2, count || 10));
+    var res = await fetch(url);
+    var text = await res.text();
+    var msg = NL.parseBybitKlines(text);
+    if (msg.kind !== "candles") {
+      var why = msg.kind === "error" ? msg.code + " - " + msg.message : msg.reason || msg.kind;
+      throw new Error("Bybit klines: " + why);
+    }
+    return msg.candles.slice().sort(function (a, b) { return a.epoch - b.epoch; });
+  }
+
+  async function fetchLatestBybitCandles(symbol, granularity, count) {
+    return closedOnly(await fetchKlinesRaw(symbol, granularity, count), granularity);
+  }
+
+  async function fetchBybitHistory(symbol, granularity, target) {
+    if (typeof NL.fetchBybitCandleHistory === "function") {
+      var proxyFetch = async function (url) {
+        var u = String(url);
+        if (u.indexOf("/v5/market/kline") >= 0) {
+          var q = u.split("?")[1] || "";
+          return fetch(BYBIT_KLINES_URL + (q ? "?" + q : ""));
+        }
+        return fetch(u);
+      };
+      return NL.fetchBybitCandleHistory(symbol, granularity, target, proxyFetch);
+    }
+    var pages = [];
+    var endTime = "";
+    var guard = 0;
+    var interval = NL.granularityToBybitInterval(granularity);
+    while (guard++ < 30) {
+      var url = BYBIT_KLINES_URL + "?symbol=" + encodeURIComponent(symbol) +
+        "&interval=" + encodeURIComponent(interval) + "&limit=1000";
+      if (endTime) url += "&end=" + endTime;
+      var res = await fetch(url);
+      var text = await res.text();
+      var msg = NL.parseBybitKlines(text);
+      if (msg.kind !== "candles" || !msg.candles.length) break;
+      pages.push(msg.candles);
+      var oldest = msg.candles.reduce(function (m, c) { return Math.min(m, c.epoch); }, Infinity);
+      endTime = String(oldest * 1000 - 1);
+      var merged = NL.mergeCandlePages(pages);
+      if (merged.length >= target || msg.candles.length < 1000) break;
+    }
+    return closedOnly(NL.mergeCandlePages(pages), granularity).slice(-target);
+  }
+
+  async function loadChartAndGates() {
+    var status = el("chartStatus");
+    if (status) { status.className = "pill warn"; status.textContent = "A carregar " + state.symbol + "…"; }
+    setStratLoading();
+    try {
+      var hist = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+      state.gateCandles = hist.slice();
+      var recent = hist.slice(-CHART_HISTORY);
+      try {
+        var raw = await fetchKlinesRaw(state.symbol, state.granularity, CHART_HISTORY);
+        if (raw.length) recent = raw.slice(-CHART_HISTORY);
+      } catch (_e) {}
+      state.chartCandles = recent;
+      scheduleRender();
+      if (state.chart && state.candleSeries) {
+        try { state.chart.timeScale().fitContent(); } catch (_e2) {}
+      }
+      startWsFeed();
+      await reevaluateBothGates();
+      startGateTimer();
+    } catch (e) {
+      setFeedMode("err");
+      if (status) { status.className = "pill live-err"; status.textContent = "Gráfico: " + (e.message || String(e)); }
+      var empty = el("chartEmpty");
+      if (empty) { empty.hidden = false; empty.textContent = "Sem velas — " + (e.message || String(e)); }
+      setStratError(e.message || String(e));
+    }
+  }
+
+  function startGateTimer() {
+    if (state.gateTimer) clearInterval(state.gateTimer);
+    state.gateTimer = setInterval(function () { scheduleGateReeval(); }, GATE_REEVAL_MS);
+  }
+
+  var gateEvalPending = false;
+  var gateEvalQueued = false;
+  function scheduleGateReeval() {
+    gateEvalQueued = true;
+    if (gateEvalPending) return;
+    gateEvalPending = true;
+    Promise.resolve().then(async function () {
+      while (gateEvalQueued) {
+        gateEvalQueued = false;
+        await reevaluateBothGates();
+      }
+    }).finally(function () { gateEvalPending = false; });
+  }
+
+  function setStratLoading() {
+    ["LucroRapido", "LossZero"].forEach(function (k) {
+      var badge = el("badge" + k);
+      var status = el("status" + k);
+      var reason = el("reason" + k);
+      if (badge) badge.textContent = "…";
+      if (status) status.textContent = "A analisar…";
+      if (reason) reason.textContent = "A carregar histórico real…";
+    });
+  }
+
+  function setStratError(msg) {
+    ["lucro_rapido", "loss_zero"].forEach(function (id) { renderStratCard(id, null, msg); });
+  }
+
+  function proximityScore(result, allowed) {
+    if (!result) return 0;
+    if (allowed) return 100;
+    var oos = typeof result.oosTrades === "number" ? result.oosTrades : 0;
+    var meanR = typeof result.meanR === "number" ? result.meanR : 0;
+    var p = result.pValue != null && Number.isFinite(result.pValue) ? result.pValue : 1;
+    var score = 0;
+    score += Math.min(40, Math.round((oos / 30) * 40));
+    if (meanR > 0) score += Math.min(30, Math.round((Math.min(meanR, 0.5) / 0.5) * 30));
+    if (p < 0.5) score += Math.min(25, Math.round((1 - p) * 25));
+    return Math.min(85, Math.max(5, score));
+  }
+
+  function gateOptsForPreset(presetId, costFraction, trainSize, testSize) {
+    var preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(presetId) : null;
+    var g = (preset && preset.preferredGate) || {};
+    return {
+      slAtr: g.slAtr || 1.5, tpR: g.tpR || 2, maxBars: g.maxBars || 24,
+      costFraction: costFraction, trainSize: trainSize, testSize: testSize,
+      minLabel: g.minLabel || "PRELIMINARY",
+    };
+  }
+
+  function strategiesFor(presetId) {
+    var raw;
+    if (typeof NL.strategiesForPreset === "function") raw = NL.strategiesForPreset(presetId);
+    else if (presetId === "lucro_rapido") raw = NL.lucroRapidoStrategySet();
+    else if (presetId === "loss_zero") raw = NL.lossZeroStrategySet();
+    else raw = NL.strategyLibrary();
+    var preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(presetId) : null;
+    var slAtr = (preset && preset.preferredGate && preset.preferredGate.slAtr) || 1.5;
+    return raw.map(function (s) {
+      return NL.feasible(s, { slAtr: slAtr, maxStopFraction: 1 / state.minMultiplier });
+    });
+  }
+
+  function evaluatePreset(presetId, candles) {
+    var kind = NL.marketOf(state.symbol);
+    var costFraction = kind && NL.MARKETS[kind] ? NL.MARKETS[kind].assumedCostFraction : 0.001;
+    var n = candles.length;
+    if (n < 1500) {
+      return {
+        allowed: false, reason: "histórico insuficiente (" + n + " velas)",
+        label: "INSUFFICIENT", oosTrades: 0, meanR: 0, pValue: null, strategy: null,
+      };
+    }
+    var trainSize = Math.min(1000, Math.floor(n * 0.4));
+    var testSize = Math.min(500, Math.floor(n * 0.2));
+    var strategies = strategiesFor(presetId);
+    var gate = gateOptsForPreset(presetId, costFraction, trainSize, testSize);
+    return NL.evaluateCandleGate(candles, strategies, gate);
+  }
+
+  async function reevaluateBothGates() {
+    var candles = state.gateCandles;
+    if (!candles || candles.length < 100) {
+      setStratError("à espera de mais velas reais…");
+      return;
+    }
+    try {
+      var tip = await fetchLatestBybitCandles(state.symbol, state.granularity, 5);
+      for (var i = 0; i < tip.length; i++) {
+        var c = tip[i];
+        if (!state.gateCandles.length || c.epoch > state.gateCandles[state.gateCandles.length - 1].epoch) {
+          state.gateCandles.push(c);
+        } else if (c.epoch === state.gateCandles[state.gateCandles.length - 1].epoch) {
+          state.gateCandles[state.gateCandles.length - 1] = c;
+        }
+      }
+      if (state.gateCandles.length > GATE_HISTORY) state.gateCandles = state.gateCandles.slice(-GATE_HISTORY);
+      candles = state.gateCandles;
+    } catch (_e) {}
+
+    var ids = ["lucro_rapido", "loss_zero"];
+    for (var j = 0; j < ids.length; j++) {
+      var id = ids[j];
+      try {
+        var result = evaluatePreset(id, candles);
+        state.liveGates[id] = result;
+        renderStratCard(id, result, null);
+      } catch (e) {
+        state.liveGates[id] = null;
+        renderStratCard(id, null, e.message || String(e));
+      }
+    }
+    syncPlayReadyFromSelection();
+    updateButtons();
+  }
+
+  function renderStratCard(presetId, result, errMsg) {
+    var isLucro = presetId === "lucro_rapido";
+    var key = isLucro ? "LucroRapido" : "LossZero";
+    var label = isLucro ? "Lucro rápido" : "Loss zero";
+    var card = el("card" + key);
+    var dot = el("dot" + key);
+    var badge = el("badge" + key);
+    var status = el("status" + key);
+    var reason = el("reason" + key);
+    var fill = el("fill" + key);
+    var bar = el("bar" + key);
+    if (!card) return;
+    var allowed = !!(result && result.allowed);
+    card.classList.toggle("open", allowed);
+    card.classList.toggle("closed", !allowed);
+    card.classList.toggle("active-pick", state.strategySet === presetId);
+    var score = proximityScore(result, allowed);
+    if (fill) {
+      fill.style.width = score + "%";
+      fill.classList.toggle("ok", allowed);
+      fill.classList.toggle("warn", !allowed && score >= 40);
+      fill.classList.toggle("bad", !allowed && score < 40);
+    }
+    if (bar) bar.setAttribute("aria-valuenow", String(score));
+    if (dot) dot.className = "sem-dot " + (allowed ? "green" : score >= 40 ? "amber" : "red");
+    if (errMsg) {
+      if (badge) badge.textContent = "erro";
+      if (status) status.textContent = "NO TRADE";
+      if (reason) reason.textContent = errMsg;
+      return;
+    }
+    if (!result) {
+      if (badge) badge.textContent = "…";
+      if (status) status.textContent = "NO TRADE";
+      if (reason) reason.textContent = "A aguardar evidência…";
+      return;
+    }
+    if (allowed) {
+      if (badge) badge.textContent = "PODE PLAY";
+      if (status) status.textContent = label + ": PODE PLAY";
+      if (reason) {
+        reason.textContent = (typeof NL.formatCandleGate === "function" ? NL.formatCandleGate(result) : result.reason) ||
+          "Porta aberta (evidência real)";
+      }
+    } else {
+      if (badge) badge.textContent = "NO TRADE";
+      if (status) status.textContent = label + ": NO TRADE";
+      var why = typeof NL.formatCandleGate === "function"
+        ? NL.formatCandleGate(result) : result.reason || result.label || "sem evidência";
+      if (reason) reason.textContent = why;
+    }
+  }
+
+  function syncPlayReadyFromSelection() {
+    var box = el("playReadyBox");
+    var title = el("playReadyTitle");
+    var reason = el("playReadyReason");
+    var fill = el("playReadyFill");
+    var bar = el("playReadyBar");
+    var pct = el("playReadyPct");
+    var dot = el("playReadyDot");
+    var preset = state.strategySet;
+    var label = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : null;
+    var result = preset && state.liveGates[preset] ? state.liveGates[preset] : null;
+    var c1 = el("cardLucroRapido");
+    var c2 = el("cardLossZero");
+    if (c1) c1.classList.toggle("active-pick", preset === "lucro_rapido");
+    if (c2) c2.classList.toggle("active-pick", preset === "loss_zero");
+
+    if (!label) {
+      if (box) { box.classList.add("closed"); box.classList.remove("open"); }
+      if (title) title.textContent = "Escolhe Lucro rápido ou Loss zero";
+      if (reason) reason.textContent = "Indicadores acima atualizam em tempo real com velas Bybit. Verde só com porta real — sem auto-PLAY.";
+      if (fill) fill.style.width = "0%";
+      if (pct) pct.textContent = "0%";
+      if (dot) dot.className = "sem-dot amber";
+      state.prePlayOk = false;
+      state.prePlayGate = null;
+      return;
+    }
+
+    var allowed = !!(result && result.allowed);
+    state.prePlayOk = allowed;
+    state.prePlayGate = result;
+    var score = proximityScore(result, allowed);
+    if (box) { box.classList.toggle("open", allowed); box.classList.toggle("closed", !allowed); }
+    if (title) title.textContent = allowed ? label + ": PODE PLAY" : label + ": NO TRADE";
+    if (reason) {
+      if (!result) reason.textContent = "A aguardar avaliação da porta…";
+      else if (allowed) reason.textContent = "Porta aberta (evidência real). Confirma PLAY manualmente — sem auto-PLAY.";
+      else reason.textContent = typeof NL.formatCandleGate === "function"
+        ? NL.formatCandleGate(result) : "NO TRADE — " + (result.reason || "sem evidência");
+    }
+    if (fill) {
+      fill.style.width = score + "%";
+      fill.classList.toggle("ok", allowed);
+      fill.classList.toggle("warn", !allowed && score >= 40);
+      fill.classList.toggle("bad", !allowed && score < 40);
+    }
+    if (bar) bar.setAttribute("aria-valuenow", String(score));
+    if (pct) pct.textContent = score + "%";
+    if (dot) dot.className = "sem-dot " + (allowed ? "green" : score >= 40 ? "amber" : "red");
+    setGateUI(result, allowed);
+    setPrePlayUI(result);
+  }
+
+  function setGateUI(result, isOpen) {
+    var box = el("gateBox");
+    if (!box) return;
+    var allowed = !!(result && result.allowed && isOpen !== false);
+    box.classList.toggle("open", allowed);
+    box.classList.toggle("closed", !allowed);
+    var gs = el("gateState");
+    var gr = el("gateReason");
+    if (gs) gs.textContent = allowed ? "PORTA ABERTA" : "NO TRADE";
+    if (gr) {
+      gr.textContent = result
+        ? (typeof NL.formatCandleGate === "function" ? NL.formatCandleGate(result) : result.reason)
+        : "A aguardar…";
+    }
+    var set = function (id, v) { var n = el(id); if (n) n.textContent = v; };
+    set("gateLabel", result && result.label ? result.label : "—");
+    set("gateOos", result && typeof result.oosTrades === "number" ? String(result.oosTrades) : "—");
+    set("gateMeanR", result && typeof result.meanR === "number"
+      ? (result.meanR >= 0 ? "+" : "") + result.meanR.toFixed(3) + "R" : "—");
+    set("gateP", result && result.pValue != null && Number.isFinite(result.pValue) ? result.pValue.toFixed(4) : "—");
+    set("gateStrat", result && result.strategy && result.strategy.name ? result.strategy.name : "—");
+    var fill = el("proximityFill");
+    var bar = el("proximityBar");
+    var label = el("proximityLabel");
+    var dot = el("proximityDot");
+    var score = proximityScore(result, allowed);
+    if (fill) {
+      fill.style.width = score + "%";
+      fill.classList.toggle("ok", allowed);
+      fill.classList.toggle("warn", !allowed && score >= 40);
+      fill.classList.toggle("bad", !allowed && score < 40);
+    }
+    if (bar) bar.setAttribute("aria-valuenow", String(score));
+    if (label) {
+      label.textContent = allowed
+        ? "Porta aberta (evidência real) — confirmação PLAY ainda necessária"
+        : result ? "NO TRADE · " + (result.reason || result.label || "") : "A aguardar análise / dados…";
+    }
+    if (dot) dot.className = "sem-dot " + (allowed ? "green" : score >= 40 ? "amber" : "red");
+  }
+
+  function setPrePlayUI(result) {
+    var status = el("prePlayStatus");
+    var metrics = el("prePlayMetrics");
+    if (!status) return;
+    status.classList.remove("open", "closed", "muted");
+    if (!result) {
+      status.classList.add("muted");
+      status.textContent = "Escolhe Lucro rápido ou Loss zero — indicadores atualizam ao vivo.";
+      if (metrics) metrics.hidden = true;
+      return;
+    }
+    status.classList.add(result.allowed ? "open" : "closed");
+    status.textContent = typeof NL.formatCandleGate === "function"
+      ? NL.formatCandleGate(result)
+      : (result.allowed ? "PORTA ABERTA — " + result.reason : "NO TRADE — " + result.reason);
+    if (metrics) {
+      metrics.hidden = false;
+      el("prePlayResult").textContent = result.allowed ? "PORTA ABERTA" : "NO TRADE";
+      el("prePlayLabel").textContent = result.label || "—";
+      el("prePlayOos").textContent = String(result.oosTrades != null ? result.oosTrades : "—");
+      el("prePlayMeanR").textContent = result.meanR != null
+        ? (result.meanR >= 0 ? "+" : "") + Number(result.meanR).toFixed(3) + "R" : "—";
+      el("prePlayP").textContent = result.pValue != null ? Number(result.pValue).toFixed(4) : "—";
+      el("prePlayStrat").textContent = result.strategy && result.strategy.name ? result.strategy.name : "—";
+    }
+  }
+
+  async function loadBybitTradingStatus() {
+    try {
+      var res = await fetch(BYBIT_STATUS_URL);
+      var payload = await res.json().catch(function () { return null; });
+      state.bybitKeysConfigured = !!(payload && payload.keysConfigured);
+      state.bybitRealAvailable = !!(payload && payload.realAvailable);
+      if (!(state.bybitKeysConfigured && state.bybitRealAvailable) && state.tradingMode === "REAL") {
+        state.tradingMode = "PAPER";
+        sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
+      }
+    } catch (_e) {
+      state.bybitKeysConfigured = false;
+      state.bybitRealAvailable = false;
+      if (state.tradingMode === "REAL") {
+        state.tradingMode = "PAPER";
+        sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
+      }
+    }
+    updateTradingModeUI();
+  }
+
+  async function loadBybitSymbols() {
+    var res = await fetch(BYBIT_SYMBOLS_URL);
+    var payload = await res.json().catch(function () { return null; });
+    if (!res.ok) {
+      var why = (payload && (payload.error_description || payload.error)) || ("HTTP " + res.status);
+      throw new Error("Bybit símbolos: " + why);
+    }
+    if (!payload || !Array.isArray(payload.items)) throw new Error("Bybit símbolos: resposta inválida");
+    state.bybitSymbolsAll = payload.items;
+    if (typeof NL.sortBybitUsdtPreferred === "function") {
+      state.bybitSymbolsAll = NL.sortBybitUsdtPreferred(state.bybitSymbolsAll);
+    }
+    state.bybitSymbols = state.bybitSymbolsAll.slice();
+  }
+
+  function renderBybitSymbolSelect() {
+    var sel = el("bybitSymbolSelect");
+    if (!sel) return;
+    var items = state.bybitSymbols.slice();
+    var prev = state.symbol;
+    sel.innerHTML = "";
+    if (!items.length) {
+      var o = document.createElement("option");
+      o.value = ""; o.textContent = "Sem pares…";
+      sel.appendChild(o);
+      return;
+    }
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var opt = document.createElement("option");
+      opt.value = it.symbol;
+      opt.textContent = it.displayName || it.symbol;
+      sel.appendChild(opt);
+    }
+    if (prev && items.some(function (it) { return it.symbol === prev; })) sel.value = prev;
+    else sel.value = items[0].symbol;
+    state.symbol = sel.value;
+  }
+
+  function filterSymbols(q) {
+    var query = String(q || "").trim().toUpperCase();
+    if (!query) state.bybitSymbols = state.bybitSymbolsAll.slice();
+    else {
+      state.bybitSymbols = state.bybitSymbolsAll.filter(function (it) {
+        return it.symbol.indexOf(query) >= 0 ||
+          String(it.displayName || "").toUpperCase().indexOf(query) >= 0;
+      });
+    }
+    renderBybitSymbolSelect();
+  }
+
+  function renderBybitBalance() {
+    var usdtEl = el("bybitBalUsdt");
+    var meta = el("bybitBalMeta");
+    var err = el("bybitBalErr");
+    var grid = el("bybitBalGrid");
+    if (!usdtEl) return;
+    if (state.bybitBalanceError) {
+      usdtEl.textContent = "—";
+      if (meta) meta.textContent = "Bybit: ainda em ligação";
+      if (err) { err.hidden = false; err.textContent = state.bybitBalanceError; }
+      var note = el("bybitLinkingNote");
+      if (note) { note.hidden = false; note.textContent = "Bybit: ainda em ligação…"; }
+      if (grid) grid.hidden = true;
+      return;
+    }
+    var bal = state.bybitBalance;
+    if (!bal) {
+      usdtEl.textContent = "—";
+      if (meta) meta.textContent = "A carregar saldo Bybit…";
+      if (err) err.hidden = true;
+      if (grid) grid.hidden = true;
+      return;
+    }
+    if (err) err.hidden = true;
+    var noteOk = el("bybitLinkingNote");
+    if (noteOk) noteOk.hidden = true;
+    usdtEl.textContent = formatUsdt(bal.usdtWalletBalance != null ? bal.usdtWalletBalance : bal.totalWalletBalance);
+    if (meta) {
+      meta.textContent = (bal.label || "REAL · Bybit UNIFIED") + " · equity " +
+        formatUsdt(bal.usdtEquity != null ? bal.usdtEquity : bal.totalEquity);
+    }
+    if (grid) {
+      grid.hidden = false;
+      var set = function (id, val) { var n = el(id); if (n) n.textContent = val; };
+      set("bybitBalEquity", formatUsdt(bal.totalEquity));
+      set("bybitBalAvail", formatUsdt(bal.totalAvailableBalance));
+      set("bybitBalUpl", formatUsdt(bal.totalPerpUPL));
+      set("bybitBalType", bal.accountType || "UNIFIED");
+    }
+  }
+
+  async function loadBybitBalance() {
+    state.bybitBalanceError = null;
+    renderBybitBalance();
+    try {
+      var res = await fetch(BYBIT_BALANCE_URL + "?coin=USDT");
+      var payload = await res.json().catch(function () { return null; });
+      if (!res.ok || !payload || payload.ok !== true) {
+        var why = (payload && (payload.error_description || payload.error || payload.message)) || ("HTTP " + res.status);
+        state.bybitBalance = null;
+        state.bybitBalanceError = String(why);
+        renderBybitBalance();
+        return false;
+      }
+      state.bybitBalance = payload;
+      state.bybitBalanceError = null;
+      if (payload.keysConfigured) state.bybitKeysConfigured = true;
+      renderBybitBalance();
+      updateTradingModeUI();
+      return true;
+    } catch (e) {
+      state.bybitBalance = null;
+      state.bybitBalanceError = e.message || String(e);
+      renderBybitBalance();
+      return false;
+    }
+  }
+
+  function renderBybitLeverageHint() {
+    var hint = el("bybitLeverageHint");
+    var input = el("bybitLeverage");
+    var info = state.bybitLeverageInfo;
+    if (!hint) return;
+    if (!info) {
+      hint.textContent = "Alavancagem: a carregar intervalo do par… Stake fixa (sem martingale).";
+      return;
+    }
+    hint.textContent = info.symbol + ": alavancagem " + info.minLeverage + "×–" + info.maxLeverage +
+      "× (passo " + info.leverageStep + "). Predefinição " + info.defaultLeverage +
+      "×. Stake fixa em USDT — sem martingale.";
+    if (input) {
+      input.min = String(info.minLeverage);
+      input.max = String(info.maxLeverage);
+      input.step = String(info.leverageStep);
+      var cur = Number(input.value);
+      var clamped = typeof NL.clampBybitLeverage === "function"
+        ? NL.clampBybitLeverage(cur || info.defaultLeverage, info) : info.defaultLeverage;
+      input.value = String(clamped);
+      state.bybitLeverage = clamped;
+    }
+  }
+
+  async function loadBybitLeverage(symbol) {
+    var sym = symbol || state.symbol || "BTCUSDT";
+    try {
+      var res = await fetch(BYBIT_LEVERAGE_URL + "?symbol=" + encodeURIComponent(sym));
+      var payload = await res.json().catch(function () { return null; });
+      if (!res.ok || !payload || payload.ok !== true) {
+        state.bybitLeverageInfo = null;
+        renderBybitLeverageHint();
+        return false;
+      }
+      state.bybitLeverageInfo = payload;
+      state.bybitLeverage = payload.defaultLeverage;
+      renderBybitLeverageHint();
+      return true;
+    } catch (_e) {
+      state.bybitLeverageInfo = null;
+      renderBybitLeverageHint();
+      return false;
+    }
+  }
+
+  function updateTradingModeUI() {
+    var paperEl = el("bybitModePaper");
+    var realEl = el("bybitModeReal");
+    var pill = el("modePill");
+    var banner = el("modeBanner");
+    var sub = el("sessionHeroSub");
+    var actionHint = el("bybitActionHint");
+    var realOn = isRealTradingMode();
+    if (paperEl) {
+      paperEl.classList.toggle("active", state.tradingMode !== "REAL");
+      paperEl.setAttribute("aria-pressed", state.tradingMode !== "REAL" ? "true" : "false");
+    }
+    if (realEl) {
+      var canReal = state.bybitKeysConfigured && state.bybitRealAvailable;
+      realEl.disabled = !canReal;
+      realEl.title = canReal
+        ? "REAL: ordens Bybit Linear via servidor (porta + stake fixa + máx 3 h)"
+        : "REAL bloqueado: faltam chaves no servidor";
+      realEl.classList.toggle("active", state.tradingMode === "REAL" && canReal);
+      realEl.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
+    }
+    if (pill) {
+      pill.textContent = realOn ? "REAL · Bybit" : "PAPER · Bybit";
+      pill.classList.toggle("warn", !realOn);
+      pill.classList.toggle("real-live", realOn);
+    }
+    if (banner) {
+      banner.textContent = realOn ? "REAL" : "PAPER";
+      banner.className = "mode-banner " + (realOn ? "real" : "paper");
+    }
+    if (sub) {
+      sub.textContent = realOn
+        ? "Bybit REAL — ordens futures USDT com dinheiro."
+        : "Bybit PAPER — simulado. Saldo acima = carteira real (só leitura).";
+    }
+    if (actionHint) {
+      actionHint.textContent = realOn
+        ? "REAL: PLAY envia ordens Bybit (porta + stake fixa + máx 3 h). Indicadores = evidência real."
+        : "Indicadores ao vivo. PLAY = PAPER por omissão. REAL só com toggle + confirmação.";
+    }
+  }
+
+  function setTradingMode(next) {
+    var mode = String(next || "").toUpperCase() === "REAL" ? "REAL" : "PAPER";
+    if (mode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
+      pushHistory("REAL indisponível: faltam chaves no servidor.", "stop");
+      return false;
+    }
+    if (state.running) {
+      pushHistory("Para a sessão antes de mudar PAPER/REAL.", "stop");
+      return false;
+    }
+    if (mode === "REAL") {
+      var ok = confirm("Ativar modo REAL?\n\nOrdens reais na Bybit.\nOK = REAL · Cancelar = PAPER");
+      if (!ok) return false;
+    }
+    state.tradingMode = mode;
+    sessionStorage.setItem(TRADING_MODE_KEY, mode);
+    updateTradingModeUI();
+    pushHistory("Modo = " + mode, mode === "REAL" ? "open" : "");
+    return true;
+  }
+
+  function updateButtons() {
+    var hasStrategy = !!(el("bybitStrategy") && el("bybitStrategy").value);
+    var running = state.session && state.session.status === "RUNNING";
+    var paused = state.session && state.session.status === "PAUSED";
+    var gateOk = !!(state.prePlayOk && state.prePlayGate && state.prePlayGate.allowed);
+    var btnA = el("btnBybitAnalyze");
+    var btnP = el("btnBybitPlay");
+    var btnPause = el("btnBybitPause");
+    var btnStop = el("btnBybitStop");
+    if (btnA) btnA.disabled = !hasStrategy || !!running;
+    if (btnP) {
+      btnP.disabled = !hasStrategy || (!!running && !paused);
+      btnP.title = gateOk ? "Porta aberta — iniciar sessão"
+        : hasStrategy ? "NO TRADE — porta fechada para esta estratégia" : "Escolhe Lucro rápido ou Loss zero";
+      btnP.classList.toggle("gate-blocked", hasStrategy && !gateOk && !running);
+    }
+    if (btnPause) btnPause.disabled = !running;
+    if (btnStop) btnStop.disabled = !(running || paused || state.session);
+    var next = el("nextStepText");
+    if (next) {
+      if (running) next.textContent = "Sessão a decorrer — PAUSE ou STOP";
+      else if (paused) next.textContent = "Em pausa — PLAY para continuar ou STOP";
+      else if (!hasStrategy) next.textContent = "1 Escolhe Lucro rápido ou Loss zero";
+      else if (!gateOk) next.textContent = "2 À espera da porta (indicadores ao vivo) · depois PLAY";
+      else next.textContent = "3 Pronto — podes carregar PLAY (manual)";
+    }
+  }
+
+  function setStats(summary) {
+    var set = function (id, v) { var n = el(id); if (n) n.textContent = v; };
+    set("statStatus", summary ? summary.status : "—");
+    set("statPnl", summary ? signed(summary.totalPnl) + (isRealTradingMode() ? " (REAL)" : " (sim)") : "—");
+    set("statTrades", summary ? String(summary.closed) + " / " + summary.opened : "—");
+    set("statDd", summary ? summary.maxDrawdown.toFixed(2) : "—");
+  }
+
+  function readForm() {
+    var sym = el("bybitSymbolSelect");
+    var strat = el("bybitStrategy");
+    var stake = el("bybitStake");
+    var lev = el("bybitLeverage");
+    var mins = el("minutes");
+    var iv = el("bybitInterval");
+    if (sym && sym.value) state.symbol = sym.value;
+    if (strat) state.strategySet = strat.value || "";
+    if (stake) state.stake = Number(stake.value) || 1;
+    if (mins) state.minutes = Math.min(180, Math.max(1, Number(mins.value) || 60));
+    if (iv) state.granularity = Number(iv.value) || 300;
+    if (lev) {
+      var info = state.bybitLeverageInfo;
+      var v = Number(lev.value);
+      if (info && typeof NL.clampBybitLeverage === "function") v = NL.clampBybitLeverage(v, info);
+      state.bybitLeverage = v;
+      lev.value = String(v);
+    }
+  }
+
+  async function switchSymbol(sym) {
+    if (state.running) {
+      pushHistory("Para a sessão antes de mudar o par.", "stop");
+      var sel = el("bybitSymbolSelect");
+      if (sel) sel.value = state.symbol;
+      return;
+    }
+    state.symbol = sym;
+    state.prePlayOk = false;
+    state.prePlayGate = null;
+    stopFeed();
+    await loadBybitLeverage(state.symbol);
+    await loadChartAndGates();
+    updateButtons();
+  }
+
+  async function switchInterval(gran) {
+    if (state.running) {
+      pushHistory("Para a sessão antes de mudar a vela.", "stop");
+      var iv = el("bybitInterval");
+      if (iv) iv.value = String(state.granularity);
+      return;
+    }
+    state.granularity = Number(gran) || 300;
+    stopFeed();
+    initChart();
+    await loadChartAndGates();
+  }
+
+  function qtyFromFixedStake(stake, price) {
+    var s = Number(stake);
+    var px = Number(price);
+    if (!Number.isFinite(s) || s < NL.MIN_STAKE) throw new Error("Stake mínima é " + NL.MIN_STAKE);
+    if (!Number.isFinite(px) || px <= 0) throw new Error("Preço inválido para qty");
+    var qty = s / px;
+    var raw = qty.toFixed(8).replace(/\.?0+$/, "");
+    if (!raw || Number(raw) <= 0) throw new Error("quantity resultante ≤ 0");
+    return raw;
+  }
+
+  async function placeBybitOrder(side, quantity, opts) {
+    opts = opts || {};
+    var reduceOnly = opts.reduceOnly === true;
+    if (!isRealTradingMode()) throw new Error("Ordens reais só em modo REAL");
+    if (!reduceOnly && (!state.controller || !state.controller.isOpen)) {
+      throw new Error("Porta de evidência fechada — NO TRADE");
+    }
+    var started = state.session && state.session.startedAtMs;
+    var elapsed = typeof started === "number" ? Date.now() - started : 0;
+    var body = {
+      mode: "REAL", symbol: state.symbol, side: side, quantity: quantity,
+      stake: state.stake, evidenceAllowed: true, sessionElapsedMs: elapsed,
+    };
+    if (reduceOnly) body.reduceOnly = true;
+    var res = await fetch(BYBIT_ORDER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    var text = await res.text();
+    var payload = null;
+    try { payload = JSON.parse(text); } catch (_e) {}
+    if (!res.ok) {
+      var why = (payload && (payload.error_description || payload.msg || payload.error || payload.retMsg)) || ("HTTP " + res.status);
+      throw new Error("Ordem Bybit: " + why);
+    }
+    return payload || text;
+  }
+
+  async function mirrorRealBybitEvent(e) {
+    if (!isRealTradingMode()) return;
+    if (e.type === "trade_opened") {
+      var side = e.direction === 1 ? "BUY" : "SELL";
+      var qty = qtyFromFixedStake(state.stake, e.entry);
+      state.realOpenQty = qty;
+      state.realOpenSide = side;
+      try {
+        var resp = await placeBybitOrder(side, qty);
+        var oid = resp && ((resp.result && resp.result.orderId) || resp.orderId);
+        pushHistory("REAL Bybit MARKET " + side + " qty=" + qty + (oid ? " orderId=" + oid : ""), "open");
+      } catch (err) {
+        pushHistory("REAL Bybit FALHA open: " + (err.message || String(err)), "stop");
+      }
+      return;
+    }
+    if (e.type === "trade_closed" && state.realOpenQty && state.realOpenSide) {
+      var closeSide = state.realOpenSide === "BUY" ? "SELL" : "BUY";
+      var q = state.realOpenQty;
+      try {
+        var resp2 = await placeBybitOrder(closeSide, q, { reduceOnly: true });
+        var oid2 = resp2 && ((resp2.result && resp2.result.orderId) || resp2.orderId);
+        pushHistory("REAL Bybit FECHA " + closeSide + " qty=" + q + " (reduceOnly)" + (oid2 ? " orderId=" + oid2 : ""),
+          e.r >= 0 ? "close-win" : "close-loss");
+      } catch (err2) {
+        pushHistory("REAL Bybit FALHA close: " + (err2.message || String(err2)), "stop");
+      }
+      state.realOpenQty = null;
+      state.realOpenSide = null;
+    }
+  }
+
+  async function runAnalyze() {
+    readForm();
+    if (!state.strategySet) {
+      pushHistory("Escolhe Lucro rápido ou Loss zero.", "stop");
+      updateButtons();
+      return null;
+    }
+    var btnA = el("btnBybitAnalyze");
+    if (btnA) btnA.disabled = true;
+    pushHistory("A reavaliar porta · " + state.strategySet + " · " + state.symbol + "…", "");
+    try {
+      if (!state.gateCandles.length || state.gateCandles.length < 1500) {
+        state.gateCandles = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+      }
+      await reevaluateBothGates();
+      var result = state.liveGates[state.strategySet];
+      pushHistory("Análise · " + state.strategySet + " · " +
+        (result && result.allowed ? "PORTA ABERTA" : "NO TRADE") + " · " +
+        (result ? result.reason : "sem resultado"),
+        result && result.allowed ? "open" : "stop");
+      return result;
+    } catch (e) {
+      pushHistory("Falha análise: " + (e.message || String(e)), "stop");
+      return null;
+    } finally {
+      updateButtons();
+    }
+  }
+
+  async function startSession() {
+    readForm();
+    if (!state.strategySet) {
+      pushHistory("Escolhe Lucro rápido ou Loss zero antes de PLAY.", "stop");
+      updateButtons();
+      return;
+    }
+    if (state.stake < NL.MIN_STAKE) {
+      pushHistory("Stake mínima é " + NL.MIN_STAKE, "stop");
+      return;
+    }
+    if (state.session && state.session.status === "PAUSED") {
+      var evs = state.session.start(Date.now());
+      for (var i0 = 0; i0 < evs.length; i0++) pushHistory(NL.formatCandleEvent(evs[i0]), "open");
+      setStats(state.session.summary());
+      updateButtons();
+      return;
+    }
+    if (state.running) return;
+
+    await reevaluateBothGates();
+    var pre = state.liveGates[state.strategySet];
+    if (!pre || !pre.allowed) {
+      pushHistory("PLAY bloqueado — NO TRADE: " + (pre ? pre.reason : "sem evidência"), "stop");
+      syncPlayReadyFromSelection();
+      updateButtons();
+      return;
+    }
+
+    if (state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
+      pushHistory("REAL pediu-se mas chaves em falta — a forçar PAPER.", "stop");
+      state.tradingMode = "PAPER";
+      sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
+      updateTradingModeUI();
+    }
+
+    state.realOpenQty = null;
+    state.realOpenSide = null;
+    var btnP = el("btnBybitPlay");
+    if (btnP) btnP.disabled = true;
+    pushHistory((isRealTradingMode() ? "REAL · Bybit" : "PAPER / SIMULADO") +
+      " · " + state.symbol + " · " + state.strategySet, "open");
+
+    try {
+      var history = state.gateCandles;
+      if (!history.length || history.length < 1500) {
+        history = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+        state.gateCandles = history;
+      }
+      var kind = NL.marketOf(state.symbol);
+      var costFraction = kind && NL.MARKETS[kind] ? NL.MARKETS[kind].assumedCostFraction : 0.001;
+      var n = history.length;
+      var trainSize = Math.min(1000, Math.floor(n * 0.4));
+      var testSize = Math.min(500, Math.floor(n * 0.2));
+      var strategies = strategiesFor(state.strategySet);
+      var gate = gateOptsForPreset(state.strategySet, costFraction, trainSize, testSize);
+      var last = history[history.length - 1];
+
+      state.controller = new NL.CandleGateController({
+        strategies: strategies, gate: gate, revalidateEvery: state.revalidateEvery,
+        maxBuffer: 3500, initial: history,
+      });
+      setGateUI(state.controller.result, state.controller.isOpen);
+
+      state.session = new NL.CandlePaperSession({
+        strategy: state.controller.asStrategy(),
+        stake: state.stake, slAtr: gate.slAtr, tpR: gate.tpR, maxBars: gate.maxBars,
+        costFraction: costFraction, maxLoss: state.stake * 10, maxTrades: 50,
+        maxDurationMs: Math.min(state.minutes, 180) * 60 * 1000,
+        maxConsecutiveLosses: 6, cooldownCandles: 0,
+      });
+      state.lastEpoch = last.epoch;
+      state.running = true;
+      var startEvs = state.session.start(last.epoch * 1000);
+      for (var i1 = 0; i1 < startEvs.length; i1++) pushHistory(NL.formatCandleEvent(startEvs[i1]), "open");
+      pushHistory("Sessão " + state.symbol + " | stake fixa " + state.stake + " | lev " +
+        state.bybitLeverage + "× | " + NL.formatCandleGate(state.controller.result) +
+        (isRealTradingMode() ? " | REAL" : " | PAPER — sem ordens reais"), "");
+      setStats(state.session.summary());
+      scheduleSessionPoll();
+    } catch (e) {
+      pushHistory("Erro ao iniciar: " + (e.message || String(e)), "stop");
+      state.running = false;
+    }
+    updateButtons();
+  }
+
+  function pauseSession() {
+    if (!state.session || state.session.status !== "RUNNING") return;
+    var evs = state.session.pause(Date.now());
+    for (var i = 0; i < evs.length; i++) pushHistory(NL.formatCandleEvent(evs[i]), "stop");
+    setStats(state.session.summary());
+    updateButtons();
+  }
+
+  function stopSession() {
+    if (state.sessionPollTimer) { clearTimeout(state.sessionPollTimer); state.sessionPollTimer = null; }
+    if (state.session && state.session.status !== "STOPPED") {
+      var evs = state.session.stop(Date.now());
+      for (var i = 0; i < evs.length; i++) pushHistory(NL.formatCandleEvent(evs[i]), "stop");
+      if (typeof NL.formatCandleSummary === "function") {
+        pushHistory(NL.formatCandleSummary(state.session.summary()).split("\n")[0], "stop");
+      }
+    }
+    state.running = false;
+    setStats(state.session ? state.session.summary() : null);
+    updateButtons();
+  }
+
+  function scheduleSessionPoll() {
+    if (state.sessionPollTimer) clearTimeout(state.sessionPollTimer);
+    state.sessionPollTimer = setTimeout(sessionPollOnce, 15000);
+  }
+
+  async function sessionPollOnce() {
+    if (!state.running || !state.session) return;
+    if (state.session.status === "STOPPED" && !state.session.hasOpenPosition) {
+      state.running = false; updateButtons(); return;
+    }
+    try {
+      var candles = await fetchLatestBybitCandles(state.symbol, state.granularity, 10);
+      var fresh = candles.filter(function (c) { return c.epoch > state.lastEpoch; })
+        .sort(function (a, b) { return a.epoch - b.epoch; });
+      for (var i = 0; i < fresh.length; i++) {
+        var c = fresh[i];
+        state.lastEpoch = c.epoch;
+        var changed = state.controller.push(c);
+        if (changed) setGateUI(state.controller.result, state.controller.isOpen);
+        var events = state.session.onCandle(c);
+        for (var j = 0; j < events.length; j++) {
+          var ev = events[j];
+          var cls = "";
+          if (ev.type === "trade_opened") cls = "open";
+          else if (ev.type === "trade_closed") cls = ev.r >= 0 ? "close-win" : "close-loss";
+          else if (ev.type === "stopped" || ev.type === "paused") cls = "stop";
+          pushHistory(NL.formatCandleEvent(ev), cls);
+          if (isRealTradingMode() && (ev.type === "trade_opened" || ev.type === "trade_closed")) {
+            await mirrorRealBybitEvent(ev);
+          }
+        }
+        setGateUI(state.controller.result, state.controller.isOpen);
+        setStats(state.session.summary());
+      }
+    } catch (e) {
+      pushHistory("Aviso poll sessão: " + (e.message || String(e)), "stop");
+    }
+    if (state.session.status === "STOPPED" && !state.session.hasOpenPosition) {
+      state.running = false; updateButtons(); return;
+    }
+    scheduleSessionPoll();
+    updateButtons();
+  }
+
+  function bind() {
+    var btnBal = el("btnBybitRefreshBal");
+    if (btnBal) btnBal.addEventListener("click", function () { loadBybitBalance(); });
+    var search = el("bybitSymbolSearch");
+    if (search) search.addEventListener("input", function () { filterSymbols(search.value); });
+    var bybitSym = el("bybitSymbolSelect");
+    if (bybitSym) bybitSym.addEventListener("change", function () { switchSymbol(bybitSym.value); });
+    var iv = el("bybitInterval");
+    if (iv) iv.addEventListener("change", function () { switchInterval(iv.value); });
+    var bybitStrat = el("bybitStrategy");
+    if (bybitStrat) {
+      bybitStrat.addEventListener("change", function () {
+        state.strategySet = bybitStrat.value || "";
+        syncPlayReadyFromSelection();
+        updateButtons();
+      });
+    }
+    ["cardLucroRapido", "cardLossZero"].forEach(function (id) {
+      var card = el(id);
+      if (!card) return;
+      card.style.cursor = "pointer";
+      card.addEventListener("click", function () {
+        var preset = card.getAttribute("data-preset");
+        var sel = el("bybitStrategy");
+        if (sel && preset) {
+          sel.value = preset;
+          state.strategySet = preset;
+          syncPlayReadyFromSelection();
+          updateButtons();
+        }
+      });
+    });
+    var bybitStake = el("bybitStake");
+    if (bybitStake) bybitStake.addEventListener("change", function () { state.stake = Number(bybitStake.value) || 1; });
+    var bybitLev = el("bybitLeverage");
+    if (bybitLev) bybitLev.addEventListener("change", function () { readForm(); });
+    var btnA = el("btnBybitAnalyze");
+    if (btnA) btnA.addEventListener("click", function () { runAnalyze(); });
+    var btnP = el("btnBybitPlay");
+    if (btnP) btnP.addEventListener("click", function () { startSession(); });
+    var btnPause = el("btnBybitPause");
+    if (btnPause) btnPause.addEventListener("click", function () { pauseSession(); });
+    var btnStop = el("btnBybitStop");
+    if (btnStop) btnStop.addEventListener("click", function () { stopSession(); });
+    var modePaper = el("bybitModePaper");
+    var modeReal = el("bybitModeReal");
+    if (modePaper) modePaper.addEventListener("click", function () { setTradingMode("PAPER"); });
+    if (modeReal) modeReal.addEventListener("click", function () { setTradingMode("REAL"); });
+    var btnClear = el("btnClearLog");
+    if (btnClear) btnClear.addEventListener("click", function () { state.historyLines = []; renderHistory(); });
+    var btnGateToggle = el("btnGateToggle");
+    if (btnGateToggle) {
+      btnGateToggle.addEventListener("click", function () {
+        var m = el("gateMetrics");
+        if (!m) return;
+        var open = m.hasAttribute("hidden");
+        if (open) m.removeAttribute("hidden"); else m.setAttribute("hidden", "");
+        btnGateToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    }
+  }
+
+  async function boot() {
+    if (!token) { showLoginGate(); return; }
+    showApp();
+    bind();
+    initChart();
+    setStats(null);
+    setGateUI(null, false);
+    updateTradingModeUI();
+    updateButtons();
+    pushHistory("Bybit page · sessão Deriv OK · a carregar…", "");
+    await loadBybitTradingStatus();
+    try {
+      await loadBybitSymbols();
+      renderBybitSymbolSelect();
+      pushHistory("Símbolos Bybit: " + state.bybitSymbolsAll.length + " perpetual USDT", "open");
+    } catch (e) {
+      pushHistory("Símbolos: " + (e.message || String(e)), "stop");
+      var note = el("bybitLinkingNote");
+      if (note) { note.hidden = false; note.textContent = "Bybit: ainda em ligação…"; }
+    }
+    await loadBybitBalance();
+    await loadBybitLeverage(state.symbol);
+    await loadChartAndGates();
+    updateButtons();
+  }
+
+  boot();
+})();

@@ -1111,6 +1111,11 @@
 
   async function setWorld(next) {
     const w = next === "bybit" ? "bybit" : "deriv";
+    if (w === "bybit") {
+      // Bybit lives on /bybit — do not mix into Deriv dashboard.
+      location.href = "/bybit";
+      return false;
+    }
     if (state.running && w !== state.world) {
       pushHistory("Para a sessão antes de mudar Deriv/Bybit.", "stop");
       return false;
@@ -2673,11 +2678,14 @@
     });
     const btnOpenBybit = el("btnOpenBybit");
     if (btnOpenBybit) {
-      btnOpenBybit.addEventListener("click", function () {
-        setWorld("bybit").then(function () {
-          setActiveView("operar");
-          refreshChartPreview();
-        });
+      // Bybit is a separate page (/bybit). Keep listener only if still a <button>.
+      btnOpenBybit.addEventListener("click", function (ev) {
+        if (btnOpenBybit.tagName === "A" && btnOpenBybit.getAttribute("href")) {
+          // native navigation
+          return;
+        }
+        ev.preventDefault();
+        location.href = "/bybit";
       });
     }
     const btnCloseBybit = el("btnCloseBybit");
@@ -2868,8 +2876,9 @@
       await connectWs();
       await loadSymbols();
       // Pós-login Deriv: painel dígitos por omissão. Bybit só via botão (após auth).
-      var savedWorld = sessionStorage.getItem(WORLD_KEY);
-      state.world = savedWorld === "bybit" ? "bybit" : "deriv";
+      // Dashboard is Deriv-only; Bybit is /bybit.
+      sessionStorage.setItem(WORLD_KEY, "deriv");
+      state.world = "deriv";
       var savedMode = sessionStorage.getItem(TRADING_MODE_KEY);
       state.tradingMode = savedMode === "REAL" ? "REAL" : "PAPER";
       await loadBybitTradingStatus();
@@ -2888,16 +2897,7 @@
           note.textContent = "Bybit: ainda em ligação…";
         }
       }
-      if (state.world === "bybit") {
-        state.panel = "crypto";
-        state.dataSource = "bybit";
-        sessionStorage.setItem(SOURCE_KEY, "bybit");
-        state.symbol = (state.bybitSymbols[0] && state.bybitSymbols[0].symbol) || "BTCUSDT";
-        applyWorldUI();
-        await loadBybitBalance();
-        await loadBybitLeverage(state.symbol);
-        syncBybitFormFromState();
-      } else {
+      {
         state.panel = "digits";
         state.dataSource = "deriv";
         sessionStorage.setItem(SOURCE_KEY, "deriv");
@@ -2910,7 +2910,7 @@
       renderChips();
       renderAllMarketPanelSelects();
       pushHistory(
-        "Pronto · Deriv ligado · painéis dígitos/forex/metais/cripto. Bybit = botão (futures USDT, " +
+        "Pronto · Deriv ligado · painéis dígitos/forex/metais/cripto. Bybit = /bybit (futures USDT, " +
           state.bybitSymbols.length +
           " pares" +
           (state.bybitKeysConfigured ? ", chaves OK" : "") +
