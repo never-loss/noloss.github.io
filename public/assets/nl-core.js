@@ -25,6 +25,10 @@ var NL = (() => {
     BINANCE_FUTURES_PUBLIC_BASES: () => BINANCE_FUTURES_PUBLIC_BASES,
     BINANCE_PREFERRED_USDT: () => BINANCE_PREFERRED_USDT,
     BINANCE_PUBLIC_BASES: () => BINANCE_PUBLIC_BASES,
+    BYBIT_PATH_INSTRUMENTS: () => BYBIT_PATH_INSTRUMENTS,
+    BYBIT_PATH_KLINE: () => BYBIT_PATH_KLINE,
+    BYBIT_PREFERRED_USDT: () => BYBIT_PREFERRED_USDT,
+    BYBIT_PUBLIC_BASES: () => BYBIT_PUBLIC_BASES,
     CandleGateController: () => CandleGateController,
     CandlePaperSession: () => CandlePaperSession,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
@@ -37,6 +41,9 @@ var NL = (() => {
     binanceBaseAsset: () => binanceBaseAsset,
     binanceFetch: () => binanceFetch,
     binanceIntervalToSeconds: () => binanceIntervalToSeconds,
+    bybitBaseAsset: () => bybitBaseAsset,
+    bybitFetch: () => bybitFetch,
+    bybitIntervalToSeconds: () => bybitIntervalToSeconds,
     cryptoBaseLabel: () => cryptoBaseLabel,
     cryptoSourceOf: () => cryptoSourceOf,
     dailyTrendAtrBreakout: () => dailyTrendAtrBreakout,
@@ -46,14 +53,20 @@ var NL = (() => {
     fetchBinanceCandleHistory: () => fetchBinanceCandleHistory,
     fetchBinanceKlinesPage: () => fetchBinanceKlinesPage,
     fetchBinanceUsdtSymbols: () => fetchBinanceUsdtSymbols,
+    fetchBybitCandleHistory: () => fetchBybitCandleHistory,
+    fetchBybitKlinesPage: () => fetchBybitKlinesPage,
+    fetchBybitUsdtSymbols: () => fetchBybitUsdtSymbols,
     filterCryptoUsd: () => filterCryptoUsd,
     formatCandleEvent: () => formatCandleEvent,
     formatCandleGate: () => formatCandleGate,
     formatCandleSummary: () => formatCandleSummary,
     formatMt5StatusBlock: () => formatMt5StatusBlock,
     granularityToBinanceInterval: () => granularityToBinanceInterval,
+    granularityToBybitInterval: () => granularityToBybitInterval,
     isBinanceUsdtSymbol: () => isBinanceUsdtSymbol,
+    isBybitUsdtSymbol: () => isBybitUsdtSymbol,
     isCryptoUsd: () => isCryptoUsd,
+    isLinearUsdtPerpetual: () => isLinearUsdtPerpetual,
     isOptionsFeedOnly: () => isOptionsFeedOnly,
     isScheduledOpen: () => isScheduledOpen,
     isUsdtmPerpetual: () => isUsdtmPerpetual,
@@ -63,6 +76,7 @@ var NL = (() => {
     marketOf: () => marketOf,
     marketStatus: () => marketStatus,
     maxStopFromMultiplier: () => maxStopFromMultiplier,
+    mergeBybitInstrumentPages: () => mergeBybitInstrumentPages,
     mergeCandlePages: () => mergeCandlePages,
     mergeCryptoUsdListings: () => mergeCryptoUsdListings,
     nextCandleEnd: () => nextCandleEnd,
@@ -71,12 +85,16 @@ var NL = (() => {
     parseBinanceFuturesExchangeInfo: () => parseBinanceFuturesExchangeInfo,
     parseBinanceFuturesKlines: () => parseBinanceFuturesKlines,
     parseBinanceKlines: () => parseBinanceKlines,
+    parseBybitInstrumentsPage: () => parseBybitInstrumentsPage,
+    parseBybitKlines: () => parseBybitKlines,
     parseCandlesMessage: () => parseCandlesMessage,
     sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
+    sortBybitUsdtPreferred: () => sortBybitUsdtPreferred,
     strategiesForPreset: () => strategiesForPreset,
     strategyLibrary: () => strategyLibrary,
     strategyPreset: () => strategyPreset,
-    summarizeMarkets: () => summarizeMarkets
+    summarizeMarkets: () => summarizeMarkets,
+    toBybitInterval: () => toBybitInterval
   });
 
   // src/core/markets.ts
@@ -544,6 +562,326 @@ var NL = (() => {
     let endTimeMs;
     for (let page = 0; page < 30 && byEpoch.size < target + 5; page++) {
       const batch = await fetchBinanceKlinesPage(symbol, interval, 1e3, endTimeMs, fetchImpl);
+      if (batch.length === 0) break;
+      for (const c of batch) byEpoch.set(c.epoch, c);
+      const oldest = batch.reduce((m, c) => Math.min(m, c.epoch), Infinity);
+      const nextEnd = oldest * 1e3 - 1;
+      if (endTimeMs !== void 0 && nextEnd >= endTimeMs) break;
+      endTimeMs = nextEnd;
+      if (batch.length < 1e3) break;
+    }
+    const nowSec = nowMs / 1e3;
+    const closed2 = [...byEpoch.values()].filter((c) => c.epoch + granularitySec <= nowSec).sort((a, b) => a.epoch - b.epoch);
+    return closed2.slice(-target);
+  }
+
+  // src/core/bybit.ts
+  var BYBIT_PUBLIC_BASES = [
+    "https://api.bybit.com",
+    "https://api.bytick.com"
+  ];
+  var BYBIT_PATH_INSTRUMENTS = "/v5/market/instruments-info";
+  var BYBIT_PATH_KLINE = "/v5/market/kline";
+  var GRANULARITY_TO_INTERVAL2 = {
+    60: "1",
+    180: "3",
+    300: "5",
+    900: "15",
+    1800: "30",
+    3600: "60",
+    7200: "120",
+    14400: "240",
+    21600: "360",
+    43200: "720",
+    86400: "D"
+  };
+  var LABEL_TO_BYBIT = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1h": "60",
+    "2h": "120",
+    "4h": "240",
+    "6h": "360",
+    "12h": "720",
+    "1d": "D",
+    D: "D",
+    "1": "1",
+    "3": "3",
+    "5": "5",
+    "15": "15",
+    "30": "30",
+    "60": "60",
+    "120": "120",
+    "240": "240",
+    "360": "360",
+    "720": "720"
+  };
+  function granularityToBybitInterval(seconds) {
+    if (!Number.isInteger(seconds) || seconds < 60) return null;
+    return GRANULARITY_TO_INTERVAL2[seconds] ?? null;
+  }
+  function bybitIntervalToSeconds(interval) {
+    for (const [sec, label] of Object.entries(GRANULARITY_TO_INTERVAL2)) {
+      if (label === interval) return Number(sec);
+    }
+    return null;
+  }
+  function toBybitInterval(label) {
+    return LABEL_TO_BYBIT[label] ?? null;
+  }
+  function isBybitUsdtSymbol(symbol) {
+    return /^[A-Z0-9]{2,20}USDT$/.test(symbol);
+  }
+  function bybitBaseAsset(symbol) {
+    const m = /^([A-Z0-9]+)USDT$/.exec(symbol);
+    return m ? m[1] : symbol;
+  }
+  function parseObject3(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return "JSON inv\xE1lido";
+    }
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      return "Mensagem n\xE3o \xE9 um objeto";
+    }
+    return data;
+  }
+  function num3(v) {
+    const x = typeof v === "string" ? Number(v) : v;
+    return typeof x === "number" && Number.isFinite(x) ? x : null;
+  }
+  function bybitError(obj) {
+    if (typeof obj.retCode === "number" && obj.retCode !== 0) {
+      const msg = typeof obj.retMsg === "string" ? obj.retMsg : "Bybit error";
+      return { kind: "error", code: String(obj.retCode), message: msg };
+    }
+    return null;
+  }
+  function isLinearUsdtPerpetual(e) {
+    const symbol = typeof e.symbol === "string" ? e.symbol : null;
+    if (!symbol || !isBybitUsdtSymbol(symbol)) return false;
+    const contractType = typeof e.contractType === "string" ? e.contractType : null;
+    if (contractType !== "LinearPerpetual") return false;
+    const status = typeof e.status === "string" ? e.status : null;
+    if (status !== "Trading") return false;
+    const quote = typeof e.quoteCoin === "string" ? e.quoteCoin : null;
+    if (quote !== "USDT") return false;
+    const settle = typeof e.settleCoin === "string" ? e.settleCoin : null;
+    if (settle != null && settle !== "USDT") return false;
+    if (e.isPreListing === true) return false;
+    return true;
+  }
+  function parseBybitInstrumentsPage(raw) {
+    const obj = parseObject3(raw);
+    if (typeof obj === "string") return { kind: "invalid", reason: obj };
+    const err = bybitError(obj);
+    if (err) return err;
+    const result = obj.result;
+    if (typeof result !== "object" || result === null || Array.isArray(result)) {
+      return { kind: "invalid", reason: "result em falta" };
+    }
+    const r = result;
+    if (!Array.isArray(r.list)) return { kind: "invalid", reason: "list em falta" };
+    const items = [];
+    let skipped = 0;
+    for (const entry of r.list) {
+      if (typeof entry !== "object" || entry === null) {
+        skipped += 1;
+        continue;
+      }
+      const e = entry;
+      if (!isLinearUsdtPerpetual(e)) {
+        skipped += 1;
+        continue;
+      }
+      const symbol = e.symbol;
+      const base = typeof e.baseCoin === "string" ? e.baseCoin : bybitBaseAsset(symbol);
+      items.push({
+        symbol,
+        displayName: `${base}/USDT (Bybit Linear USDT)`,
+        market: "cryptocurrency",
+        submarket: "bybit_linear_usdt",
+        open: true,
+        suspended: false
+      });
+    }
+    items.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    const nextCursor = typeof r.nextPageCursor === "string" && r.nextPageCursor ? r.nextPageCursor : void 0;
+    return { kind: "symbols", items, skipped, nextCursor };
+  }
+  function mergeBybitInstrumentPages(pages) {
+    const bySym = /* @__PURE__ */ new Map();
+    let skipped = 0;
+    for (const page of pages) {
+      if (page.kind === "error") return page;
+      if (page.kind === "invalid") return page;
+      skipped += page.skipped;
+      for (const it of page.items) bySym.set(it.symbol, it);
+    }
+    const items = [...bySym.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+    return { kind: "symbols", items, skipped };
+  }
+  function parseBybitKlines(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return { kind: "invalid", reason: "JSON inv\xE1lido" };
+    }
+    if (Array.isArray(data)) {
+      return parseKlineRows(
+        data,
+        /* alreadyOldestFirst */
+        true
+      );
+    }
+    if (typeof data !== "object" || data === null) {
+      return { kind: "invalid", reason: "klines n\xE3o \xE9 um objeto" };
+    }
+    const obj = data;
+    const err = bybitError(obj);
+    if (err) return err;
+    const result = obj.result;
+    if (typeof result !== "object" || result === null || Array.isArray(result)) {
+      return { kind: "invalid", reason: "result em falta" };
+    }
+    const list = result.list;
+    if (!Array.isArray(list)) return { kind: "invalid", reason: "list em falta" };
+    return parseKlineRows([...list].reverse(), true);
+  }
+  function parseKlineRows(rows, _oldestFirst) {
+    const candles = [];
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 5) {
+        return { kind: "invalid", reason: "vela Bybit inv\xE1lida" };
+      }
+      const openTimeMs = num3(row[0]);
+      const open = num3(row[1]);
+      const high = num3(row[2]);
+      const low = num3(row[3]);
+      const close = num3(row[4]);
+      if (openTimeMs === null || open === null || high === null || low === null || close === null) {
+        return { kind: "invalid", reason: "vela Bybit com campos em falta ou inv\xE1lidos" };
+      }
+      if (!Number.isInteger(openTimeMs) || openTimeMs < 0) {
+        return { kind: "invalid", reason: "openTime inv\xE1lido" };
+      }
+      const epoch = Math.floor(openTimeMs / 1e3);
+      if (high < low || high < Math.max(open, close) || low > Math.min(open, close)) {
+        return { kind: "invalid", reason: "vela incoerente (m\xE1ximo/m\xEDnimo)" };
+      }
+      candles.push({ epoch, open, high, low, close });
+    }
+    return { kind: "candles", candles };
+  }
+  var BYBIT_PREFERRED_USDT = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "ADAUSDT",
+    "DOGEUSDT",
+    "AVAXUSDT",
+    "DOTUSDT",
+    "LINKUSDT",
+    "LTCUSDT",
+    "MATICUSDT",
+    "TRXUSDT",
+    "ATOMUSDT",
+    "NEARUSDT",
+    "UNIUSDT"
+  ];
+  function sortBybitUsdtPreferred(items) {
+    const rank = new Map(BYBIT_PREFERRED_USDT.map((s, i) => [s, i]));
+    return [...items].sort((a, b) => {
+      const ra = rank.has(a.symbol) ? rank.get(a.symbol) : 1e3;
+      const rb = rank.has(b.symbol) ? rank.get(b.symbol) : 1e3;
+      if (ra !== rb) return ra - rb;
+      return a.symbol.localeCompare(b.symbol);
+    });
+  }
+  async function bybitFetch(pathAndQuery, fetchImpl = fetch) {
+    const path = pathAndQuery.startsWith("/") ? pathAndQuery : `/${pathAndQuery}`;
+    let lastErr = null;
+    for (const base of BYBIT_PUBLIC_BASES) {
+      try {
+        const res = await fetchImpl(`${base}${path}`);
+        const text = await res.text();
+        if (res.ok) return { base, text, status: res.status };
+        if (res.status === 403 || res.status === 418 || res.status === 429 || res.status === 451) {
+          lastErr = new Error(`Bybit ${res.status} em ${base}`);
+          continue;
+        }
+        return { base, text, status: res.status };
+      } catch (e) {
+        lastErr = e instanceof Error ? e : new Error(String(e));
+      }
+    }
+    throw lastErr ?? new Error("Bybit inacess\xEDvel");
+  }
+  async function fetchBybitUsdtSymbols(fetchImpl = fetch) {
+    const pages = [];
+    let cursor;
+    for (let i = 0; i < 20; i++) {
+      let path = `${BYBIT_PATH_INSTRUMENTS}?category=linear&status=Trading&limit=500`;
+      if (cursor) path += `&cursor=${encodeURIComponent(cursor)}`;
+      const { text, status } = await bybitFetch(path, fetchImpl);
+      if (status < 200 || status >= 300) {
+        const parsed = parseBybitInstrumentsPage(text);
+        if (parsed.kind === "error") throw new Error(`Bybit instruments: ${parsed.code} \u2014 ${parsed.message}`);
+        throw new Error(`Bybit instruments HTTP ${status}`);
+      }
+      const page = parseBybitInstrumentsPage(text);
+      if (page.kind !== "symbols") {
+        const why = page.kind === "error" ? `${page.code} \u2014 ${page.message}` : page.reason;
+        throw new Error(`Bybit instruments: ${why}`);
+      }
+      pages.push(page);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    const merged = mergeBybitInstrumentPages(pages);
+    if (merged.kind !== "symbols") {
+      const why = merged.kind === "error" ? `${merged.code} \u2014 ${merged.message}` : merged.reason;
+      throw new Error(`Bybit instruments: ${why}`);
+    }
+    return sortBybitUsdtPreferred(merged.items);
+  }
+  async function fetchBybitKlinesPage(symbol, interval, limit, endTimeMs, fetchImpl = fetch) {
+    if (!isBybitUsdtSymbol(symbol)) throw new RangeError(`s\xEDmbolo Bybit inv\xE1lido: ${symbol}`);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1e3) {
+      throw new RangeError(`limit inv\xE1lido: ${limit}`);
+    }
+    let path = `${BYBIT_PATH_KLINE}?category=linear&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+    if (endTimeMs !== void 0) {
+      if (!Number.isInteger(endTimeMs) || endTimeMs < 0) throw new RangeError(`endTimeMs inv\xE1lido: ${endTimeMs}`);
+      path += `&end=${endTimeMs}`;
+    }
+    const { text, status } = await bybitFetch(path, fetchImpl);
+    const msg = parseBybitKlines(text);
+    if (status < 200 || status >= 300 || msg.kind !== "candles") {
+      if (msg.kind === "error") throw new Error(`Bybit klines: ${msg.code} \u2014 ${msg.message}`);
+      if (msg.kind === "invalid") throw new Error(`Bybit klines: ${msg.reason}`);
+      throw new Error(`Bybit klines HTTP ${status}`);
+    }
+    return msg.candles;
+  }
+  async function fetchBybitCandleHistory(symbol, granularitySec, target, fetchImpl = fetch, nowMs = Date.now()) {
+    const interval = granularityToBybitInterval(granularitySec);
+    if (!interval) throw new RangeError(`granularity n\xE3o suportada na Bybit: ${granularitySec}`);
+    if (!Number.isInteger(target) || target < 1 || target > 2e4) {
+      throw new RangeError(`target inv\xE1lido: ${target}`);
+    }
+    const byEpoch = /* @__PURE__ */ new Map();
+    let endTimeMs;
+    for (let page = 0; page < 30 && byEpoch.size < target + 5; page++) {
+      const batch = await fetchBybitKlinesPage(symbol, interval, 1e3, endTimeMs, fetchImpl);
       if (batch.length === 0) break;
       for (const c of batch) byEpoch.set(c.epoch, c);
       const oldest = batch.reduce((m, c) => Math.min(m, c.epoch), Infinity);

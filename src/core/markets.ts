@@ -23,7 +23,7 @@ export const MARKET_ORDER: readonly MarketKind[] = ["forex", "metals", "crypto"]
 /** A que mercado pertence um símbolo da Deriv (null = outro, por exemplo índices sintéticos). */
 export function marketOf(symbol: string): MarketKind | null {
   if (/^cry[A-Z0-9]+USD$/.test(symbol)) return "crypto";
-  // Binance USDⓈ-M Futures perpetual (ex.: BTCUSDT) — dados públicos fapi; paper por omissão.
+  // Bybit linear USDT perpetual (ex.: BTCUSDT) — dados públicos v5; paper por omissão. (Binance legado unused.)
   if (/^[A-Z0-9]{2,20}USDT$/.test(symbol)) return "crypto";
   if (/^frx(XAU|XAG|XPD|XPT)[A-Z]{3}$/.test(symbol)) return "metals";
   if (/^frx[A-Z]{6}$/.test(symbol)) return "forex";

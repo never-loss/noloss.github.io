@@ -43,6 +43,28 @@ export {
 } from "../core/binance.ts";
 export type { BinanceInterval, BinanceSymbolsMessage, BinanceKlinesMessage } from "../core/binance.ts";
 
+export {
+  BYBIT_PUBLIC_BASES,
+  BYBIT_PATH_INSTRUMENTS,
+  BYBIT_PATH_KLINE,
+  BYBIT_PREFERRED_USDT,
+  granularityToBybitInterval,
+  bybitIntervalToSeconds,
+  toBybitInterval,
+  isBybitUsdtSymbol,
+  bybitBaseAsset,
+  isLinearUsdtPerpetual,
+  parseBybitInstrumentsPage,
+  mergeBybitInstrumentPages,
+  parseBybitKlines,
+  sortBybitUsdtPreferred,
+  bybitFetch,
+  fetchBybitUsdtSymbols,
+  fetchBybitKlinesPage,
+  fetchBybitCandleHistory,
+} from "../core/bybit.ts";
+export type { BybitInterval, BybitSymbolsMessage, BybitKlinesMessage } from "../core/bybit.ts";
+
 
 export { mergeCandlePages, nextCandleEnd } from "../core/candle-pages.ts";
 

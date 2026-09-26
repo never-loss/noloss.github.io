@@ -1,4 +1,4 @@
-/* NEVER LOSS dashboard — paper por omissão; Cripto = Binance Futures USDT-M; REAL atrás de chaves servidor. */
+/* NEVER LOSS dashboard — paper por omissão; Cripto = Bybit Linear USDT; REAL atrás de chaves servidor (PR2). */
 (function () {
   "use strict";
 
@@ -7,10 +7,11 @@
   const PUBLIC_WS = "wss://api.derivws.com/trading/v1/options/ws/public";
   const ACCOUNT_KEY = "nl_selected_account_id";
   const SOURCE_KEY = "nl_market_source";
-  const BINANCE_SYMBOLS_URL = "/api/binance-futures-symbols";
-  const BINANCE_KLINES_URL = "/api/binance-futures-klines";
-  const BINANCE_STATUS_URL = "/api/binance-futures-status";
-  const BINANCE_ORDER_URL = "/api/binance-futures-order";
+  const BYBIT_SYMBOLS_URL = "/api/bybit-symbols";
+  const BYBIT_KLINES_URL = "/api/bybit-klines";
+  const BYBIT_STATUS_URL = "/api/bybit-status";
+  // REAL order path reserved for PR2 — keep unused so PAPER cannot hit signed endpoints.
+  const BYBIT_ORDER_URL = "/api/bybit-order";
   const TRADING_MODE_KEY = "nl_crypto_trading_mode";
 
   const NL = window.NL;
@@ -32,11 +33,12 @@
     selectedAccount: null,
     symbols: [],
     activeCrypto: [],
-    binanceSymbols: [],
-    // Cripto = sempre Binance Futures USDT-M; dígitos/forex = Deriv. Fonte segue o painel.
-    dataSource: "binance",
+    bybitSymbols: [],
+    // Cripto = sempre Bybit Linear USDT; dígitos/forex = Deriv. Fonte segue o painel.
+    dataSource: "bybit",
     tradingMode: "PAPER",
-    binanceKeysConfigured: false,
+    bybitKeysConfigured: false,
+    bybitRealAvailable: false,
     panel: "crypto",
     ws: null,
     nextId: 1,
@@ -335,18 +337,18 @@
     });
   }
 
-  function isBinanceSource() {
-    return state.dataSource === "binance";
+  function isBybitSource() {
+    return state.dataSource === "bybit" || state.dataSource === "binance";
   }
 
   function sourceLabel() {
-    return isBinanceSource()
-      ? ("Binance Futures USDT-M · " + (state.tradingMode === "REAL" ? "REAL" : "PAPER / SIMULADO"))
+    return isBybitSource()
+      ? ("Bybit Linear USDT · " + (state.tradingMode === "REAL" ? "REAL" : "PAPER / SIMULADO"))
       : "Deriv Options";
   }
 
   function isRealTradingMode() {
-    return isBinanceSource() && state.tradingMode === "REAL" && state.binanceKeysConfigured;
+    return isBybitSource() && state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable;
   }
 
   function updateTradingModeUI() {
@@ -354,43 +356,45 @@
     const hint = el("tradingModeHint");
     const paperBtn = el("modePaper");
     const realBtn = el("modeReal");
-    const onBinance = isBinanceSource();
-    if (toggle) toggle.hidden = !onBinance;
-    if (hint) hint.hidden = !onBinance;
-    if (!onBinance) return;
+    const onBybit = isBybitSource();
+    if (toggle) toggle.hidden = !onBybit;
+    if (hint) hint.hidden = !onBybit;
+    if (!onBybit) return;
     if (paperBtn) {
       paperBtn.classList.toggle("active", state.tradingMode !== "REAL");
       paperBtn.setAttribute("aria-pressed", state.tradingMode !== "REAL" ? "true" : "false");
     }
     if (realBtn) {
-      const canReal = state.binanceKeysConfigured;
+      const canReal = state.bybitKeysConfigured && state.bybitRealAvailable;
       realBtn.disabled = !canReal;
       realBtn.title = canReal
-        ? "REAL: ordens Futures USDT-M via servidor (porta de evidência + stake fixa + máx 3 h)"
-        : "Indisponível: configura BINANCE_API_KEY + BINANCE_API_PRIVATE_KEY (Ed25519) ou BINANCE_API_SECRET no servidor (nunca no chat)";
+        ? "REAL: ordens Bybit Linear via servidor (porta de evidência + stake fixa + máx 3 h)"
+        : "Indisponível: REAL ainda não ligado (PR2) ou faltam BYBIT_API_KEY + BYBIT_API_SECRET no servidor (nunca no chat)";
       realBtn.classList.toggle("active", state.tradingMode === "REAL" && canReal);
       realBtn.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
     }
     if (hint) {
-      hint.textContent = state.binanceKeysConfigured
+      hint.textContent = state.bybitRealAvailable && state.bybitKeysConfigured
         ? (state.tradingMode === "REAL"
           ? "REAL ativo: ordens MARKET só com porta aberta, stake fixa, sem martingale, STOP aos 3 h. Chaves só no servidor."
           : "PAPER / SIMULADO (omissão). Chaves detetadas no servidor — podes mudar para REAL explicitamente.")
-        : "PAPER / SIMULADO (omissão). REAL bloqueado até existirem BINANCE_API_KEY + BINANCE_API_PRIVATE_KEY (Ed25519) ou BINANCE_API_SECRET no servidor. Não colar secrets no chat.";
+        : "PAPER / SIMULADO (omissão). REAL bloqueado nesta fase (market+paper). Chaves BYBIT_* no servidor ativam REAL só após PR2. Não colar secrets no chat.";
     }
   }
 
-  async function loadBinanceTradingStatus() {
+  async function loadBybitTradingStatus() {
     try {
-      const res = await fetch(BINANCE_STATUS_URL);
+      const res = await fetch(BYBIT_STATUS_URL);
       const payload = await res.json().catch(function () { return null; });
-      state.binanceKeysConfigured = !!(payload && payload.keysConfigured);
-      if (!state.binanceKeysConfigured && state.tradingMode === "REAL") {
+      state.bybitKeysConfigured = !!(payload && payload.keysConfigured);
+      state.bybitRealAvailable = !!(payload && payload.realAvailable);
+      if (!(state.bybitKeysConfigured && state.bybitRealAvailable) && state.tradingMode === "REAL") {
         state.tradingMode = "PAPER";
         sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
       }
     } catch (_e) {
-      state.binanceKeysConfigured = false;
+      state.bybitKeysConfigured = false;
+      state.bybitRealAvailable = false;
       if (state.tradingMode === "REAL") {
         state.tradingMode = "PAPER";
         sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
@@ -401,8 +405,8 @@
 
   function setTradingMode(next) {
     const mode = String(next || "").toUpperCase() === "REAL" ? "REAL" : "PAPER";
-    if (mode === "REAL" && !state.binanceKeysConfigured) {
-      pushHistory("REAL indisponível: faltam BINANCE_API_KEY + BINANCE_API_PRIVATE_KEY (Ed25519) ou BINANCE_API_SECRET no servidor.", "stop");
+    if (mode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
+      pushHistory("REAL indisponível: falta BYBIT_API_KEY + BYBIT_API_SECRET no servidor, ou REAL ainda não ligado (PR2).", "stop");
       return false;
     }
     if (state.running) {
@@ -421,40 +425,40 @@
     const b = el("srcBinance");
     const hint = el("sourceHint");
     const pill = el("modePill");
-    const onBinance = isBinanceSource();
-    // Cripto: só Binance (sem toggle Deriv). Dígitos/Forex: só Deriv (sem Binance).
+    const onBybit = isBybitSource();
+    // Cripto: só Bybit (sem toggle Deriv). Dígitos/Forex: só Deriv (sem Bybit).
     if (d) {
-      d.hidden = onBinance;
+      d.hidden = onBybit;
       d.disabled = true;
-      d.classList.toggle("active", !onBinance);
-      d.setAttribute("aria-pressed", onBinance ? "false" : "true");
+      d.classList.toggle("active", !onBybit);
+      d.setAttribute("aria-pressed", onBybit ? "false" : "true");
     }
     if (b) {
-      b.hidden = !onBinance;
+      b.hidden = !onBybit;
       b.disabled = true;
-      b.classList.toggle("active", onBinance);
-      b.classList.toggle("binance-active", onBinance);
-      b.setAttribute("aria-pressed", onBinance ? "true" : "false");
+      b.classList.toggle("active", onBybit);
+      b.classList.toggle("binance-active", onBybit);
+      b.setAttribute("aria-pressed", onBybit ? "true" : "false");
     }
     if (hint) {
-      hint.textContent = onBinance
-        ? "Cripto = Binance Futures USDT-M: perpetual *USDT via fapi (exchangeInfo/klines). Omissão PAPER / SIMULADO. REAL só com chaves no servidor. OAuth Deriv intacto."
-        : "Dígitos / Forex = Deriv Options (WS público + OAuth para contas). Sessão paper / simulado. Painel Cripto usa só Binance Futures USDT-M.";
+      hint.textContent = onBybit
+        ? "Cripto = Bybit Linear USDT: perpetual *USDT via v5 (instruments/kline). Omissão PAPER / SIMULADO. REAL só com chaves no servidor (PR2). OAuth Deriv intacto."
+        : "Dígitos / Forex = Deriv Options (WS público + OAuth para contas). Sessão paper / simulado. Painel Cripto usa só Bybit Linear USDT.";
     }
     if (pill) {
-      if (onBinance) {
+      if (onBybit) {
         pill.textContent =
-          state.tradingMode === "REAL" && state.binanceKeysConfigured
-            ? "REAL · Cripto = Futures USDT-M"
-            : "PAPER / SIMULADO · Futures USDT-M";
-        pill.classList.toggle("warn", state.tradingMode !== "REAL" || !state.binanceKeysConfigured);
-        pill.classList.toggle("ok", state.tradingMode === "REAL" && state.binanceKeysConfigured);
+          state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable
+            ? "REAL · Cripto = Bybit Linear USDT"
+            : "PAPER / SIMULADO · Bybit Linear USDT";
+        pill.classList.toggle("warn", state.tradingMode !== "REAL" || !state.bybitKeysConfigured || !state.bybitRealAvailable);
+        pill.classList.toggle("ok", state.tradingMode === "REAL" && state.bybitKeysConfigured && state.bybitRealAvailable);
       } else {
         pill.textContent = "PAPER / SIMULADO · Deriv Options";
         pill.classList.add("warn");
         pill.classList.remove("ok");
       }
-      pill.classList.toggle("binance", onBinance);
+      pill.classList.toggle("binance", onBybit);
       updateTradingModeUI();
     }
     const tabs = el("marketTabs");
@@ -467,51 +471,52 @@
   }
 
   function sourceForPanel(panel) {
-    return panel === "crypto" ? "binance" : "deriv";
+    return panel === "crypto" ? "bybit" : "deriv";
   }
 
-  async function loadBinanceSymbols() {
-    const res = await fetch(BINANCE_SYMBOLS_URL);
+  async function loadBybitSymbols() {
+    const res = await fetch(BYBIT_SYMBOLS_URL);
     const payload = await res.json().catch(function () { return null; });
     if (!res.ok) {
       const why = (payload && (payload.error_description || payload.error)) || ("HTTP " + res.status);
-      throw new Error("Binance símbolos: " + why);
+      throw new Error("Bybit símbolos: " + why);
     }
     if (!payload || !Array.isArray(payload.items)) {
-      throw new Error("Binance símbolos: resposta inválida");
+      throw new Error("Bybit símbolos: resposta inválida");
     }
-    state.binanceSymbols = payload.items;
-    if (typeof NL.sortBinanceUsdtPreferred === "function") {
-      state.binanceSymbols = NL.sortBinanceUsdtPreferred(state.binanceSymbols);
+    state.bybitSymbols = payload.items;
+    if (typeof NL.sortBybitUsdtPreferred === "function") {
+      state.bybitSymbols = NL.sortBybitUsdtPreferred(state.bybitSymbols);
     }
   }
 
   async function setDataSource(next) {
-    if (next !== "deriv" && next !== "binance") return;
+    if (next !== "deriv" && next !== "bybit" && next !== "binance") return;
     if (state.running) {
       pushHistory("Para de sessão paper antes de mudar a fonte.", "stop");
       return false;
     }
+    if (next === "binance") next = "bybit";
     state.dataSource = next;
     sessionStorage.setItem(SOURCE_KEY, next);
     state.prePlayOk = false;
     state.prePlayGate = null;
     setPrePlayUI(null);
     updateSourceUI();
-    if (isBinanceSource()) {
-      if (!state.binanceSymbols.length) {
-        pushHistory("A carregar pares USDT da Binance (público)…", "");
+    if (isBybitSource()) {
+      if (!state.bybitSymbols.length) {
+        pushHistory("A carregar pares USDT da Bybit (público)…", "");
         try {
-          await loadBinanceSymbols();
+          await loadBybitSymbols();
           pushHistory(
-            "Cripto = Futures USDT-M: " + state.binanceSymbols.length + " perpetual USDT · " + state.tradingMode + ".",
+            "Cripto = Bybit Linear USDT: " + state.bybitSymbols.length + " perpetual USDT · " + state.tradingMode + ".",
             "open",
           );
         } catch (e) {
-          pushHistory("Falha Binance símbolos: " + (e.message || String(e)), "stop");
+          pushHistory("Falha Bybit símbolos: " + (e.message || String(e)), "stop");
         }
       }
-      state.symbol = (state.binanceSymbols[0] && state.binanceSymbols[0].symbol) || "BTCUSDT";
+      state.symbol = (state.bybitSymbols[0] && state.bybitSymbols[0].symbol) || "BTCUSDT";
     } else if (state.panel === "forex") {
       state.symbol = "frxEURUSD";
     } else {
@@ -523,13 +528,13 @@
     return true;
   }
 
-  /** Fonte segue o painel: Cripto→Binance, Dígitos/Forex→Deriv. */
+  /** Fonte segue o painel: Cripto→Bybit, Dígitos/Forex→Deriv. */
   async function applyPanelSource() {
     const next = sourceForPanel(state.panel);
     if (state.dataSource === next) {
       updateSourceUI();
-      if (next === "binance" && !state.binanceSymbols.length) {
-        return setDataSource("binance");
+      if (next === "bybit" && !state.bybitSymbols.length) {
+        return setDataSource("bybit");
       }
       renderSymbolSelect();
       renderChips();
@@ -538,40 +543,40 @@
     return setDataSource(next);
   }
 
-  async function fetchBinanceHistory(symbol, granularity, target) {
-    if (typeof NL.fetchBinanceCandleHistory === "function") {
+  async function fetchBybitHistory(symbol, granularity, target) {
+    if (typeof NL.fetchBybitCandleHistory === "function") {
       const proxyFetch = async function (url) {
         const u = String(url);
-        // Reescreve pedidos klines para o proxy Vercel (geo-friendly).
-        if (u.indexOf("/fapi/v1/klines") >= 0 || u.indexOf("/api/v3/klines") >= 0) {
+        // Reescreve pedidos kline para o proxy Vercel (geo-friendly).
+        if (u.indexOf("/v5/market/kline") >= 0) {
           const q = u.split("?")[1] || "";
-          return fetch(BINANCE_KLINES_URL + (q ? "?" + q : ""));
+          return fetch(BYBIT_KLINES_URL + (q ? "?" + q : ""));
         }
         return fetch(u);
       };
-      return NL.fetchBinanceCandleHistory(symbol, granularity, target, proxyFetch);
+      return NL.fetchBybitCandleHistory(symbol, granularity, target, proxyFetch);
     }
     // Fallback manual se nl-core antigo
     const interval =
-      typeof NL.granularityToBinanceInterval === "function"
-        ? NL.granularityToBinanceInterval(granularity)
+      typeof NL.granularityToBybitInterval === "function"
+        ? NL.granularityToBybitInterval(granularity)
         : null;
-    if (!interval) throw new Error("granularity não suportada na Binance: " + granularity);
+    if (!interval) throw new Error("granularity não suportada na Bybit: " + granularity);
     const pages = [];
     let endTime = "";
     let guard = 0;
     while (guard++ < 30) {
       let url =
-        BINANCE_KLINES_URL +
+        BYBIT_KLINES_URL +
         "?symbol=" +
         encodeURIComponent(symbol) +
         "&interval=" +
         encodeURIComponent(interval) +
         "&limit=1000";
-      if (endTime) url += "&endTime=" + endTime;
+      if (endTime) url += "&end=" + endTime;
       const res = await fetch(url);
       const text = await res.text();
-      const msg = NL.parseBinanceKlines(text);
+      const msg = NL.parseBybitKlines(text);
       if (msg.kind !== "candles" || !msg.candles.length) break;
       pages.push(msg.candles);
       const oldest = msg.candles.reduce(function (m, c) { return Math.min(m, c.epoch); }, Infinity);
@@ -582,14 +587,14 @@
     return closedOnly(NL.mergeCandlePages(pages), granularity).slice(-target);
   }
 
-  async function fetchLatestBinanceCandles(symbol, granularity, count) {
+  async function fetchLatestBybitCandles(symbol, granularity, count) {
     const interval =
-      typeof NL.granularityToBinanceInterval === "function"
-        ? NL.granularityToBinanceInterval(granularity)
+      typeof NL.granularityToBybitInterval === "function"
+        ? NL.granularityToBybitInterval(granularity)
         : null;
-    if (!interval) throw new Error("granularity não suportada na Binance: " + granularity);
+    if (!interval) throw new Error("granularity não suportada na Bybit: " + granularity);
     const url =
-      BINANCE_KLINES_URL +
+      BYBIT_KLINES_URL +
       "?symbol=" +
       encodeURIComponent(symbol) +
       "&interval=" +
@@ -598,10 +603,10 @@
       Math.min(1000, Math.max(2, count || 10));
     const res = await fetch(url);
     const text = await res.text();
-    const msg = NL.parseBinanceKlines(text);
+    const msg = NL.parseBybitKlines(text);
     if (msg.kind !== "candles") {
       const why = msg.kind === "error" ? msg.code + " - " + msg.message : msg.reason || msg.kind;
-      throw new Error("Binance klines: " + why);
+      throw new Error("Bybit klines: " + why);
     }
     return closedOnly(msg.candles, granularity);
   }
@@ -633,9 +638,9 @@
   }
 
   function panelSymbols() {
-    // Cripto = só Binance Futures USDT-M (*USDT perpetual). Sem cry*USD / Deriv Options neste painel.
-    if (state.panel === "crypto" || isBinanceSource()) {
-      return state.binanceSymbols.slice();
+    // Cripto = só Bybit Linear USDT (*USDT perpetual). Sem cry*USD / Deriv Options neste painel.
+    if (state.panel === "crypto" || isBybitSource()) {
+      return state.bybitSymbols.slice();
     }
     if (state.panel === "forex") {
       return state.symbols
@@ -677,7 +682,7 @@
     if (list.some((i) => i.symbol === prev)) sel.value = prev;
     else {
       const prefer =
-        typeof NL.filterCryptoUsd === "function" && state.panel === "crypto" && !isBinanceSource()
+        typeof NL.filterCryptoUsd === "function" && state.panel === "crypto" && !isBybitSource()
           ? NL.filterCryptoUsd(list)
           : list;
       sel.value = (prefer[0] || list[0]).symbol;
@@ -695,7 +700,7 @@
       btn.type = "button";
       var feedOnly =
         state.panel === "crypto" &&
-        !isBinanceSource() &&
+        !isBybitSource() &&
         typeof NL.isOptionsFeedOnly === "function" &&
         NL.isOptionsFeedOnly(it.symbol, state.activeCrypto);
       btn.className =
@@ -704,8 +709,8 @@
         (feedOnly ? " feed" : "") +
         (it.symbol === state.symbol ? " active" : "");
       btn.textContent = it.symbol;
-      btn.title = isBinanceSource()
-        ? (it.displayName || it.symbol) + " · Futures USDT-M · " + state.tradingMode
+      btn.title = isBybitSource()
+        ? (it.displayName || it.symbol) + " · Bybit Linear USDT · " + state.tradingMode
         : (it.displayName || it.symbol) +
           (on ? " · aberto" : " · fechado/suspenso") +
           (feedOnly ? " · feed Options (não em active_symbols)" : " · Options active");
@@ -720,10 +725,10 @@
     const openN = list.filter((i) => i.open && !i.suspended).length;
     var activeN = state.activeCrypto.length;
     var feedN = Math.max(0, n - activeN);
-    el("panelHint").textContent = state.panel === "crypto" || isBinanceSource()
-      ? "Cripto = Binance Futures USDT-M: " +
+    el("panelHint").textContent = state.panel === "crypto" || isBybitSource()
+      ? "Cripto = Bybit Linear USDT: " +
         n +
-        " perpetual *USDT (fapi). Modo " +
+        " perpetual *USDT (v5). Modo " +
         state.tradingMode +
         (state.tradingMode === "PAPER" ? " / SIMULADO" : "") +
         ". Lucro rápido / Loss zero + porta de evidência + stake fixa + máx 3 h + sem martingale + NO TRADE."
@@ -739,8 +744,8 @@
   }
 
   async function fetchHistory(symbol, granularity, target) {
-    if (isBinanceSource()) {
-      return fetchBinanceHistory(symbol, granularity, target);
+    if (isBybitSource()) {
+      return fetchBybitHistory(symbol, granularity, target);
     }
     const pages = [];
     let end = "latest";
@@ -956,7 +961,7 @@
 
 
   /** Envia ordem REAL via proxy assinado. Exige mode=REAL + evidenceAllowed. */
-  async function placeBinanceFuturesOrder(side, quantity) {
+  async function placeBybitOrder(side, quantity) {
     if (!isRealTradingMode()) {
       throw new Error("Ordens reais só em modo REAL com chaves no servidor");
     }
@@ -965,7 +970,7 @@
     }
     const started = state.session && state.session.startedAtMs;
     const elapsed = typeof started === "number" ? Date.now() - started : 0;
-    const res = await fetch(BINANCE_ORDER_URL, {
+    const res = await fetch(BYBIT_ORDER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -983,7 +988,7 @@
     try { payload = JSON.parse(text); } catch (_e) {}
     if (!res.ok) {
       const why = (payload && (payload.error_description || payload.msg || payload.error)) || ("HTTP " + res.status);
-      throw new Error("Ordem Futures: " + why);
+      throw new Error("Ordem Bybit: " + why);
     }
     return payload || text;
   }
@@ -1026,14 +1031,14 @@
       state.selectedAccount.account_id +
       " | saldo Deriv " +
       accountBalanceText(state.selectedAccount);
-    if (isBinanceSource() && state.tradingMode === "REAL" && !state.binanceKeysConfigured) {
+    if (isBybitSource() && state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) {
       pushHistory("REAL pediu-se mas chaves em falta — a forçar PAPER.", "stop");
       state.tradingMode = "PAPER";
       sessionStorage.setItem(TRADING_MODE_KEY, "PAPER");
       updateSourceUI();
     }
     pushHistory(
-      (isRealTradingMode() ? "REAL · Futures USDT-M" : "PAPER / SIMULADO") +
+      (isRealTradingMode() ? "REAL · Bybit Linear USDT" : "PAPER / SIMULADO") +
         " · fonte " +
         sourceLabel() +
         " · contexto " +
@@ -1131,7 +1136,7 @@
           accountKind(state.selectedAccount) +
           " | " +
           NL.formatCandleGate(state.controller.result) +
-          (isBinanceSource() ? (isRealTradingMode() ? " | REAL Futures (gate+stake fixa)" : " | PAPER — sem ordens reais") : ""),
+          (isBybitSource() ? (isRealTradingMode() ? " | REAL Bybit (gate+stake fixa)" : " | PAPER — sem ordens reais") : ""),
         "",
       );
       setStats(state.session.summary());
@@ -1182,8 +1187,8 @@
     }
     try {
       let fresh = [];
-      if (isBinanceSource()) {
-        const candles = await fetchLatestBinanceCandles(state.symbol, state.granularity, 10);
+      if (isBybitSource()) {
+        const candles = await fetchLatestBybitCandles(state.symbol, state.granularity, 10);
         fresh = candles
           .filter((c) => c.epoch > state.lastEpoch)
           .sort((a, b) => a.epoch - b.epoch);
@@ -1261,7 +1266,7 @@
         }
       });
     });
-    // Fonte não é escolhível à mão: Cripto=Binance, Dígitos/Forex=Deriv.
+    // Fonte não é escolhível à mão: Cripto=Bybit, Dígitos/Forex=Deriv.
     el("symbolSelect").addEventListener("change", () => {
       state.symbol = el("symbolSelect").value;
       renderChips();
@@ -1326,27 +1331,29 @@
     try {
       await connectWs();
       await loadSymbols();
-      // Painel inicial Cripto → Futures USDT-M (sem toggle Deriv neste contexto).
+      // Painel inicial Cripto → Bybit Linear USDT (sem toggle Deriv neste contexto).
       state.panel = "crypto";
-      state.dataSource = "binance";
-      sessionStorage.setItem(SOURCE_KEY, "binance");
+      state.dataSource = "bybit";
+      sessionStorage.setItem(SOURCE_KEY, "bybit");
       var savedMode = sessionStorage.getItem(TRADING_MODE_KEY);
       state.tradingMode = savedMode === "REAL" ? "REAL" : "PAPER";
-      await loadBinanceTradingStatus();
-      if (state.tradingMode === "REAL" && !state.binanceKeysConfigured) state.tradingMode = "PAPER";
+      await loadBybitTradingStatus();
+      if (state.tradingMode === "REAL" && !(state.bybitKeysConfigured && state.bybitRealAvailable)) state.tradingMode = "PAPER";
       document.querySelectorAll(".tab").forEach(function (b) {
         b.classList.toggle("active", b.getAttribute("data-panel") === "crypto");
       });
-      await loadBinanceSymbols();
-      state.symbol = (state.binanceSymbols[0] && state.binanceSymbols[0].symbol) || "BTCUSDT";
+      await loadBybitSymbols();
+      state.symbol = (state.bybitSymbols[0] && state.bybitSymbols[0].symbol) || "BTCUSDT";
       renderSymbolSelect();
       renderChips();
       pushHistory(
-        "Pronto · Cripto = Futures USDT-M (" +
-          state.binanceSymbols.length +
+        "Pronto · Cripto = Bybit Linear USDT (" +
+          state.bybitSymbols.length +
           " perpetual). Modo " +
           state.tradingMode +
-          (state.binanceKeysConfigured ? " · chaves servidor OK" : " · sem chaves (REAL bloqueado)") +
+          (state.bybitRealAvailable && state.bybitKeysConfigured
+            ? " · chaves servidor OK"
+            : " · PAPER (REAL = PR2 / sem chaves)") +
           ". Dígitos/Forex = Deriv. Escolhe conta + Lucro rápido / Loss zero → Analisar → PLAY.",
         "",
       );
