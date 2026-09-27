@@ -13,6 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const bybitJs = readFileSync(join(root, "public/assets/bybit.js"), "utf8");
 const bybitHtml = readFileSync(join(root, "public/bybit.html"), "utf8");
 const bybitCss = readFileSync(join(root, "public/assets/bybit.css"), "utf8");
+const dashboardCss = readFileSync(join(root, "public/assets/dashboard.css"), "utf8");
 
 test("chart: ensureChart mounts once; strategy change never destroys", () => {
   assert.match(bybitJs, /function ensureChart\(/);
@@ -51,6 +52,18 @@ test("UI: compact action row + elite co-piloto craft", () => {
   assert.match(bybitCss, /btn-row-actions/);
   assert.match(bybitCss, /chart-empty\[hidden\]/);
   assert.match(bybitCss, /near-target/);
+});
+
+test("CSS regression: deck has no rotateX — desktop click hit-testing", () => {
+  // Decorative 3D tilt (perspective + rotateX) broke desktop button clicks;
+  // mobile forced transform:none. Flat layout is required for all worlds.
+  assert.doesNotMatch(dashboardCss, /rotateX\(1deg\)/);
+  assert.match(dashboardCss, /\.deck\s*\{[\s\S]*?transform:\s*none/);
+  assert.match(dashboardCss, /perspective:\s*none/);
+  assert.match(dashboardCss, /transform-style:\s*flat/);
+  assert.match(bybitCss, /chart-empty\[hidden\]/);
+  assert.match(bybitCss, /pointer-events:\s*none/);
+  assert.match(bybitCss, /\.bybit-chart-wrap[\s\S]*?overflow:\s*hidden/);
 });
 
 test("wiring: arm path uses controller.asStrategy + selected preset", () => {

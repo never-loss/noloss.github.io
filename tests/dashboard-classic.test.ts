@@ -51,6 +51,12 @@ test("classic CSS: navy terminal borders, digit bars, no glass blur", () => {
   assert.match(css, /--navy:/);
 });
 
+test("CSS regression: no decorative rotateX on .deck (desktop clicks)", () => {
+  assert.doesNotMatch(css, /rotateX\(1deg\)/);
+  assert.match(css, /perspective:\s*none/);
+  assert.match(css, /transform-style:\s*flat/);
+});
+
 test("dashboard.js: Real/Demo select + live digit ticks + LC chart", () => {
   assert.match(js, /accountTypeSelect/);
   assert.match(js, /function startDigitTickFeed/);

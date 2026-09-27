@@ -31,6 +31,7 @@
 .bybit-chart-wrap {
   min-height: 240px;
   position: relative;
+  overflow: hidden; /* keep canvas/TV chart from covering action siblings */
 }
 .bybit-chart-wrap canvas {
   width: 100%;
@@ -38,6 +39,7 @@
   display: block;
   border-radius: 12px;
   background: rgba(2, 6, 23, 0.55);
+  max-width: 100%;
 }
 .chart-meta {
   display: flex;
@@ -447,8 +449,24 @@
 .bybit-page .chart-empty[hidden] {
   display: none !important;
 }
+.bybit-page .chart-empty {
+  pointer-events: none;
+}
 .bybit-page .bybit-tv-chart {
   min-height: 220px;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+/* Keep operate controls above chart chrome on desktop */
+.bybit-page .btn-row-actions,
+.bybit-page .ctrl,
+.bybit-page .mode-btn,
+.bybit-page .radar-controls,
+.bybit-page .cloud-arm-row,
+.bybit-page .strat-live-card {
+  position: relative;
+  z-index: 2;
 }
 
 
