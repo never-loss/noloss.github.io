@@ -1,6 +1,6 @@
 // NEVER LOSS - sessão de paper trading (Fase 4).
 // Simula operações com ticks reais. Sem dinheiro, sem saldo inventado.
-// Regras: stake fixa, sem martingale, limites de sessão obrigatórios (máx. 3 horas),
+// Regras: stake fixa, sem martingale, limites de sessão obrigatórios (máx. 12 horas),
 // e o bot só entra se a regra disser que sim (NO TRADE é o normal).
 
 import { TickWindow, MAX_WINDOW } from "./digits.ts";
@@ -10,7 +10,7 @@ import { summarize } from "./backtest.ts";
 import type { Rule, Metrics } from "./backtest.ts";
 
 export const MIN_STAKE = 0.5;
-export const MAX_SESSION_MS = 3 * 60 * 60 * 1000;
+export const MAX_SESSION_MS = 12 * 60 * 60 * 1000;
 
 export type SessionStatus = "STOPPED" | "RUNNING" | "PAUSED";
 export type StopReason =
@@ -28,7 +28,7 @@ export interface PaperConfig {
   /** Perda máxima da sessão, na moeda da stake. Tem de ser >= stake. */
   maxLoss: number;
   maxTrades: number;
-  /** Duração máxima em ms (no máximo 3 horas). */
+  /** Duração máxima em ms (no máximo 12 horas). */
   maxDurationMs: number;
   maxConsecutiveLosses: number;
   /** Nº de ticks sem novas entradas depois de uma perda (inclui o tick da perda). */
@@ -99,7 +99,7 @@ function validateConfig(cfg: PaperConfig): void {
   if (cfg.maxLoss < cfg.stake) throw new RangeError("maxLoss tem de ser pelo menos uma stake");
   assertPositiveInt(cfg.maxTrades, "maxTrades");
   assertPositive(cfg.maxDurationMs, "maxDurationMs");
-  if (cfg.maxDurationMs > MAX_SESSION_MS) throw new RangeError("Duração máxima é 3 horas");
+  if (cfg.maxDurationMs > MAX_SESSION_MS) throw new RangeError("Duração máxima é 12 horas");
   assertPositiveInt(cfg.maxConsecutiveLosses, "maxConsecutiveLosses");
   if (!Number.isInteger(cfg.cooldownTicks) || cfg.cooldownTicks < 0) {
     throw new RangeError(`cooldownTicks inválido: ${cfg.cooldownTicks}`);

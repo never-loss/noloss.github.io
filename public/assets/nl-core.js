@@ -2016,7 +2016,7 @@ var NL = (() => {
 
   // src/core/paper.ts
   var MIN_STAKE = 0.5;
-  var MAX_SESSION_MS = 3 * 60 * 60 * 1e3;
+  var MAX_SESSION_MS = 12 * 60 * 60 * 1e3;
 
   // src/core/candle-paper.ts
   var ALLOWED_KEYS = /* @__PURE__ */ new Set([
@@ -2055,7 +2055,7 @@ var NL = (() => {
     if (cfg.maxLoss < cfg.stake) throw new RangeError("maxLoss tem de ser pelo menos uma stake");
     positiveInt(cfg.maxTrades, "maxTrades");
     positive(cfg.maxDurationMs, "maxDurationMs");
-    if (cfg.maxDurationMs > MAX_SESSION_MS) throw new RangeError("Dura\xE7\xE3o m\xE1xima \xE9 3 horas");
+    if (cfg.maxDurationMs > MAX_SESSION_MS) throw new RangeError("Dura\xE7\xE3o m\xE1xima \xE9 12 horas");
     positiveInt(cfg.maxConsecutiveLosses, "maxConsecutiveLosses");
     if (!Number.isInteger(cfg.cooldownCandles) || cfg.cooldownCandles < 0) throw new RangeError(`cooldownCandles inv\xE1lido: ${cfg.cooldownCandles}`);
     if (cfg.maxBuffer !== void 0) positiveInt(cfg.maxBuffer, "maxBuffer");

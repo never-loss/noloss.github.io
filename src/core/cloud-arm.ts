@@ -1,7 +1,7 @@
 // NEVER LOSS — cloud timed PAPER|REAL arm jobs (Bybit linear USDT).
 // Persist config + advance lazily from real closed klines (deterministic paper replay).
 // SAME paper session logic for both modes; REAL mirroring is API-layer (pendingRealMirrors).
-// Fixed stake. Evidence gate via CandleGateController. Max session 3h. No martingale.
+// Fixed stake. Evidence gate via CandleGateController. Max session 12h. Daily 08–20 Africa/Luanda schedule. No martingale.
 
 import { MAX_SESSION_MS, MIN_STAKE } from "./paper.ts";
 import { CandlePaperSession } from "./candle-paper.ts";
@@ -22,6 +22,11 @@ export const CLOUD_ARM_MAX_EVENTS = 80;
 export const CLOUD_ARM_REVALIDATE_EVERY = 12;
 export const CLOUD_ARM_MIN_MULTIPLIER = 100;
 export const CLOUD_ARM_MAX_MIRROR_KEYS = 40;
+/** Max one-shot / window session length (minutes). */
+export const CLOUD_ARM_MAX_DURATION_MINUTES = 720;
+export const CLOUD_ARM_TZ = "Africa/Luanda";
+export const CLOUD_ARM_WINDOW_START_HOUR = 8;
+export const CLOUD_ARM_WINDOW_END_HOUR = 20;
 
 export type CloudArmStatus = "RUNNING" | "STOPPED" | "CANCELLED";
 
@@ -139,9 +144,11 @@ export function validateCloudArmCreate(input: CloudArmCreateInput): {
   if (![60, 300, 900, 3600].includes(granularity)) throw new RangeError("intervalo de vela inválido");
   const durationMinutes = Math.floor(Number(input.durationMinutes));
   positiveInt(durationMinutes, "duração");
-  if (durationMinutes > 180) throw new RangeError("duração máxima é 180 minutos (3 h)");
+  if (durationMinutes > CLOUD_ARM_MAX_DURATION_MINUTES) {
+    throw new RangeError(`duração máxima é ${CLOUD_ARM_MAX_DURATION_MINUTES} minutos (12 h)`);
+  }
   const durationMs = durationMinutes * 60 * 1000;
-  if (durationMs > MAX_SESSION_MS) throw new RangeError("duração máxima é 3 horas");
+  if (durationMs > MAX_SESSION_MS) throw new RangeError("duração máxima é 12 horas");
   const clientId = String(input.clientId || "").trim();
   if (!/^[a-zA-Z0-9_-]{8,64}$/.test(clientId)) throw new RangeError("clientId inválido");
   const mode = parseMode(input.mode);
@@ -494,6 +501,213 @@ export function cancelCloudArmJob(job: CloudArmJob, nowMs: number = Date.now()):
       ...job.events,
       { type: "stopped", at: nowMs, text: "STOP manual (nuvem)" },
     ].slice(-CLOUD_ARM_MAX_EVENTS),
+  };
+}
+
+
+// --- Daily 08:00–20:00 Africa/Luanda schedule (Redis-backed; cron + lazy tick) ---
+
+export interface CloudArmSchedule {
+  enabled: boolean;
+  clientId: string;
+  symbol: string;
+  strategyPreset: StrategyPresetId;
+  stake: number;
+  leverage: number;
+  granularity: number;
+  mode: CloudArmMode;
+  startHour: number;
+  endHour: number;
+  tz: string;
+  createdAt: number;
+  updatedAt: number;
+  /** YYYY-MM-DD in schedule tz of the last session started for this schedule. */
+  lastSessionDate: string | null;
+  activeJobId: string | null;
+}
+
+export type ScheduleReconcileAction =
+  | { action: "idle"; reason: string }
+  | { action: "start"; durationMinutes: number; dateKey: string }
+  | { action: "stop_active"; reason: string };
+
+export interface LuandaParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  /** YYYY-MM-DD in the given tz. */
+  dateKey: string;
+}
+
+/** Wall-clock parts in Africa/Luanda (or override tz) for deterministic tests. */
+export function luandaDateParts(nowMs: number, tz: string = CLOUD_ARM_TZ): LuandaParts {
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = fmt.formatToParts(new Date(nowMs));
+  const get = (type: string) => {
+    const p = parts.find((x) => x.type === type);
+    return p ? Number(p.value) : NaN;
+  };
+  const year = get("year");
+  const month = get("month");
+  const day = get("day");
+  const hour = get("hour");
+  const minute = get("minute");
+  if (![year, month, day, hour, minute].every((n) => Number.isFinite(n))) {
+    throw new Error("luandaDateParts_failed");
+  }
+  const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return { year, month, day, hour, minute, dateKey };
+}
+
+/** Inclusive start hour, exclusive end hour: [startHour, endHour). */
+export function isInTradingWindow(
+  nowMs: number,
+  startHour: number = CLOUD_ARM_WINDOW_START_HOUR,
+  endHour: number = CLOUD_ARM_WINDOW_END_HOUR,
+  tz: string = CLOUD_ARM_TZ,
+): boolean {
+  const { hour } = luandaDateParts(nowMs, tz);
+  return hour >= startHour && hour < endHour;
+}
+
+/** Offset ms of `tz` ahead of UTC at nowMs (Africa/Luanda ≈ +3600000, no DST). */
+export function tzOffsetMs(nowMs: number, tz: string = CLOUD_ARM_TZ): number {
+  const d = new Date(nowMs);
+  const utc = new Date(d.toLocaleString("en-US", { timeZone: "UTC" }));
+  const local = new Date(d.toLocaleString("en-US", { timeZone: tz }));
+  return local.getTime() - utc.getTime();
+}
+
+/** Instant (epoch ms) of endHour:00:00 on the calendar day of nowMs in `tz`. */
+export function windowEndMs(
+  nowMs: number,
+  endHour: number = CLOUD_ARM_WINDOW_END_HOUR,
+  tz: string = CLOUD_ARM_TZ,
+): number {
+  const p = luandaDateParts(nowMs, tz);
+  const asIfUtc = Date.UTC(p.year, p.month - 1, p.day, endHour, 0, 0, 0);
+  return asIfUtc - tzOffsetMs(nowMs, tz);
+}
+
+/** Whole minutes remaining until endHour today (at least 1 if still in window). */
+export function durationMinutesUntilWindowEnd(
+  nowMs: number,
+  startHour: number = CLOUD_ARM_WINDOW_START_HOUR,
+  endHour: number = CLOUD_ARM_WINDOW_END_HOUR,
+  tz: string = CLOUD_ARM_TZ,
+): number {
+  if (!isInTradingWindow(nowMs, startHour, endHour, tz)) return 0;
+  const end = windowEndMs(nowMs, endHour, tz);
+  const mins = Math.ceil((end - nowMs) / 60000);
+  return Math.max(1, Math.min(CLOUD_ARM_MAX_DURATION_MINUTES, mins));
+}
+
+export function createDailySchedule(
+  input: CloudArmCreateInput & { startHour?: number; endHour?: number; tz?: string },
+  nowMs: number = Date.now(),
+): CloudArmSchedule {
+  const v = validateCloudArmCreate({
+    ...input,
+    // Placeholder duration for validate; schedule uses window length at start time.
+    durationMinutes: Math.min(
+      CLOUD_ARM_MAX_DURATION_MINUTES,
+      Math.max(1, Math.floor(Number(input.durationMinutes) || CLOUD_ARM_MAX_DURATION_MINUTES)),
+    ),
+  });
+  const startHour = input.startHour == null ? CLOUD_ARM_WINDOW_START_HOUR : Number(input.startHour);
+  const endHour = input.endHour == null ? CLOUD_ARM_WINDOW_END_HOUR : Number(input.endHour);
+  if (!Number.isInteger(startHour) || startHour < 0 || startHour > 23) throw new RangeError("startHour inválido");
+  if (!Number.isInteger(endHour) || endHour < 1 || endHour > 24) throw new RangeError("endHour inválido");
+  if (endHour <= startHour) throw new RangeError("janela inválida (endHour > startHour)");
+  return {
+    enabled: true,
+    clientId: v.clientId,
+    symbol: v.symbol,
+    strategyPreset: v.strategyPreset,
+    stake: v.stake,
+    leverage: v.leverage,
+    granularity: v.granularity,
+    mode: v.mode,
+    startHour,
+    endHour,
+    tz: String(input.tz || CLOUD_ARM_TZ),
+    createdAt: nowMs,
+    updatedAt: nowMs,
+    lastSessionDate: null,
+    activeJobId: null,
+  };
+}
+
+export function disableDailySchedule(schedule: CloudArmSchedule, nowMs: number = Date.now()): CloudArmSchedule {
+  return {
+    ...schedule,
+    enabled: false,
+    updatedAt: nowMs,
+    activeJobId: null,
+  };
+}
+
+/**
+ * Decide whether to start today's window session, stop a runaway job, or idle.
+ * One session per Luanda calendar day while enabled.
+ */
+export function reconcileDailySchedule(
+  schedule: CloudArmSchedule,
+  activeJob: CloudArmJob | null,
+  nowMs: number = Date.now(),
+): ScheduleReconcileAction {
+  if (!schedule || !schedule.enabled) return { action: "idle", reason: "disabled" };
+  const tz = schedule.tz || CLOUD_ARM_TZ;
+  const startH = schedule.startHour ?? CLOUD_ARM_WINDOW_START_HOUR;
+  const endH = schedule.endHour ?? CLOUD_ARM_WINDOW_END_HOUR;
+  const parts = luandaDateParts(nowMs, tz);
+  const inWindow = parts.hour >= startH && parts.hour < endH;
+  const running = activeJob && activeJob.status === "RUNNING";
+
+  if (!inWindow) {
+    if (running) return { action: "stop_active", reason: "outside_window" };
+    return { action: "idle", reason: "outside_window" };
+  }
+
+  if (running) return { action: "idle", reason: "already_running" };
+  if (schedule.lastSessionDate === parts.dateKey) {
+    return { action: "idle", reason: "already_ran_today" };
+  }
+
+  const durationMinutes = durationMinutesUntilWindowEnd(nowMs, startH, endH, tz);
+  if (durationMinutes < 1) return { action: "idle", reason: "window_ending" };
+  return { action: "start", durationMinutes, dateKey: parts.dateKey };
+}
+
+export function publicCloudArmSchedule(schedule: CloudArmSchedule | null): Record<string, unknown> | null {
+  if (!schedule) return null;
+  return {
+    enabled: schedule.enabled,
+    clientId: schedule.clientId,
+    symbol: schedule.symbol,
+    strategyPreset: schedule.strategyPreset,
+    stake: schedule.stake,
+    leverage: schedule.leverage,
+    granularity: schedule.granularity,
+    mode: schedule.mode,
+    startHour: schedule.startHour,
+    endHour: schedule.endHour,
+    tz: schedule.tz,
+    createdAt: schedule.createdAt,
+    updatedAt: schedule.updatedAt,
+    lastSessionDate: schedule.lastSessionDate,
+    activeJobId: schedule.activeJobId,
+    windowLabel: `${String(schedule.startHour).padStart(2, "0")}:00–${String(schedule.endHour).padStart(2, "0")}:00 ${schedule.tz}`,
   };
 }
 

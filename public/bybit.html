@@ -13,7 +13,7 @@
       <header class="glass header">
         <div class="brand">
           <h1>Bybit · Co-piloto de elite</h1>
-          <p>Futuros Linear USDT · stake fixa · máx. 3 h · porta de evidência · sem martingale</p>
+          <p>Futuros Linear USDT · stake fixa · máx. 12 h · agenda diária 08–20 Luanda · sem martingale</p>
         </div>
         <div class="header-actions">
           <span id="modePill" class="pill mode warn">PAPER</span>
@@ -267,8 +267,8 @@
                   </select>
                 </div>
                 <div class="field">
-                  <label for="minutes">Duração (min)</label>
-                  <input id="minutes" type="number" min="1" max="180" value="60" inputmode="numeric">
+                  <label for="minutes">Duração (min ≤720)</label>
+                  <input id="minutes" type="number" min="1" max="720" value="720" inputmode="numeric" title="Neste ecrã: duração. Nuvem: janela 08:00–20:00 Africa/Luanda">
                 </div>
               </div>
               <p id="bybitLeverageHint" class="footer-note" style="margin:0 0 10px;text-align:left">
@@ -296,14 +296,14 @@
                 <button type="button" class="ctrl stop cloud-stop" id="btnCloudStop" disabled title="Cancelar job na nuvem">STOP nuvem</button>
               </div>
               <p id="bybitActionHint" class="footer-note" style="margin:10px 0 0;text-align:left">
-                <strong>Neste ecrã</strong> = browser aberto. <strong>Na nuvem</strong> = segue o toggle PAPER/REAL · tempo (Duração) · podes sair. REAL na nuvem precisa de chaves no servidor; Upstash Redis torna os jobs duráveis entre instâncias.
+                <strong>Neste ecrã</strong> = browser aberto. <strong>Na nuvem (PLAY)</strong> = agenda diária 08:00–20:00 Africa/Luanda até STOP · segue PAPER/REAL + estratégia · página pode fechar (Redis + cron). REAL precisa de chaves no servidor.
               </p>
               <div id="cloudArmBox" class="cloud-arm-box" role="status" aria-live="polite" hidden>
                 <div class="cloud-arm-top">
                   <strong id="cloudArmTitle">Nuvem · inactivo</strong>
                   <span class="pill" id="cloudArmPill">—</span>
                 </div>
-                <p class="cloud-arm-reason" id="cloudArmReason">Escolhe par, estratégia e duração · Armar na nuvem (Simulado ou REAL).</p>
+                <p class="cloud-arm-reason" id="cloudArmReason">PLAY na nuvem = agenda diária 08–20 Luanda (Simulado ou REAL) até STOP.</p>
                 <div class="cloud-arm-meta" id="cloudArmMeta"></div>
               </div>
               <div id="bybitLinkingNote" class="bybit-linking" hidden>Bybit: ainda em ligação…</div>

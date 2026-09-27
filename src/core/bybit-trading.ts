@@ -1,6 +1,6 @@
 // NEVER LOSS — Bybit v5 linear USDT signed order path (REAL only).
 // Keys live in server env only — never in the browser. HMAC-SHA256.
-// Rules: fixed stake, evidence gate, no martingale, max 3 h (STOP).
+// Rules: fixed stake, evidence gate, no martingale, max 12 h (STOP).
 
 import { createHmac } from "node:crypto";
 import { isBybitUsdtSymbol } from "./bybit.ts";
@@ -153,7 +153,7 @@ function buildAuthHeaders(
 
 /**
  * Validates gates and builds POST /v5/order/create (Market, linear).
- * Rejects PAPER, closed evidence gate, invalid qty, session ≥ 3 h, bad symbol.
+ * Rejects PAPER, closed evidence gate, invalid qty, session ≥ 12 h, bad symbol.
  */
 export function buildPlaceMarketOrder(
   req: BybitOrderRequest,
@@ -184,7 +184,7 @@ export function buildPlaceMarketOrder(
       return { ok: false, code: "invalid_session", message: "sessionElapsedMs inválido" };
     }
     if (req.sessionElapsedMs >= MAX_SESSION_MS) {
-      return { ok: false, code: "max_session", message: "Sessão ≥ 3 h — STOP, sem novas ordens" };
+      return { ok: false, code: "max_session", message: "Sessão ≥ 12 h — STOP, sem novas ordens" };
     }
   }
   if (!apiKey || apiKey.length <= 8 || !apiSecret || apiSecret.length <= 8) {
