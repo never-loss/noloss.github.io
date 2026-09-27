@@ -45,6 +45,7 @@ var NL = (() => {
     binanceBaseAsset: () => binanceBaseAsset,
     binanceFetch: () => binanceFetch,
     binanceIntervalToSeconds: () => binanceIntervalToSeconds,
+    blitzZeroStrategySet: () => blitzZeroStrategySet,
     bybitBaseAsset: () => bybitBaseAsset,
     bybitFetch: () => bybitFetch,
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
@@ -1447,6 +1448,39 @@ var NL = (() => {
       dailyTrendAtrBreakout({ lookback: 24, atrPeriod: 14, atrMult: 1 })
     ];
   }
+  function blitzZeroStrategySet() {
+    return [
+      confluence({
+        strategies: [emaCross({ fast: 12, slow: 26 }), adxTrend({ period: 14, minAdx: 25 })],
+        minAgree: 2,
+        hold: 2
+      }),
+      confluence({
+        strategies: [macdCross({ fast: 12, slow: 26, signal: 9 }), adxTrend({ period: 14, minAdx: 20 })],
+        minAgree: 2,
+        hold: 2
+      }),
+      confluence({
+        strategies: [rsiReversion({ period: 14, low: 30, high: 70 }), bollingerReversion({ period: 20, k: 2 })],
+        minAgree: 2,
+        hold: 2
+      }),
+      confluence({
+        strategies: [stochasticCross({ k: 14, d: 3, low: 20, high: 80 }), rsiReversion({ period: 14, low: 30, high: 70 })],
+        minAgree: 2,
+        hold: 2
+      }),
+      // Twin ligeiramente mais rápido (EMA 9/21 + ADX 22) — ainda confluência minAgree 2.
+      confluence({
+        strategies: [emaCross({ fast: 9, slow: 21 }), adxTrend({ period: 14, minAdx: 22 })],
+        minAgree: 2,
+        hold: 2
+      }),
+      adxTrend({ period: 14, minAdx: 25 }),
+      dailyTrendAtrBreakout({ lookback: 30, atrPeriod: 14, atrMult: 0.6, minAdx: 25 }),
+      dailyTrendAtrBreakout({ lookback: 20, atrPeriod: 14, atrMult: 0.85 })
+    ];
+  }
   var STRATEGY_PRESETS = [
     {
       id: "lucro_rapido",
@@ -1461,6 +1495,13 @@ var NL = (() => {
       description: "Mais seletivo (conflu\xEAncia + ADX + tend\xEAncia di\xE1ria). Exige evid\xEAncia mais forte. N\xC3O promete zero perdas \u2014 NO TRADE se a porta falhar. Stake fixa, sem martingale.",
       preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "EVIDENCE" },
       strategies: lossZeroStrategySet
+    },
+    {
+      id: "blitz_zero",
+      label: "Blitz zero",
+      description: "Spin agressivo 1m (futuros Linear USDT) da conflu\xEAncia Loss zero. M\xE1x. 10 ops/sess\xE3o. Stake fixa \xB7 porta \xB7 NO TRADE se falhar \xB7 sem martingale. N\xC3O garante lucro.",
+      preferredGate: { tpR: 1.5, maxBars: 10, slAtr: 1.2, minLabel: "PRELIMINARY" },
+      strategies: blitzZeroStrategySet
     },
     {
       id: "tendencia_diaria",

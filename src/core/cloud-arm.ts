@@ -81,7 +81,7 @@ export interface CloudArmJob {
   gate: CloudArmGateSnap | null;
 }
 
-const PRESET_IDS = new Set(["lucro_rapido", "loss_zero", "tendencia_diaria", "biblioteca"]);
+const PRESET_IDS = new Set(["lucro_rapido", "loss_zero", "blitz_zero", "tendencia_diaria", "biblioteca"]);
 
 function positiveInt(v: number, label: string): void {
   if (!Number.isInteger(v) || v < 1) throw new RangeError(`${label} inválido`);
@@ -290,6 +290,7 @@ export function advanceCloudArmJob(
     initial: warmup.slice(-CLOUD_ARM_WARMUP),
   });
 
+  const maxTrades = job.strategyPreset === "blitz_zero" ? 10 : 50;
   const session = new CandlePaperSession({
     strategy: controller.asStrategy(),
     stake: job.stake,
@@ -298,7 +299,7 @@ export function advanceCloudArmJob(
     maxBars: gate.maxBars,
     costFraction,
     maxLoss: job.stake * 10,
-    maxTrades: 50,
+    maxTrades,
     maxDurationMs: job.durationMs,
     maxConsecutiveLosses: 6,
     cooldownCandles: 0,

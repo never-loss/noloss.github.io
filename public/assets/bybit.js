@@ -52,8 +52,8 @@
     strategySet: "",
     chartCandles: [],
     gateCandles: [],
-    liveGates: { lucro_rapido: null, loss_zero: null },
-    liveProx: { lucro_rapido: null, loss_zero: null },
+    liveGates: { lucro_rapido: null, loss_zero: null, blitz_zero: null },
+    liveProx: { lucro_rapido: null, loss_zero: null, blitz_zero: null },
     armState: "disarmed",
     feedMode: "idle",
     ws: null,
@@ -823,6 +823,7 @@
     if (typeof NL.strategiesForPreset === "function") raw = NL.strategiesForPreset(presetId);
     else if (presetId === "lucro_rapido") raw = NL.lucroRapidoStrategySet();
     else if (presetId === "loss_zero") raw = NL.lossZeroStrategySet();
+    else if (presetId === "blitz_zero") raw = NL.blitzZeroStrategySet();
     else raw = NL.strategyLibrary();
     state.radar.strategiesCache[presetId] = raw;
     return raw;
@@ -840,14 +841,14 @@
         syncArmUi();
         return;
       }
-      var ids = ["lucro_rapido", "loss_zero"];
+      var ids = ["lucro_rapido", "loss_zero", "blitz_zero"];
       if (state.strategySet && ids.indexOf(state.strategySet) < 0) ids.push(state.strategySet);
       for (var i = 0; i < ids.length; i++) {
         var id = ids[i];
         try {
           var live = NL.evaluateLiveEntry(candles, strategiesRaw(id), { hold: 3 });
           state.liveProx[id] = live;
-          if (id === "lucro_rapido" || id === "loss_zero") renderStratCard(id, state.liveGates[id], null);
+          if (id === "lucro_rapido" || id === "loss_zero" || id === "blitz_zero") renderStratCard(id, state.liveGates[id], null);
         } catch (_e) {}
         if (i === 0) await yieldToUi(0);
       }
@@ -860,7 +861,7 @@
   }
 
   function setStratLoading() {
-    ["LucroRapido", "LossZero"].forEach(function (k) {
+    ["LucroRapido", "LossZero", "BlitzZero"].forEach(function (k) {
       var badge = el("badge" + k);
       var status = el("status" + k);
       var reason = el("reason" + k);
@@ -871,7 +872,7 @@
   }
 
   function setStratError(msg) {
-    ["lucro_rapido", "loss_zero"].forEach(function (id) { renderStratCard(id, null, msg); });
+    ["lucro_rapido", "loss_zero", "blitz_zero"].forEach(function (id) { renderStratCard(id, null, msg); });
   }
 
   function minLabelForPreset(presetId) {
@@ -984,7 +985,7 @@
 
   /** Preset único para radar + arm — strategySet manda; radar.preset espelha. */
   function activeRadarPreset() {
-    if (state.strategySet === "lucro_rapido" || state.strategySet === "loss_zero") {
+    if (state.strategySet === "lucro_rapido" || state.strategySet === "loss_zero" || state.strategySet === "blitz_zero") {
       return state.strategySet;
     }
     return state.radar.preset || "lucro_rapido";
@@ -993,6 +994,7 @@
   function presetLabelPt(presetId) {
     if (presetId === "loss_zero") return "Loss zero";
     if (presetId === "lucro_rapido") return "Lucro rápido";
+    if (presetId === "blitz_zero") return "Blitz zero";
     if (presetId === "tendencia_diaria") return "Tendência diária";
     if (presetId === "biblioteca") return "Biblioteca";
     return presetId || "—";
@@ -1098,6 +1100,7 @@
     if (typeof NL.strategiesForPreset === "function") raw = NL.strategiesForPreset(presetId);
     else if (presetId === "lucro_rapido") raw = NL.lucroRapidoStrategySet();
     else if (presetId === "loss_zero") raw = NL.lossZeroStrategySet();
+    else if (presetId === "blitz_zero") raw = NL.blitzZeroStrategySet();
     else raw = NL.strategyLibrary();
     var preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(presetId) : null;
     var slAtr = (preset && preset.preferredGate && preset.preferredGate.slAtr) || 1.5;
@@ -1143,7 +1146,7 @@
       candles = state.gateCandles;
     } catch (_e) {}
 
-    var ids = ["lucro_rapido", "loss_zero"];
+    var ids = ["lucro_rapido", "loss_zero", "blitz_zero"];
     if (state.strategySet && ids.indexOf(state.strategySet) < 0) ids.push(state.strategySet);
     for (var j = 0; j < ids.length; j++) {
       var id = ids[j];
@@ -1151,10 +1154,10 @@
         var result = evaluatePreset(id, candles);
         state.liveGates[id] = result;
         if (state.symbol) putRadarGateCache(state.symbol, id, result);
-        if (id === "lucro_rapido" || id === "loss_zero") renderStratCard(id, result, null);
+        if (id === "lucro_rapido" || id === "loss_zero" || id === "blitz_zero") renderStratCard(id, result, null);
       } catch (e) {
         state.liveGates[id] = null;
-        if (id === "lucro_rapido" || id === "loss_zero") renderStratCard(id, null, e.message || String(e));
+        if (id === "lucro_rapido" || id === "loss_zero" || id === "blitz_zero") renderStratCard(id, null, e.message || String(e));
       }
       if (j < ids.length - 1) await yieldToUi(30);
     }
@@ -1165,9 +1168,10 @@
   }
 
   function renderStratCard(presetId, result, errMsg) {
-    var isLucro = presetId === "lucro_rapido";
-    var key = isLucro ? "LucroRapido" : "LossZero";
-    var label = isLucro ? "Lucro rápido" : "Loss zero";
+    var keyMap = { lucro_rapido: "LucroRapido", loss_zero: "LossZero", blitz_zero: "BlitzZero" };
+    var labelMapCard = { lucro_rapido: "Lucro rápido", loss_zero: "Loss zero", blitz_zero: "Blitz zero" };
+    var key = keyMap[presetId] || "LossZero";
+    var label = labelMapCard[presetId] || presetId;
     var card = el("card" + key);
     var dot = el("dot" + key);
     var badge = el("badge" + key);
@@ -1250,6 +1254,7 @@
     var labelMap = {
       lucro_rapido: "Lucro rápido",
       loss_zero: "Loss zero",
+      blitz_zero: "Blitz zero",
       tendencia_diaria: "Tendência diária",
       biblioteca: "Biblioteca",
     };
@@ -1257,8 +1262,10 @@
     var result = preset && state.liveGates[preset] ? state.liveGates[preset] : null;
     var c1 = el("cardLucroRapido");
     var c2 = el("cardLossZero");
+    var c3 = el("cardBlitzZero");
     if (c1) c1.classList.toggle("active-pick", preset === "lucro_rapido");
     if (c2) c2.classList.toggle("active-pick", preset === "loss_zero");
+    if (c3) c3.classList.toggle("active-pick", preset === "blitz_zero");
 
     if (!label) {
       if (box) { box.classList.add("closed"); box.classList.remove("open"); }
@@ -1353,7 +1360,7 @@
     status.classList.remove("open", "closed", "muted");
     if (!result) {
       status.classList.add("muted");
-      status.textContent = "Escolhe Lucro rápido ou Loss zero — indicadores atualizam ao vivo.";
+      status.textContent = "Escolhe Lucro rápido, Loss zero ou Blitz zero — indicadores atualizam ao vivo.";
       if (metrics) metrics.hidden = true;
       return;
     }
@@ -1646,7 +1653,7 @@
       btnP.disabled = !hasStrategy || (!!running && !paused);
       btnP.textContent = running ? "ARMADO neste ecrã" : paused ? "RETOMAR" : "ARMAR neste ecrã";
       btnP.title = !hasStrategy
-        ? "Escolhe Lucro rápido ou Loss zero"
+        ? "Escolhe Lucro rápido, Loss zero ou Blitz zero"
         : running
           ? "Sessão armada — entrada só com porta + sinal"
           : "ARMAR: vigia o alvo (porta + sinal). Sem entrada cega.";
@@ -1664,7 +1671,7 @@
       if (running && state.session && state.session.hasOpenPosition) next.textContent = "ENTROU — posição aberta · PAUSE/STOP";
       else if (running) next.textContent = "ARMADO — à espera do alvo (porta + sinal) · futuros USDT";
       else if (paused) next.textContent = "Em pausa — RETOMAR ou STOP";
-      else if (!hasStrategy) next.textContent = "1 Escolhe Lucro rápido ou Loss zero";
+      else if (!hasStrategy) next.textContent = "1 Escolhe Lucro rápido, Loss zero ou Blitz zero";
       else if (!gateOk) next.textContent = "2 Porta fechada (NO TRADE) — podes ARMAR; entrada só quando abrir + sinal";
       else if (!atTarget) next.textContent = "3 Porta aberta — ARMAR e espera o sinal no gráfico";
       else next.textContent = "4 Porta + alvo — ARMAR para entrar na próxima vela (manual)";
@@ -1728,8 +1735,8 @@
     syncSymbolSelectToState();
     state.prePlayOk = false;
     state.prePlayGate = null;
-    state.liveProx = { lucro_rapido: null, loss_zero: null };
-    state.liveGates = { lucro_rapido: null, loss_zero: null };
+    state.liveProx = { lucro_rapido: null, loss_zero: null, blitz_zero: null };
+    state.liveGates = { lucro_rapido: null, loss_zero: null, blitz_zero: null };
     state.radar.lastPatchedScore = null;
     // Cancel in-flight heavy gate for previous symbol; radar continues in background
     gateEvalQueued = false;
@@ -1787,8 +1794,14 @@
     state.strategySet = preset || "";
     // Strategy-only: chart stays mounted, WS untouched, no kline reload.
     // Casa radar com a estratégia: limpa % do preset antigo e rescana.
-    if (preset === "lucro_rapido" || preset === "loss_zero") {
+    if (preset === "lucro_rapido" || preset === "loss_zero" || preset === "blitz_zero") {
       syncRadarPresetFromStrategy(); // rescana só se o preset efectivo mudou
+    }
+    // Blitz zero: prefer 1m (60s) on select — do not fight user if they change after.
+    if (preset === "blitz_zero" && state.granularity !== 60 && !state.running) {
+      var ivSel = el("bybitInterval");
+      if (ivSel) ivSel.value = "60";
+      switchInterval(60);
     }
     syncPlayReadyFromSelection();
     scheduleLiveProximity();
@@ -1879,7 +1892,7 @@
   async function runAnalyze() {
     readForm();
     if (!state.strategySet) {
-      pushHistory("Escolhe uma estratégia (Lucro rápido / Loss zero / …).", "stop");
+      pushHistory("Escolhe uma estratégia (Lucro rápido / Loss zero / Blitz zero / …).", "stop");
       updateButtons();
       return null;
     }
@@ -1935,7 +1948,7 @@
     // Ensure selected preset has a fresh gate (wiring: strategy → evaluateCandleGate → arm).
     if (!state.liveGates[state.strategySet] || state.gateCandles.length < 1500) {
       await reevaluateBothGates();
-    } else if (!state.liveGates.lucro_rapido || !state.liveGates.loss_zero) {
+    } else if (!state.liveGates.lucro_rapido || !state.liveGates.loss_zero || !state.liveGates.blitz_zero) {
       await reevaluateBothGates();
     }
     var pre = state.liveGates[state.strategySet];
@@ -2003,7 +2016,8 @@
       state.session = new NL.CandlePaperSession({
         strategy: state.controller.asStrategy(),
         stake: state.stake, slAtr: gate.slAtr, tpR: gate.tpR, maxBars: gate.maxBars,
-        costFraction: costFraction, maxLoss: state.stake * 10, maxTrades: 50,
+        costFraction: costFraction, maxLoss: state.stake * 10,
+        maxTrades: state.strategySet === "blitz_zero" ? 10 : 50,
         maxDurationMs: Math.min(state.minutes, 180) * 60 * 1000,
         maxConsecutiveLosses: 6, cooldownCandles: 0,
       });
@@ -2126,7 +2140,7 @@
       state.armState = "entered";
     } else if (running) {
       mode = "armed";
-      var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : (preset || "");
+      var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "blitz_zero" ? "Blitz zero" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : (preset || "");
       var armPair = tradeSymbol() || state.symbol || "";
       titleTxt = "ARMADO · " + armPair + " · " + stratLabel + " — à espera do alvo";
       syncSymbolSelectToState();
@@ -2578,7 +2592,7 @@
         onStrategyChange(bybitStrat.value || "");
       });
     }
-    ["cardLucroRapido", "cardLossZero"].forEach(function (id) {
+    ["cardLucroRapido", "cardLossZero", "cardBlitzZero"].forEach(function (id) {
       var card = el(id);
       if (!card) return;
       card.style.cursor = "pointer";
@@ -2622,7 +2636,7 @@
     if (radarPreset) radarPreset.addEventListener("change", function () {
       var p = radarPreset.value || "lucro_rapido";
       // Casamento: mudar preset do radar = mudar estratégia (mesma % em radar+arm)
-      if (p === "lucro_rapido" || p === "loss_zero") {
+      if (p === "lucro_rapido" || p === "loss_zero" || p === "blitz_zero") {
         var sel = el("bybitStrategy");
         if (sel) sel.value = p;
         onStrategyChange(p);

@@ -74,6 +74,7 @@ export {
   dailyTrendStrategySet,
   lucroRapidoStrategySet,
   lossZeroStrategySet,
+  blitzZeroStrategySet,
   STRATEGY_PRESETS,
   strategyPreset,
   strategiesForPreset,
