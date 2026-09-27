@@ -23,6 +23,7 @@
   var RADAR_GAP_MS = 400;
   var RADAR_KLINES = 120;
   var RADAR_IDLE_MS = 80;
+  var RADAR_GATE_CACHE_TTL_MS = 5 * 60 * 1000;
 
   var NL = window.NL;
   if (!NL) {
@@ -96,6 +97,8 @@
       filter: "",
       timer: null,
       strategiesCache: {},
+      gateCache: {}, // symbol|preset|gran → { result, at }
+      lastPatchedScore: null,
     },
   };
 
@@ -940,6 +943,126 @@
     };
   }
 
+
+  function radarCacheKey(sym, preset, gran) {
+    return String(sym || "") + "|" + String(preset || "") + "|" + String(gran || "");
+  }
+
+  function getRadarGateCached(sym, preset) {
+    var k = radarCacheKey(sym, preset, state.granularity);
+    var hit = state.radar.gateCache[k];
+    if (!hit || !hit.result) return null;
+    if (Date.now() - hit.at > RADAR_GATE_CACHE_TTL_MS) return null;
+    return hit.result;
+  }
+
+  function putRadarGateCache(sym, preset, result) {
+    if (!sym || !preset || !result) return;
+    var k = radarCacheKey(sym, preset, state.granularity);
+    state.radar.gateCache[k] = { result: result, at: Date.now() };
+  }
+
+  /** Preset único para radar + arm — strategySet manda; radar.preset espelha. */
+  function activeRadarPreset() {
+    if (state.strategySet === "lucro_rapido" || state.strategySet === "loss_zero") {
+      return state.strategySet;
+    }
+    return state.radar.preset || "lucro_rapido";
+  }
+
+  function presetLabelPt(presetId) {
+    if (presetId === "loss_zero") return "Loss zero";
+    if (presetId === "lucro_rapido") return "Lucro rápido";
+    if (presetId === "tendencia_diaria") return "Tendência diária";
+    if (presetId === "biblioteca") return "Biblioteca";
+    return presetId || "—";
+  }
+
+  /**
+   * Casa radar.preset com strategySet e limpa scores do preset antigo.
+   * Rescan só quando o preset efectivo muda (evita loop com o select do radar).
+   */
+  function syncRadarPresetFromStrategy(opts) {
+    opts = opts || {};
+    var next = activeRadarPreset();
+    var changed = state.radar.preset !== next;
+    state.radar.preset = next;
+    var rp = el("radarPreset");
+    if (rp && rp.value !== next) rp.value = next;
+    if (changed || opts.forceRescan) {
+      state.radar.rows = {};
+      state.radar.scanned = 0;
+      state.radar.lastPatchedScore = null;
+      if (opts.start !== false) startRadarScan();
+    }
+    return changed;
+  }
+
+  /**
+   * Score de uma linha do radar — MESMA combineReadinessUI que arm/cards.
+   * Símbolo seleccionado: sempre liveGates[preset] + liveProx[preset].
+   * Outros: cache de porta (TTL) se existir; senão gateKnown=false ("sinal").
+   */
+  function readinessForRadarSymbol(sym, liveScan, preset) {
+    preset = preset || activeRadarPreset();
+    var isSelected = !!sym && sym === state.symbol;
+    var gate = null;
+    var live = liveScan || null;
+    if (isSelected) {
+      if (state.liveGates[preset]) gate = state.liveGates[preset];
+      if (state.liveProx[preset]) live = state.liveProx[preset];
+    }
+    if (!gate) gate = getRadarGateCached(sym, preset);
+    var gateKnown = !!gate;
+    return combineReadinessUI(gate, live, preset, gateKnown);
+  }
+
+  /**
+   * Mantém state.radar.rows[symbol] = % do arm (mesmo preset + mesma combineReadinessUI).
+   * Chamado em syncArmUi / live prox / gate reeval — sem simulação paralela.
+   */
+  function patchSelectedRadarRow(opts) {
+    opts = opts || {};
+    var sym = state.symbol;
+    if (!sym) return;
+    // Mesmos inputs que syncArmUi — strategySet activo; sem misturar presets
+    var preset = state.strategySet || activeRadarPreset();
+    var gate = state.strategySet ? (state.liveGates[state.strategySet] || null) : null;
+    var live = state.strategySet ? (state.liveProx[state.strategySet] || null) : null;
+    if (gate && state.strategySet) putRadarGateCache(sym, state.strategySet, gate);
+    var combined = combineReadinessUI(gate, live, state.strategySet || preset, !!gate);
+    var prev = state.radar.rows[sym] || {};
+    var displayName = prev.displayName;
+    if (!displayName) {
+      var hit = null;
+      for (var i = 0; i < state.bybitSymbolsAll.length; i++) {
+        if (state.bybitSymbolsAll[i].symbol === sym) { hit = state.bybitSymbolsAll[i]; break; }
+      }
+      displayName = (hit && hit.displayName) || sym.replace(/USDT$/, "");
+    }
+    state.radar.rows[sym] = {
+      symbol: sym,
+      displayName: displayName,
+      signalPct: combined.signalPct != null
+        ? combined.signalPct
+        : (live && live.proximityPct) || prev.signalPct || 0,
+      proximityPct: combined.score,
+      readinessLabel: combined.label,
+      readinessKind: combined.kind || (gate ? "gate" : "signal_only"),
+      gateKnown: !!gate,
+      bias: (live && live.bias) || prev.bias || "neutral",
+      atTarget: !!(live && live.atTarget),
+      detail: (live && live.detail) || prev.detail || "",
+      preset: preset,
+      at: Date.now(),
+    };
+    var scoreChanged = state.radar.lastPatchedScore !== combined.score;
+    state.radar.lastPatchedScore = combined.score;
+    if (opts.render !== false && (scoreChanged || opts.forceRender)) {
+      renderRadarList();
+    }
+  }
+
   function gateOptsForPreset(presetId, costFraction, trainSize, testSize) {
     var preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(presetId) : null;
     var g = (preset && preset.preferredGate) || {};
@@ -1007,6 +1130,7 @@
       try {
         var result = evaluatePreset(id, candles);
         state.liveGates[id] = result;
+        if (state.symbol) putRadarGateCache(state.symbol, id, result);
         if (id === "lucro_rapido" || id === "loss_zero") renderStratCard(id, result, null);
       } catch (e) {
         state.liveGates[id] = null;
@@ -1581,6 +1705,7 @@
     state.prePlayGate = null;
     state.liveProx = { lucro_rapido: null, loss_zero: null };
     state.liveGates = { lucro_rapido: null, loss_zero: null };
+    state.radar.lastPatchedScore = null;
     // Cancel in-flight heavy gate for previous symbol; radar continues in background
     gateEvalQueued = false;
     stopFeed();
@@ -1626,6 +1751,10 @@
     }
     state.strategySet = preset || "";
     // Strategy-only: chart stays mounted, WS untouched, no kline reload.
+    // Casa radar com a estratégia: limpa % do preset antigo e rescana.
+    if (preset === "lucro_rapido" || preset === "loss_zero") {
+      syncRadarPresetFromStrategy(); // rescana só se o preset efectivo mudou
+    }
     syncPlayReadyFromSelection();
     scheduleLiveProximity();
     // Soft gate for newly selected preset if missing (never blocks UI / chart).
@@ -1999,6 +2128,8 @@
       else if (running) { pill.className = "pill arm-on"; pill.textContent = "ARMADO"; }
       else { pill.className = "pill warn"; pill.textContent = "DESARMADO"; }
     }
+    // Radar row do símbolo activo = mesmo % do arm (mesmo preset + combineReadinessUI)
+    patchSelectedRadarRow({ render: true });
   }
 
   async function pushClosedCandleToSession(c) {
@@ -2051,8 +2182,12 @@
     var meta = el("radarMeta");
     var st = el("radarStatus");
     if (!box) return;
+    var preset = activeRadarPreset();
+    var stratName = presetLabelPt(preset);
     var filter = String(state.radar.filter || "").trim().toUpperCase();
     var rows = Object.keys(state.radar.rows).map(function (sym) { return state.radar.rows[sym]; });
+    // Só linhas do preset activo — nunca misturar Lucro rápido com Loss zero
+    rows = rows.filter(function (r) { return !r.preset || r.preset === preset; });
     rows.sort(function (a, b) { return (b.proximityPct || 0) - (a.proximityPct || 0); });
     if (filter) {
       rows = rows.filter(function (r) {
@@ -2061,21 +2196,31 @@
     }
     var top = rows.slice(0, 80);
     if (!top.length) {
-      box.innerHTML = '<div class="radar-empty">Ainda sem scores — scan em curso (só futuros Linear USDT).</div>';
+      box.innerHTML = '<div class="radar-empty">Ainda sem scores · ' + escapeHtml(stratName) +
+        ' — scan em curso (só futuros Linear USDT).</div>';
     } else {
       box.innerHTML = top.map(function (r) {
-        var pctN = Math.round(r.proximityPct || 0); // prontidão combinada
+        var pctN = Math.round(r.proximityPct || 0); // prontidão combinada (mesma fórmula do arm)
         var sigN = Math.round(r.signalPct != null ? r.signalPct : pctN);
+        var gateKnown = !!r.gateKnown;
         var near = !r.atTarget && sigN >= 55;
-        var hot = r.atTarget || pctN >= 60 ? "hot" : near ? "warm near-target" : pctN >= 40 ? "warm" : "";
+        var hot = (gateKnown && r.atTarget) || pctN >= 60 ? "hot" : near ? "warm near-target" : pctN >= 40 ? "warm" : "";
         var active = r.symbol === state.symbol ? " active" : "";
         var bias = r.bias === "long" ? "long" : r.bias === "short" ? "short" : "";
-        var biasLabel = r.atTarget ? "ALVO sinal" : near ? "quase sinal" : (r.bias || "—");
-        var nearTag = near ? '<span class="tag-near">sinal quente</span>' : "";
-        return '<div class="radar-row ' + hot + active + '" role="listitem" data-symbol="' + escapeHtml(r.symbol) + '" title="' + escapeHtml(r.readinessLabel || "prontidão") + '">' +
-          '<span class="sym">' + escapeHtml(r.symbol.replace(/USDT$/, "")) + '<small style="opacity:.55">USDT</small>' + nearTag + "</span>" +
+        var biasLabel = gateKnown && r.atTarget ? "ALVO" : near ? "quase sinal" : (r.bias || "—");
+        var kindTag = !gateKnown
+          ? '<span class="tag-near">sinal</span>'
+          : (near ? '<span class="tag-near">sinal quente</span>' : "");
+        var subPct = gateKnown
+          ? ("porta+sinal · " + stratName)
+          : ("sinal · " + stratName + " · porta pendente");
+        return '<div class="radar-row ' + hot + active + '" role="listitem" data-symbol="' + escapeHtml(r.symbol) +
+          '" title="' + escapeHtml((r.readinessLabel || "prontidão") + " · " + stratName) + '">' +
+          '<span class="sym">' + escapeHtml(r.symbol.replace(/USDT$/, "")) +
+          '<small style="opacity:.55">USDT</small>' + kindTag + "</span>" +
           '<span class="bias ' + bias + '">' + biasLabel + "</span>" +
-          '<span class="pct">' + pctN + "%<small style=\"opacity:.55;display:block;font-size:10px\">sinal " + sigN + "%</small></span></div>";
+          '<span class="pct">' + pctN + "%<small style=\"opacity:.55;display:block;font-size:10px\">" +
+          escapeHtml(subPct) + " · sinal " + sigN + "%</small></span></div>";
       }).join("");
       box.querySelectorAll(".radar-row").forEach(function (row) {
         row.addEventListener("click", function () {
@@ -2088,14 +2233,14 @@
     }
     var cov = state.radar.scanned + "/" + state.radar.total;
     if (meta) {
-      meta.textContent = "Scan " + cov + " perpetuals · preset " +
-        (state.radar.preset === "loss_zero" ? "Loss zero" : "Lucro rápido") +
+      meta.textContent = "Scan " + cov + " · " + stratName +
         (state.radar.paused ? " · PAUSADO" : " · em fundo") +
-        " · % = prontidão (sinal teto sem porta; 100 só porta+alvo)";
+        " · % = prontidão " + stratName +
+        " (seleccionado = arm; outros = sinal até porta; 100 só porta+alvo)";
     }
     if (st) {
       st.className = "pill " + (state.radar.paused ? "warn" : state.radar.scanned > 0 ? "live-ok" : "warn");
-      st.textContent = state.radar.paused ? "Pausado" : ("Scan " + cov);
+      st.textContent = state.radar.paused ? "Pausado" : ("Scan " + cov + " · " + stratName);
     }
   }
 
@@ -2129,27 +2274,41 @@
         batch.push(all[idx]);
       }
       state.radar.cursor = (state.radar.cursor + batch.length) % all.length;
-      var preset = state.radar.preset || "lucro_rapido";
+      var preset = activeRadarPreset();
+      state.radar.preset = preset;
       var strats = radarStrategies(preset);
       for (var i = 0; i < batch.length; i++) {
         if (gen !== state.radar.gen) return;
         var it = batch[i];
         try {
+          // Símbolo seleccionado: não sobrescrever com scan leve — patch do arm manda
+          if (it.symbol === state.symbol && state.liveGates[preset]) {
+            patchSelectedRadarRow({ render: false });
+            continue;
+          }
           var candles = await fetchKlinesRaw(it.symbol, state.granularity, RADAR_KLINES);
           if (gen !== state.radar.gen) return;
           var closed = closedOnly(candles, state.granularity);
           var live = typeof NL.evaluateLiveEntry === "function"
             ? NL.evaluateLiveEntry(closed.slice(-RADAR_KLINES), strats, { hold: 3 })
             : { proximityPct: 0, bias: "neutral", atTarget: false };
-          var readyRadar = combineReadinessUI(null, live, preset, false);
+          // Mesma fórmula do arm; porta via cache TTL ou gateKnown=false ("sinal")
+          var readyRadar = readinessForRadarSymbol(it.symbol, live, preset);
+          var gateKnown = readyRadar.kind !== "signal_only";
           state.radar.rows[it.symbol] = {
             symbol: it.symbol,
             displayName: it.displayName,
-            signalPct: live.proximityPct || 0,
-            proximityPct: readyRadar.score, // prontidão (nunca 100 sem porta)
+            signalPct: readyRadar.signalPct != null ? readyRadar.signalPct : (live.proximityPct || 0),
+            proximityPct: readyRadar.score,
             readinessLabel: readyRadar.label,
-            bias: live.bias || "neutral",
-            atTarget: !!live.atTarget,
+            readinessKind: readyRadar.kind,
+            gateKnown: gateKnown,
+            bias: (it.symbol === state.symbol && state.liveProx[preset] && state.liveProx[preset].bias)
+              ? state.liveProx[preset].bias
+              : (live.bias || "neutral"),
+            atTarget: (it.symbol === state.symbol && state.liveProx[preset])
+              ? !!state.liveProx[preset].atTarget
+              : !!live.atTarget,
             detail: live.detail || "",
             preset: preset,
             at: Date.now(),
@@ -2423,9 +2582,18 @@
     });
     var radarPreset = el("radarPreset");
     if (radarPreset) radarPreset.addEventListener("change", function () {
-      state.radar.preset = radarPreset.value || "lucro_rapido";
+      var p = radarPreset.value || "lucro_rapido";
+      // Casamento: mudar preset do radar = mudar estratégia (mesma % em radar+arm)
+      if (p === "lucro_rapido" || p === "loss_zero") {
+        var sel = el("bybitStrategy");
+        if (sel) sel.value = p;
+        onStrategyChange(p);
+        return;
+      }
+      state.radar.preset = p;
       state.radar.rows = {};
       state.radar.scanned = 0;
+      state.radar.lastPatchedScore = null;
       startRadarScan();
     });
     var btnRadarPause = el("btnRadarPause");
