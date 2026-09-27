@@ -66,6 +66,7 @@
     chartRo: null,
     loadGen: 0,
     feedGen: 0,
+    chartSymbol: null, // which Linear USDT pair chartCandles / series currently represent
     session: null,
     sessionSymbol: null, // pinned at ARMAR — REAL/PAPER trades this, never stale BTC default
     controller: null,
@@ -212,6 +213,10 @@
     var empty = el("chartEmpty");
     if (!list.length) {
       if (empty) empty.hidden = false;
+      // Always wipe series so a prior pair (e.g. BNB) never lingers under the empty overlay.
+      if (state.candleSeries) {
+        try { state.candleSeries.setData([]); } catch (_clr) {}
+      }
       return;
     }
     if (empty) empty.hidden = true;
@@ -511,6 +516,8 @@
   }
 
   function applyLiveKline(raw) {
+    // Stale-topic / mid-switch guard: never paint another pair into the active series.
+    if (state.chartSymbol && state.chartSymbol !== state.symbol) return;
     var startMs = Number(raw.start);
     if (!Number.isFinite(startMs)) return;
     var candle = {
@@ -566,8 +573,10 @@
     }, 6000);
     ws.onopen = function () {
       if (feedId !== state.feedGen) { try { ws.close(); } catch (_e) {} return; }
+      if (state.symbol !== sym) { try { ws.close(); } catch (_eSym) {} return; }
       opened = true;
       clearTimeout(failTimer);
+      // topic = kline.{interval}.{SYMBOL} — always matches state.symbol at subscribe time
       try { ws.send(JSON.stringify({ op: "subscribe", args: [topic] })); } catch (_e2) {}
       setFeedMode("ws");
       var hint = el("liveFeedHint");
@@ -600,14 +609,21 @@
     if (state.ws) { try { state.ws.close(); } catch (_e) {} state.ws = null; }
     setFeedMode("poll");
     if (state.pollTimer) clearInterval(state.pollTimer);
+    // Capture generation + pair — in-flight ticks must not overwrite a newer switchSymbol load.
+    var feedId = state.feedGen;
+    var sym = state.symbol;
+    var gran = state.granularity;
     var tick = async function () {
+      if (feedId !== state.feedGen || state.symbol !== sym || state.granularity !== gran) return;
       try {
-        var raw = await fetchKlinesRaw(state.symbol, state.granularity, CHART_HISTORY);
+        var raw = await fetchKlinesRaw(sym, gran, CHART_HISTORY);
+        if (feedId !== state.feedGen || state.symbol !== sym || state.granularity !== gran) return;
         if (!raw.length) return;
         var next = raw.slice(-CHART_HISTORY);
         var prevLast = state.chartCandles.length ? state.chartCandles[state.chartCandles.length - 1] : null;
         var nextLast = next[next.length - 1];
         state.chartCandles = next;
+        state.chartSymbol = sym;
         if (prevLast && nextLast && prevLast.epoch === nextLast.epoch && state.candleSeries) {
           updateLastBar(nextLast);
         } else {
@@ -615,6 +631,7 @@
           updateLastBar(nextLast);
         }
       } catch (e) {
+        if (feedId !== state.feedGen) return;
         setFeedMode("err");
         var status = el("chartStatus");
         if (status) { status.className = "pill live-err"; status.textContent = "Erro: " + (e.message || String(e)); }
@@ -685,20 +702,23 @@
     var status = el("chartStatus");
     if (status) { status.className = "pill warn"; status.textContent = "A carregar " + sym + "…"; }
     setStratLoading();
-    // Drop previous symbol candles immediately so BTC doesn’t linger while ETH loads.
+    // Drop previous symbol candles immediately so BNB/BTC never linger while ETH loads.
     state.chartCandles = [];
     state.gateCandles = [];
+    state.chartSymbol = null;
     updateLivePrice(null);
     ensureChart(false);
     if (state.candleSeries) {
       try { state.candleSeries.setData([]); } catch (_clr) {}
     }
+    paintChartFromState(false);
     try {
       // Fast path: chart + WS first (CHART_HISTORY), then heavy gate history.
       var raw = await fetchKlinesRaw(sym, gran, CHART_HISTORY);
       if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
       var recent = raw.length ? raw.slice(-CHART_HISTORY) : [];
       state.chartCandles = recent;
+      state.chartSymbol = sym;
       ensureChart(false);
       paintChartFromState(true);
       scheduleRender();
@@ -1681,16 +1701,21 @@
   }
 
   async function switchSymbol(sym, opts) {
-    if (state.running) {
-      pushHistory("Para a sessão antes de mudar o par. Sessão armada em " +
-        (state.sessionSymbol || state.symbol) + ".", "stop");
+    var next = String(sym || "").trim().toUpperCase();
+    if (!next) return;
+    if (!/^[A-Z0-9]{2,20}USDT$/.test(next)) {
+      pushHistory("Par inválido: " + next + " (só Linear USDT perpetuals).", "stop");
       syncSymbolSelectToState();
       return;
     }
-    var next = String(sym || "").trim().toUpperCase();
-    if (!next) return;
+    // Intentional switch while armed/paused: clear pin + stop so chart never shows BNB for an ETH select.
+    if (state.running) {
+      var was = state.sessionSymbol || state.symbol;
+      pushHistory("Sessão em " + was + " parada para mudar para " + next + ".", "stop");
+      stopSession();
+    }
     var force = opts && opts.force;
-    if (next === state.symbol && !force) return;
+    if (next === state.symbol && !force && state.chartSymbol === next) return;
     state.symbol = next;
     state.sessionSymbol = null; // never keep a prior arm pin across idle switches
     var sel = el("bybitSymbolSelect");
@@ -1709,8 +1734,18 @@
     // Cancel in-flight heavy gate for previous symbol; radar continues in background
     gateEvalQueued = false;
     stopFeed();
-    // Keep chart mounted — never destroy on symbol change; only resubscribe WS + reload klines.
+    // Wipe ownership + series immediately (before await) so old BNB candles cannot linger.
+    state.chartCandles = [];
+    state.gateCandles = [];
+    state.chartSymbol = null;
     ensureChart(false);
+    if (state.candleSeries) {
+      try { state.candleSeries.setData([]); } catch (_clr) {}
+    }
+    var status = el("chartStatus");
+    if (status) { status.className = "pill warn"; status.textContent = "A carregar " + next + "…"; }
+    updateLivePrice(null);
+    // Keep chart mounted — never destroy on symbol change; only resubscribe WS + reload klines.
     try { await loadBybitLeverage(state.symbol); } catch (_lev) {}
     await loadChartAndGates();
     renderRadarList();
@@ -1985,6 +2020,9 @@
     } catch (e) {
       pushHistory("Erro ao iniciar: " + (e.message || String(e)), "stop");
       state.running = false;
+      state.armState = "disarmed";
+      state.sessionSymbol = null; // never leave a stale pin that blocks/locks chart while idle
+      syncSymbolSelectToState();
     }
     updateButtons();
   }
