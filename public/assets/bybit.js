@@ -851,17 +851,93 @@
     ["lucro_rapido", "loss_zero"].forEach(function (id) { renderStratCard(id, null, msg); });
   }
 
-  function proximityScore(result, allowed) {
+  function minLabelForPreset(presetId) {
+    var preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(presetId) : null;
+    var g = (preset && preset.preferredGate) || {};
+    return g.minLabel === "EVIDENCE" ? "EVIDENCE" : "PRELIMINARY";
+  }
+
+  /** Progresso da porta (OOS vs mínimo do preset). Preferir NL.gateProgressPct. */
+  function proximityScore(result, allowed, presetId) {
+    if (!result && !allowed) return 0;
+    if (typeof NL.gateProgressPct === "function") {
+      return NL.gateProgressPct({
+        allowed: !!allowed,
+        oosTrades: result && typeof result.oosTrades === "number" ? result.oosTrades : 0,
+        meanR: result && typeof result.meanR === "number" ? result.meanR : null,
+        pValue: result ? result.pValue : null,
+        minLabel: minLabelForPreset(presetId),
+      });
+    }
     if (!result) return 0;
     if (allowed) return 100;
     var oos = typeof result.oosTrades === "number" ? result.oosTrades : 0;
+    var need = minLabelForPreset(presetId) === "EVIDENCE" ? 1000 : 100;
+    var score = Math.min(88, Math.round((oos / need) * 88));
     var meanR = typeof result.meanR === "number" ? result.meanR : 0;
     var p = result.pValue != null && Number.isFinite(result.pValue) ? result.pValue : 1;
-    var score = 0;
-    score += Math.min(40, Math.round((oos / 30) * 40));
-    if (meanR > 0) score += Math.min(30, Math.round((Math.min(meanR, 0.5) / 0.5) * 30));
-    if (p < 0.5) score += Math.min(25, Math.round((1 - p) * 25));
-    return Math.min(85, Math.max(5, score));
+    if (oos > 0 && meanR > 0) score += Math.min(7, Math.round((Math.min(meanR, 0.4) / 0.4) * 7));
+    if (oos > 0 && p < 0.5) score += Math.min(5, Math.round((1 - p) * 5));
+    return Math.min(99, Math.max(0, score));
+  }
+
+  /**
+   * Score único porta+sinal — radar, cards, barra, ARMADO.
+   * gateKnown=false (radar sem porta) nunca mostra 100%.
+   */
+  function combineReadinessUI(result, live, presetId, gateKnown) {
+    var allowed = !!(result && result.allowed);
+    var known = gateKnown !== false && !!result;
+    var gateSc = proximityScore(result, allowed, presetId);
+    if (typeof NL.combineReadiness === "function") {
+      return NL.combineReadiness({
+        gateAllowed: allowed,
+        gateProgressPct: gateSc,
+        live: live || null,
+        gateKnown: known,
+      });
+    }
+    if (typeof NL.combineGateAndLive === "function" && live) {
+      var legacy = NL.combineGateAndLive(allowed, gateSc, live);
+      return {
+        score: legacy.score,
+        label: legacy.label,
+        ready: legacy.ready,
+        signalPct: live.proximityPct || 0,
+        kind: legacy.ready ? "ready" : "gate_closed",
+      };
+    }
+    // Sem NL: nunca Math.max(live) — peso na porta
+    var sig = live && Number.isFinite(live.proximityPct) ? live.proximityPct : 0;
+    if (!known) {
+      return {
+        score: Math.min(70, Math.round(sig * 0.7)),
+        label: "Proximidade do sinal (porta por avaliar)",
+        ready: false,
+        signalPct: sig,
+        kind: "signal_only",
+      };
+    }
+    if (allowed && live && live.atTarget) {
+      return { score: 100, label: "Pronto a entrar (porta+sinal)", ready: true, signalPct: sig, kind: "ready" };
+    }
+    if (allowed) {
+      return {
+        score: Math.min(99, Math.max(gateSc, 70)),
+        label: "Porta aberta · à espera do sinal",
+        ready: false,
+        signalPct: sig,
+        kind: "gate_open_waiting",
+      };
+    }
+    var mixed = Math.min(94, Math.round(gateSc * 0.85 + sig * 0.15));
+    return {
+      score: mixed,
+      label: "NO TRADE · porta " + gateSc + "% · sinal " + Math.round(sig) + "%",
+      ready: false,
+      signalPct: sig,
+      kind: "gate_closed",
+    };
   }
 
   function gateOptsForPreset(presetId, costFraction, trainSize, testSize) {
@@ -959,10 +1035,7 @@
     if (!card) return;
     var allowed = !!(result && result.allowed);
     var live = state.liveProx[presetId];
-    var gateSc = proximityScore(result, allowed);
-    var combined = (typeof NL.combineGateAndLive === "function" && live)
-      ? NL.combineGateAndLive(allowed, gateSc, live)
-      : { score: live ? Math.max(gateSc, live.proximityPct) : gateSc, label: "", ready: false };
+    var combined = combineReadinessUI(result, live, presetId, !!result);
     var score = combined.score;
     card.classList.toggle("open", allowed && live && live.atTarget);
     card.classList.toggle("closed", !(allowed && live && live.atTarget));
@@ -979,10 +1052,16 @@
       dot.className = "sem-dot " + col;
     }
     if (proxEl) {
-      proxEl.textContent = live
-        ? ("Prox " + live.proximityPct + "% · " + (live.bias === "long" ? "compra" : live.bias === "short" ? "venda" : "neutro") +
-          (live.atTarget ? " · ALVO" : "") + " · " + live.agreeingLong + "↑/" + live.agreeingShort + "↓ de " + live.total)
-        : "Prox — (à espera de velas ao vivo)";
+      if (live) {
+        var biasTxt = live.bias === "long" ? "compra" : live.bias === "short" ? "venda" : "neutro";
+        proxEl.textContent =
+          "Prontidão " + score + "% · sinal " + live.proximityPct + "% · " + biasTxt +
+          (live.atTarget ? " · ALVO" : "") +
+          " · " + live.agreeingLong + "↑/" + live.agreeingShort + "↓ de " + live.total +
+          (combined.label ? " · " + combined.label : "");
+      } else {
+        proxEl.textContent = "Prontidão — (à espera de velas ao vivo)";
+      }
     }
     if (errMsg) {
       if (badge) badge.textContent = "erro";
@@ -1052,7 +1131,8 @@
     var allowed = !!(result && result.allowed);
     state.prePlayOk = allowed;
     state.prePlayGate = result;
-    var score = proximityScore(result, allowed);
+    var livePlay = preset ? state.liveProx[preset] : null;
+    var score = combineReadinessUI(result, livePlay, preset, !!result).score;
     if (box) { box.classList.toggle("open", allowed); box.classList.toggle("closed", !allowed); }
     if (title) title.textContent = allowed ? label + ": PODE PLAY" : label + ": NO TRADE";
     if (reason) {
@@ -1099,20 +1179,27 @@
     var bar = el("proximityBar");
     var label = el("proximityLabel");
     var dot = el("proximityDot");
-    var score = proximityScore(result, allowed);
+    var liveGate = state.strategySet ? state.liveProx[state.strategySet] : null;
+    var combinedGate = combineReadinessUI(result, liveGate, state.strategySet, !!result);
+    var score = combinedGate.score;
     if (fill) {
       fill.style.width = score + "%";
-      fill.classList.toggle("ok", allowed);
-      fill.classList.toggle("warn", !allowed && score >= 40);
-      fill.classList.toggle("bad", !allowed && score < 40);
+      fill.classList.toggle("ok", !!(allowed && liveGate && liveGate.atTarget));
+      fill.classList.toggle("warn", score >= 40 && !(allowed && liveGate && liveGate.atTarget));
+      fill.classList.toggle("bad", score < 40);
     }
     if (bar) bar.setAttribute("aria-valuenow", String(score));
     if (label) {
-      label.textContent = allowed
-        ? "Porta aberta (evidência real) — confirmação PLAY ainda necessária"
-        : result ? "NO TRADE · " + (result.reason || result.label || "") : "A aguardar análise / dados…";
+      label.textContent = combinedGate.label || (
+        allowed
+          ? "Porta aberta — confirmação PLAY ainda necessária"
+          : result ? "NO TRADE · " + (result.reason || result.label || "") : "A aguardar análise / dados…"
+      );
     }
-    if (dot) dot.className = "sem-dot " + (allowed ? "green" : score >= 40 ? "amber" : "red");
+    if (dot) {
+      var readyDot = !!(allowed && liveGate && liveGate.atTarget);
+      dot.className = "sem-dot " + (readyDot ? "green" : score >= 40 ? "amber" : "red");
+    }
   }
 
   function setPrePlayUI(result) {
@@ -1860,10 +1947,7 @@
     var hasPos = !!(state.session && state.session.hasOpenPosition);
     var gateOk = !!(gate && gate.allowed);
     var atTarget = !!(live && live.atTarget);
-    var gateSc = proximityScore(gate, gateOk);
-    var combined = (typeof NL.combineGateAndLive === "function" && live)
-      ? NL.combineGateAndLive(gateOk, gateSc, live)
-      : { score: live ? live.proximityPct : gateSc, label: "—", ready: false };
+    var combined = combineReadinessUI(gate, live, preset, !!gate);
     var score = combined.score;
     var mode = "disarmed";
     var titleTxt = "DESARMADO · co-piloto";
@@ -1980,17 +2064,18 @@
       box.innerHTML = '<div class="radar-empty">Ainda sem scores — scan em curso (só futuros Linear USDT).</div>';
     } else {
       box.innerHTML = top.map(function (r) {
-        var pctN = Math.round(r.proximityPct || 0);
-        var near = !r.atTarget && pctN >= 55;
-        var hot = r.atTarget || pctN >= 70 ? "hot" : near ? "warm near-target" : pctN >= 45 ? "warm" : "";
+        var pctN = Math.round(r.proximityPct || 0); // prontidão combinada
+        var sigN = Math.round(r.signalPct != null ? r.signalPct : pctN);
+        var near = !r.atTarget && sigN >= 55;
+        var hot = r.atTarget || pctN >= 60 ? "hot" : near ? "warm near-target" : pctN >= 40 ? "warm" : "";
         var active = r.symbol === state.symbol ? " active" : "";
         var bias = r.bias === "long" ? "long" : r.bias === "short" ? "short" : "";
-        var biasLabel = r.atTarget ? "ALVO" : near ? "quase" : (r.bias || "—");
-        var nearTag = near ? '<span class="tag-near">quase no alvo</span>' : "";
-        return '<div class="radar-row ' + hot + active + '" role="listitem" data-symbol="' + escapeHtml(r.symbol) + '">' +
+        var biasLabel = r.atTarget ? "ALVO sinal" : near ? "quase sinal" : (r.bias || "—");
+        var nearTag = near ? '<span class="tag-near">sinal quente</span>' : "";
+        return '<div class="radar-row ' + hot + active + '" role="listitem" data-symbol="' + escapeHtml(r.symbol) + '" title="' + escapeHtml(r.readinessLabel || "prontidão") + '">' +
           '<span class="sym">' + escapeHtml(r.symbol.replace(/USDT$/, "")) + '<small style="opacity:.55">USDT</small>' + nearTag + "</span>" +
           '<span class="bias ' + bias + '">' + biasLabel + "</span>" +
-          '<span class="pct">' + pctN + "%</span></div>";
+          '<span class="pct">' + pctN + "%<small style=\"opacity:.55;display:block;font-size:10px\">sinal " + sigN + "%</small></span></div>";
       }).join("");
       box.querySelectorAll(".radar-row").forEach(function (row) {
         row.addEventListener("click", function () {
@@ -2006,7 +2091,7 @@
       meta.textContent = "Scan " + cov + " perpetuals · preset " +
         (state.radar.preset === "loss_zero" ? "Loss zero" : "Lucro rápido") +
         (state.radar.paused ? " · PAUSADO" : " · em fundo") +
-        " · ranks só com dados reais";
+        " · % = prontidão (sinal teto sem porta; 100 só porta+alvo)";
     }
     if (st) {
       st.className = "pill " + (state.radar.paused ? "warn" : state.radar.scanned > 0 ? "live-ok" : "warn");
@@ -2056,10 +2141,13 @@
           var live = typeof NL.evaluateLiveEntry === "function"
             ? NL.evaluateLiveEntry(closed.slice(-RADAR_KLINES), strats, { hold: 3 })
             : { proximityPct: 0, bias: "neutral", atTarget: false };
+          var readyRadar = combineReadinessUI(null, live, preset, false);
           state.radar.rows[it.symbol] = {
             symbol: it.symbol,
             displayName: it.displayName,
-            proximityPct: live.proximityPct || 0,
+            signalPct: live.proximityPct || 0,
+            proximityPct: readyRadar.score, // prontidão (nunca 100 sem porta)
+            readinessLabel: readyRadar.label,
             bias: live.bias || "neutral",
             atTarget: !!live.atTarget,
             detail: live.detail || "",

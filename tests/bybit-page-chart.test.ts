@@ -196,3 +196,15 @@ test("chart light: CHART_HISTORY 96 + clear series on symbol load", () => {
   assert.match(bybitJs, /wsProxTick/);
   assert.match(bybitJs, /setData\(\[\]\)/);
 });
+
+test("readiness: bybit usa combineReadinessUI — nunca Math.max(gate, live) a 100%", () => {
+  assert.match(bybitJs, /function combineReadinessUI\(/);
+  assert.match(bybitJs, /NL\.combineReadiness/);
+  assert.match(bybitJs, /NL\.gateProgressPct/);
+  assert.doesNotMatch(bybitJs, /Math\.max\(gateSc,\s*live\.proximityPct\)/);
+  assert.doesNotMatch(bybitJs, /score:\s*live \? live\.proximityPct/);
+  // Radar stores readiness score, keeps signalPct separate
+  assert.match(bybitJs, /signalPct:\s*live\.proximityPct/);
+  assert.match(bybitJs, /combineReadinessUI\(null,\s*live,\s*preset,\s*false\)/);
+  assert.match(bybitHtml, /prontidão/i);
+});

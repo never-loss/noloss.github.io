@@ -138,7 +138,7 @@
               </div>
               <div class="proximity-sem" id="proximitySem">
                 <span class="sem-dot amber" id="proximityDot"></span>
-                <span id="proximityLabel">Informativo — só “pronto” com porta aberta</span>
+                <span id="proximityLabel">Prontidão porta+sinal — 100% só com porta aberta + alvo</span>
               </div>
             </div>
             <div class="gate-metrics" id="gateMetrics" hidden>
@@ -165,6 +165,32 @@
           <div id="accountContext" class="account-context muted">Escolhe Conta Real ou Conta Demo. PLAY usa este account_id (sessão paper neste painel).</div>
           <!-- Container legado para renderAccounts(); conteúdo gerido pelo select -->
           <div id="accounts" class="accounts accounts-hidden" hidden><div class="loading">…</div></div>
+        </section>
+
+        <section class="term panel" style="margin-top:12px" id="derivCloudArmPanel">
+          <h2>PLAY na nuvem · Deriv (PAPER)</h2>
+          <p class="footer-note" style="margin:0 0 10px;text-align:left">
+            Demo/PAPER: podes sair da página — ao voltar, o estado apanha as velas fechadas (replay determinístico).
+            Conta Real/Demo = a escolhida em Tipo de Conta. <strong>Sem ordens REAL na nuvem</strong> nesta v1 — REAL cloud = página aberta + confirmação.
+          </p>
+          <div class="term-selects" style="display:flex;flex-wrap:wrap;gap:10px;align-items:end">
+            <div class="field">
+              <label for="derivCloudMinutes">Duração (min ≤180)</label>
+              <input id="derivCloudMinutes" type="number" min="5" max="180" value="30" step="5">
+            </div>
+            <div class="btn-row" style="margin:0">
+              <button type="button" class="ctrl cloud" id="btnDerivCloudArm" disabled title="PAPER na nuvem (catch-up ao voltar)">Armar nuvem (PAPER)</button>
+              <button type="button" class="ctrl stop" id="btnDerivCloudStop" disabled>STOP nuvem</button>
+            </div>
+          </div>
+          <div id="derivCloudBox" class="cloud-arm-box entry-ready-box" role="status" aria-live="polite" hidden style="margin-top:10px">
+            <div class="entry-ready-top">
+              <strong id="derivCloudTitle">Nuvem · inactivo</strong>
+              <span class="pill" id="derivCloudPill">—</span>
+            </div>
+            <p class="entry-ready-reason" id="derivCloudReason">Escolhe conta, mercado, estratégia e duração.</p>
+            <div class="cloud-arm-meta" id="derivCloudMeta" style="font-size:12px;opacity:.8"></div>
+          </div>
         </section>
 
         <!-- 4 market panels (Deriv) -->
@@ -244,6 +270,21 @@
                 </div>
               </div>
 
+
+              <div class="entry-ready-box" id="entryReady-digits" aria-live="polite">
+                <div class="entry-ready-top">
+                  <span class="sem-dot amber" id="entryDot-digits"></span>
+                  <strong id="entryTitle-digits">Prontidão · Dígitos</strong>
+                  <span class="entry-pct" id="entryPct-digits">0%</span>
+                </div>
+                <div class="proximity-wrap" style="margin-top:6px">
+                  <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="entryBar-digits">
+                    <div class="proximity-fill" id="entryFill-digits" style="width:0%"></div>
+                  </div>
+                </div>
+                <p class="entry-ready-reason" id="entryReason-digits">Analisar / PLAY · % = porta+sinal (100 só porta aberta + alvo).</p>
+              </div>
+
               <div class="btn-row mkt-ctrls term-ctrls">
                 <button type="button" class="ctrl play mkt-play" data-panel="digits" disabled>PLAY</button>
                 <button type="button" class="ctrl pause mkt-pause" data-panel="digits" disabled>PAUSE</button>
@@ -288,6 +329,21 @@
                   <option value="biblioteca">Biblioteca</option>
                 </select>
               </div>
+
+              <div class="entry-ready-box" id="entryReady-forex" aria-live="polite">
+                <div class="entry-ready-top">
+                  <span class="sem-dot amber" id="entryDot-forex"></span>
+                  <strong id="entryTitle-forex">Prontidão · Forex</strong>
+                  <span class="entry-pct" id="entryPct-forex">0%</span>
+                </div>
+                <div class="proximity-wrap" style="margin-top:6px">
+                  <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="entryBar-forex">
+                    <div class="proximity-fill" id="entryFill-forex" style="width:0%"></div>
+                  </div>
+                </div>
+                <p class="entry-ready-reason" id="entryReason-forex">Indicadores ao vivo · porta+sinal. REAL cloud = página aberta.</p>
+              </div>
+
               <div class="btn-row mkt-ctrls">
                 <button type="button" class="ctrl play mkt-play" data-panel="forex" disabled>PLAY</button>
                 <button type="button" class="ctrl pause mkt-pause" data-panel="forex" disabled>PAUSE</button>

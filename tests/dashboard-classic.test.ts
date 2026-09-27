@@ -112,3 +112,21 @@ test("tick parser accepts Deriv tick stream shape", () => {
     assert.equal(lastDigit(m.quote, m.pipSize ?? 2), 7);
   }
 });
+
+test("Deriv entry readiness + cloud PAPER catch-up (sem REAL cloud orders)", () => {
+  assert.match(html, /id="entryReady-digits"/);
+  assert.match(html, /id="entryReady-forex"/);
+  assert.match(html, /id="derivCloudArmPanel"/);
+  assert.match(html, /btnDerivCloudArm/);
+  assert.match(html, /Sem ordens REAL na nuvem/i);
+  assert.match(js, /function computeReadiness\(/);
+  assert.match(js, /function paintEntryReadyBox\(/);
+  assert.match(js, /NL\.combineReadiness/);
+  assert.match(js, /function startDerivCloudArm\(/);
+  assert.match(js, /mode:\s*"PAPER"/);
+  assert.match(js, /sem contratos Deriv REAL na nuvem/i);
+  // OAuth files untouched
+  for (const f of oauthFiles) {
+    assert.ok(f.length > 0);
+  }
+});

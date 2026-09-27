@@ -1556,3 +1556,34 @@ body.world-deriv #legacyHeroControls {
   .lc-host { height: 220px; }
   .rail-step .lbl { font-size: 0.52rem; }
 }
+
+
+/* Entry readiness (Deriv Digits/Forex) */
+.entry-ready-box {
+  margin: 10px 0 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+.entry-ready-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.entry-ready-top strong { font-size: 13px; }
+.entry-pct {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.entry-ready-reason {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(226, 232, 240, 0.75);
+}
+.entry-ready-box.ready { border-color: rgba(52, 211, 153, 0.45); }
+.entry-ready-box.armed { border-color: rgba(251, 191, 36, 0.45); }

@@ -4,6 +4,9 @@ import {
   evaluateLiveEntry,
   proximityForStrategyName,
   combineGateAndLive,
+  combineReadiness,
+  gateProgressPct,
+  requiredOosForMinLabel,
 } from "../src/core/strategy-live.ts";
 import {
   lucroRapidoStrategySet,
@@ -91,11 +94,101 @@ test("combineGateAndLive só ready com porta + alvo", () => {
   assert.equal(a.score, 100);
   const b = combineGateAndLive(false, 40, live);
   assert.equal(b.ready, false);
-  assert.ok(b.score <= 70);
+  assert.ok(b.score <= 94, "porta fechada não pode fingir 100");
+  assert.ok(b.score < 70, "sinal quente + porta fraca fica longe de 100");
   const waiting = { ...live, atTarget: false, lastSignal: 0 as const, proximityPct: 60 };
   const c = combineGateAndLive(true, 100, waiting);
   assert.equal(c.ready, false);
+  assert.ok(c.score < 100);
   assert.ok(/espera/i.test(c.label));
+});
+
+test("gateProgressPct usa OOS vs PRELIMINARY/EVIDENCE sem inventar trades", () => {
+  assert.equal(requiredOosForMinLabel("PRELIMINARY"), 100);
+  assert.equal(requiredOosForMinLabel("EVIDENCE"), 1000);
+  assert.equal(gateProgressPct({ allowed: true }), 100);
+  const empty = gateProgressPct({ oosTrades: 0, minLabel: "PRELIMINARY" });
+  assert.equal(empty, 0);
+  const mid = gateProgressPct({ oosTrades: 50, minLabel: "PRELIMINARY" });
+  assert.ok(mid >= 40 && mid <= 50, `mid=${mid}`);
+  const nearPrelim = gateProgressPct({ oosTrades: 92, minLabel: "PRELIMINARY", meanR: 0.2, pValue: 0.1 });
+  assert.ok(nearPrelim >= 85 && nearPrelim <= 99, `near=${nearPrelim}`);
+  const evidSlow = gateProgressPct({ oosTrades: 100, minLabel: "EVIDENCE" });
+  assert.ok(evidSlow <= 20, `evidSlow=${evidSlow}`); // 100/1000 * 88 ≈ 9
+  assert.ok(gateProgressPct({ oosTrades: 999, minLabel: "EVIDENCE" }) < 100);
+});
+
+test("combineReadiness: 100% só porta+alvo; sinal sozinho nunca 100", () => {
+  const hot = {
+    proximityPct: 100,
+    lastSignal: 1 as const,
+    barsSinceSignal: 0,
+    agreeingLong: 3,
+    agreeingShort: 0,
+    total: 3,
+    bias: "long" as const,
+    atTarget: true,
+    detail: "ALVO",
+  };
+  const radar = combineReadiness({
+    gateAllowed: false,
+    gateProgressPct: 0,
+    live: hot,
+    gateKnown: false,
+  });
+  assert.equal(radar.ready, false);
+  assert.ok(radar.score <= 70);
+  assert.equal(radar.kind, "signal_only");
+  assert.ok(/sinal/i.test(radar.label));
+
+  const weakGate = combineReadiness({
+    gateAllowed: false,
+    gateProgressPct: 45,
+    live: hot,
+    gateKnown: true,
+  });
+  assert.equal(weakGate.ready, false);
+  assert.ok(weakGate.score <= 94);
+  // 45*0.85 + 100*0.15 = 38.25+15 = 53.25 → ~53
+  assert.ok(weakGate.score >= 45 && weakGate.score <= 65, `weak=${weakGate.score}`);
+  assert.ok(/porta/i.test(weakGate.label) && /sinal/i.test(weakGate.label));
+
+  const almost = combineReadiness({
+    gateAllowed: false,
+    gateProgressPct: 92,
+    live: hot,
+    gateKnown: true,
+  });
+  assert.ok(almost.score >= 90 && almost.score <= 99, `almost=${almost.score}`);
+  assert.equal(almost.ready, false);
+
+  const ready = combineReadiness({
+    gateAllowed: true,
+    gateProgressPct: 100,
+    live: hot,
+    gateKnown: true,
+  });
+  assert.equal(ready.score, 100);
+  assert.equal(ready.ready, true);
+  assert.ok(/pronto a entrar/i.test(ready.label));
+});
+
+test("combineReadiness consistente com combineGateAndLive", () => {
+  const live = {
+    proximityPct: 80,
+    lastSignal: 0 as const,
+    barsSinceSignal: 2,
+    agreeingLong: 1,
+    agreeingShort: 0,
+    total: 3,
+    bias: "long" as const,
+    atTarget: false,
+    detail: "quase",
+  };
+  const a = combineGateAndLive(false, 60, live);
+  const b = combineReadiness({ gateAllowed: false, gateProgressPct: 60, live, gateKnown: true });
+  assert.equal(a.score, b.score);
+  assert.equal(a.ready, b.ready);
 });
 
 test("LIVE_ENTRY_MAX_CANDLES limita custo com histórico longo", () => {
