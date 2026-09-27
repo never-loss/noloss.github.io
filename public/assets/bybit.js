@@ -1702,7 +1702,8 @@
     var set = function (id, v) { var n = el(id); if (n) n.textContent = v; };
     set("statStatus", summary ? summary.status : "—");
     set("statPnl", summary ? signed(summary.totalPnl) + (isRealTradingMode() ? " (REAL)" : " (sim)") : "—");
-    set("statTrades", summary ? String(summary.closed) + " / " + summary.opened : "—");
+    var maxTrades = summary && summary.maxTrades != null ? summary.maxTrades : maxTradesForPreset(state.strategySet);
+    set("statTrades", summary ? String(summary.opened) + " / " + maxTrades : "—");
     set("statDd", summary ? summary.maxDrawdown.toFixed(2) : "—");
   }
 
@@ -2466,7 +2467,8 @@
     }
     if (reason) reason.textContent = lines.join(" ");
     if (meta) {
-      meta.textContent = "Ops " + (sum.closed || 0) + "/" + (sum.opened || 0) +
+      var maxTrades = sum.maxTrades != null ? sum.maxTrades : (job.strategyPreset === "blitz_zero" ? 10 : 50);
+      meta.textContent = "Ops " + (sum.opened || 0) + "/" + maxTrades +
         " · PnL " + signed(sum.totalPnl || 0) +
         " · Queda " + Number(sum.maxDrawdown || 0).toFixed(2) +
         (sum.hasOpenPosition ? " · posição aberta" : "") +
