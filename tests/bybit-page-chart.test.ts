@@ -182,19 +182,86 @@ test("trade path: sessionSymbol pinned; REAL order uses tradeSymbol()", () => {
   assert.match(start, /assertSelectMatchesTradeSymbol/);
   assert.match(start, /sessionSymbol/);
   assert.match(start, /fetchBybitHistory\(armSym/);
-  // switch while running forces select back to armed pair
+  // switch while running: stopSession (clear pin) then load the new pair
   const sw = bybitJs.slice(
     bybitJs.indexOf("async function switchSymbol"),
     bybitJs.indexOf("async function switchInterval"),
   );
   assert.match(sw, /syncSymbolSelectToState/);
-  assert.match(sw, /Sessão armada/);
+  assert.match(sw, /stopSession\(\)/);
+  assert.match(sw, /parada para mudar/);
+  // arm failure must not leave a stale pin while idle
+  const startCatch = start.slice(start.lastIndexOf("catch"));
+  assert.match(startCatch, /sessionSymbol = null/);
+  assert.match(startCatch, /armState = "disarmed"/);
 });
 
 test("chart light: CHART_HISTORY 96 + clear series on symbol load", () => {
   assert.match(bybitJs, /CHART_HISTORY = 96/);
   assert.match(bybitJs, /wsProxTick/);
   assert.match(bybitJs, /setData\(\[\]\)/);
+});
+
+test("multi-symbol: switchSymbol reloads chart for arbitrary Linear USDT (not only BTC)", () => {
+  const switchFn = bybitJs.slice(
+    bybitJs.indexOf("async function switchSymbol"),
+    bybitJs.indexOf("async function switchInterval"),
+  );
+  // Owns state.symbol, clears pin, clears series, reloads klines+WS+labels
+  assert.match(switchFn, /state\.symbol = next/);
+  assert.match(switchFn, /state\.sessionSymbol = null/);
+  assert.match(switchFn, /state\.chartCandles = \[\]/);
+  assert.match(switchFn, /state\.chartSymbol = null/);
+  assert.match(switchFn, /candleSeries\.setData\(\[\]\)/);
+  assert.match(switchFn, /loadChartAndGates/);
+  assert.match(switchFn, /stopFeed/);
+  assert.match(switchFn, /A carregar " \+ next/);
+  assert.match(switchFn, /\^\[A-Z0-9\]\{2,20\}USDT\$/);
+  // No hardcoded majors in the switch path — works for ETH/SOL/XRP/BNB/…
+  assert.doesNotMatch(switchFn, /BNBUSDT|BTCUSDT|ETHUSDT/);
+  // Radar click shares the same function
+  assert.match(bybitJs, /switchSymbol\(sym\)/);
+  assert.match(bybitJs, /bybitSym\.addEventListener\("change".*switchSymbol/s);
+});
+
+test("multi-symbol: series clear + chartSymbol ownership + poll/WS stale guards", () => {
+  assert.match(bybitJs, /chartSymbol: null/);
+  assert.match(bybitJs, /state\.chartSymbol = sym/);
+  // Empty paint clears series (no lingering BNB under overlay)
+  const paint = bybitJs.slice(
+    bybitJs.indexOf("function paintChartFromState"),
+    bybitJs.indexOf("function destroyChart"),
+  );
+  assert.match(paint, /setData\(\[\]\)/);
+  // Poll ticks capture feedGen + symbol and ignore stale responses
+  const poll = bybitJs.slice(
+    bybitJs.indexOf("function startPollFeed"),
+    bybitJs.indexOf("async function fetchKlinesRaw"),
+  );
+  assert.match(poll, /var feedId = state\.feedGen/);
+  assert.match(poll, /var sym = state\.symbol/);
+  assert.match(poll, /feedId !== state\.feedGen/);
+  assert.match(poll, /state\.symbol !== sym/);
+  assert.match(poll, /fetchKlinesRaw\(sym, gran/);
+  // WS topic always kline.{interval}.{state.symbol}
+  const ws = bybitJs.slice(
+    bybitJs.indexOf("function startWsFeed"),
+    bybitJs.indexOf("function startPollFeed"),
+  );
+  assert.match(ws, /var topic = "kline\." \+ interval \+ "\." \+ sym/);
+  assert.match(ws, /var sym = state\.symbol/);
+  assert.match(ws, /state\.symbol !== sym/);
+  assert.match(ws, /op: "subscribe"/);
+  // Live kline refuses paint when chartSymbol drifted
+  assert.match(bybitJs, /chartSymbol && state\.chartSymbol !== state\.symbol/);
+  // Chart path must not hardcode BNB as default paint target
+  const loadFn = bybitJs.slice(
+    bybitJs.indexOf("async function loadChartAndGates"),
+    bybitJs.indexOf("function startGateTimer"),
+  );
+  assert.doesNotMatch(loadFn, /BNBUSDT/);
+  assert.match(loadFn, /state\.chartSymbol = sym/);
+  assert.match(loadFn, /state\.chartSymbol = null/);
 });
 
 test("readiness: bybit usa combineReadinessUI — nunca Math.max(gate, live) a 100%", () => {
