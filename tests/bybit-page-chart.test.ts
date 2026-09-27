@@ -81,7 +81,7 @@ function synth(n: number): Candle[] {
 
 test("wiring proof: each preset → strategies → gate controller → asStrategy", () => {
   const candles = synth(1800);
-  for (const id of ["lucro_rapido", "loss_zero", "tendencia_diaria", "biblioteca"] as const) {
+  for (const id of ["lucro_rapido", "loss_zero", "blitz_zero", "tendencia_diaria", "biblioteca"] as const) {
     const raw = strategiesForPreset(id);
     assert.ok(raw.length > 0, id);
     const strategies = raw.map((s) => feasible(s, { slAtr: 1.5, maxStopFraction: 0.01 }));
@@ -307,4 +307,16 @@ test("readiness: radar casado com estratégia — sem misturar presets", () => {
   assert.match(bybitJs, /RADAR_GATE_CACHE_TTL_MS/);
   assert.match(bybitJs, /putRadarGateCache/);
   assert.match(bybitJs, /getRadarGateCached/);
+});
+
+test("Blitz zero preset wired on Bybit page (select + live card + JS)", () => {
+  assert.match(bybitHtml, /value="blitz_zero"/);
+  assert.match(bybitHtml, /Blitz zero/);
+  assert.match(bybitHtml, /id="cardBlitzZero"/);
+  assert.match(bybitHtml, /data-preset="blitz_zero"/);
+  assert.match(bybitJs, /blitz_zero/);
+  assert.match(bybitJs, /blitzZeroStrategySet|NL\.blitzZeroStrategySet/);
+  assert.match(bybitJs, /cardBlitzZero/);
+  assert.match(bybitJs, /maxTrades:\s*state\.strategySet\s*===\s*"blitz_zero"\s*\?\s*10\s*:\s*50/);
+  assert.match(bybitJs, /["']lucro_rapido["'],\s*["']loss_zero["'],\s*["']blitz_zero["']/);
 });

@@ -135,9 +135,12 @@
 
 .strat-live-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .strat-live-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 640px) {
   .strat-live-grid { grid-template-columns: 1fr; }

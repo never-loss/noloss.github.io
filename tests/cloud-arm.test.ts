@@ -151,3 +151,17 @@ test("UI: neste ecrã vs nuvem labels + chart light history", () => {
   // No REAL cloud path
   assert.match(bybitJs, /mode: "PAPER"/);
 });
+
+test("validateCloudArmCreate aceita blitz_zero", () => {
+  const v = validateCloudArmCreate({
+    symbol: "ETHUSDT",
+    strategyPreset: "blitz_zero",
+    stake: 1,
+    leverage: 1,
+    granularity: 60,
+    durationMinutes: 30,
+    clientId: "c_blitzzero1",
+  });
+  assert.equal(v.strategyPreset, "blitz_zero");
+  assert.equal(v.granularity, 60);
+});

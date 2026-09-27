@@ -70,6 +70,7 @@
               <select id="radarPreset" title="Preset para ranking">
                 <option value="lucro_rapido">Lucro rápido</option>
                 <option value="loss_zero">Loss zero</option>
+                <option value="blitz_zero">Blitz zero</option>
               </select>
               <button type="button" class="ghost" id="btnRadarPause" title="Pausar/retomar scan">Pausar</button>
             </div>
@@ -124,6 +125,21 @@
                   <p class="strat-live-status" id="statusLossZero">NO TRADE</p>
                   <p class="strat-live-reason" id="reasonLossZero">A carregar…</p>
                   <p class="strat-live-prox" id="proxLossZero">Prox —</p>
+                </article>
+                <article class="strat-live-card closed" id="cardBlitzZero" data-preset="blitz_zero">
+                  <header class="strat-live-head">
+                    <span class="sem-dot amber" id="dotBlitzZero"></span>
+                    <strong>Blitz zero</strong>
+                    <span class="strat-live-badge" id="badgeBlitzZero">…</span>
+                  </header>
+                  <div class="proximity-wrap">
+                    <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barBlitzZero">
+                      <div class="proximity-fill" id="fillBlitzZero" style="width:0%"></div>
+                    </div>
+                  </div>
+                  <p class="strat-live-status" id="statusBlitzZero">NO TRADE</p>
+                  <p class="strat-live-reason" id="reasonBlitzZero">A carregar…</p>
+                  <p class="strat-live-prox" id="proxBlitzZero">Prox —</p>
                 </article>
               </div>
 
@@ -240,6 +256,7 @@
                     <option value="" selected disabled>— Escolhe —</option>
                     <option value="lucro_rapido">Lucro rápido</option>
                     <option value="loss_zero">Loss zero</option>
+                    <option value="blitz_zero">Blitz zero</option>
                     <option value="tendencia_diaria">Tendência diária</option>
                     <option value="biblioteca">Biblioteca</option>
                   </select>
