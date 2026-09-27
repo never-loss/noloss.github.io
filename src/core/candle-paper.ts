@@ -89,7 +89,7 @@ function validate(cfg: CandlePaperConfig): void {
   if (cfg.maxLoss < cfg.stake) throw new RangeError("maxLoss tem de ser pelo menos uma stake");
   positiveInt(cfg.maxTrades, "maxTrades");
   positive(cfg.maxDurationMs, "maxDurationMs");
-  if (cfg.maxDurationMs > MAX_SESSION_MS) throw new RangeError("Duração máxima é 3 horas");
+  if (cfg.maxDurationMs > MAX_SESSION_MS) throw new RangeError("Duração máxima é 12 horas");
   positiveInt(cfg.maxConsecutiveLosses, "maxConsecutiveLosses");
   if (!Number.isInteger(cfg.cooldownCandles) || cfg.cooldownCandles < 0) throw new RangeError(`cooldownCandles inválido: ${cfg.cooldownCandles}`);
   if (cfg.maxBuffer !== undefined) positiveInt(cfg.maxBuffer, "maxBuffer");

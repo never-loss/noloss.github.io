@@ -13,6 +13,7 @@ import { runCandleBacktest } from "../src/core/candle-backtest.ts";
 import { strategyLibrary, emaCross } from "../src/core/strategies.ts";
 import type { Strategy, Signal } from "../src/core/strategies.ts";
 import type { Candle } from "../src/core/market-data.ts";
+import { MAX_SESSION_MS } from "../src/core/paper.ts";
 
 function close(actual: number | null, expected: number, tol = 1e-9): void {
   assert.ok(actual !== null && Math.abs(actual - expected) <= tol, `${actual} não está perto de ${expected}`);
@@ -78,7 +79,7 @@ function rising(n: number): Candle[] {
   });
 }
 
-/** Só para testes: velas com 1 s de intervalo, para caberem na duração máxima de 3 horas da sessão. */
+/** Só para testes: velas com 1 s de intervalo, para caberem na duração máxima da sessão. */
 function compress(candles: Candle[]): Candle[] {
   return candles.map((c, i) => ({ ...c, epoch: 1_700_000_000 + i }));
 }
@@ -254,7 +255,7 @@ test("martingale e opções desconhecidas são rejeitadas; configuração invál
   assert.throws(() => new CandlePaperSession({ ...cfg(), stakeMultiplier: 2 } as unknown as CandlePaperConfig), RangeError);
   assert.throws(() => new CandlePaperSession(cfg({ stake: 0.4 })), RangeError);
   assert.throws(() => new CandlePaperSession(cfg({ maxLoss: 0.5 })), RangeError);
-  assert.throws(() => new CandlePaperSession(cfg({ maxDurationMs: 4 * 3600 * 1000 })), RangeError);
+  assert.throws(() => new CandlePaperSession(cfg({ maxDurationMs: MAX_SESSION_MS + 1 })), RangeError);
   assert.throws(() => new CandlePaperSession(cfg({ slAtr: 0 })), RangeError);
   assert.throws(() => new CandlePaperSession(cfg({ cooldownCandles: -1 })), RangeError);
   assert.throws(() => new CandlePaperSession(cfg({ strategy: undefined as never })), RangeError);

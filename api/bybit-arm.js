@@ -1,5 +1,7 @@
 // Cloud timed PAPER|REAL arm — single Hobby-safe endpoint (create/list/status/cancel/tick).
-// POST body → create | GET ?id= / ?clientId= → status/list | DELETE ?id= → cancel | GET/POST ?tick=1 → tick all.
+// POST → enable daily 08–20 Africa/Luanda schedule + start today if in window.
+// DELETE → disable schedule + cancel active job.
+// GET/POST ?tick=1 → advance running jobs + reconcile daily schedules (cron + lazy).
 // REAL: after advance, pendingRealMirrors → placeLinearMarketOrder (de-duped via realAppliedEventKeys).
 // Optional CRON_SECRET for tick. Upstash Redis when UPSTASH_* set.
 
@@ -8,11 +10,24 @@ import {
   advanceCloudArmJob,
   cancelCloudArmJob,
   publicCloudArmJob,
+  publicCloudArmSchedule,
   pendingRealMirrors,
   markRealMirrorsApplied,
+  createDailySchedule,
+  disableDailySchedule,
+  reconcileDailySchedule,
   CLOUD_ARM_WARMUP,
+  CLOUD_ARM_MAX_DURATION_MINUTES,
 } from "../lib/nl-cloud.mjs";
-import { saveArmJob, getArmJob, listArmJobs, armStoreInfo } from "../lib/arm-store.js";
+import {
+  saveArmJob,
+  getArmJob,
+  listArmJobs,
+  armStoreInfo,
+  saveArmSchedule,
+  getArmSchedule,
+  listArmSchedules,
+} from "../lib/arm-store.js";
 import { fetchArmCandleHistory } from "../lib/arm-klines.js";
 import {
   hasBybitKeys,
@@ -224,6 +239,78 @@ async function advanceAndSave(job) {
   return next;
 }
 
+
+async function loadActiveJobForSchedule(schedule) {
+  if (!schedule || !schedule.activeJobId) return null;
+  return getArmJob(schedule.activeJobId);
+}
+
+/**
+ * Apply reconcileDailySchedule decision: start today's window session or stop outside window.
+ * Returns { schedule, job, action }.
+ */
+async function applyScheduleReconcile(schedule, nowMs = Date.now()) {
+  let sched = schedule;
+  const active = await loadActiveJobForSchedule(sched);
+  const decision = reconcileDailySchedule(sched, active, nowMs);
+  if (decision.action === "idle") {
+    return { schedule: sched, job: active, action: decision };
+  }
+  if (decision.action === "stop_active") {
+    let job = active;
+    if (job && job.status === "RUNNING") {
+      job = cancelCloudArmJob(job, nowMs);
+      if (job.mode === "REAL" && job.needsRealFlatten) {
+        job = await maybeFlattenReal(job);
+      }
+      // Mark stop reason for window end
+      if (job.stopReason === "manual") {
+        job = {
+          ...job,
+          stopReason: "outside_window",
+          summary: { ...job.summary, stopReason: "outside_window" },
+          events: [
+            ...(job.events || []).slice(0, -1),
+            { type: "stopped", at: nowMs, text: "STOP outside_window (janela 08–20)" },
+          ].slice(-80),
+        };
+      }
+      await saveArmJob(job);
+    }
+    sched = { ...sched, activeJobId: null, updatedAt: nowMs };
+    await saveArmSchedule(sched);
+    return { schedule: sched, job, action: decision };
+  }
+  if (decision.action === "start") {
+    const job = createCloudArmJob({
+      symbol: sched.symbol,
+      strategyPreset: sched.strategyPreset,
+      stake: sched.stake,
+      leverage: sched.leverage,
+      granularity: sched.granularity,
+      durationMinutes: decision.durationMinutes,
+      clientId: sched.clientId,
+      mode: sched.mode,
+    }, nowMs);
+    let advanced;
+    try {
+      advanced = await advanceAndSave(job);
+    } catch (e) {
+      await saveArmJob(job);
+      advanced = job;
+    }
+    sched = {
+      ...sched,
+      activeJobId: advanced.id,
+      lastSessionDate: decision.dateKey,
+      updatedAt: nowMs,
+    };
+    await saveArmSchedule(sched);
+    return { schedule: sched, job: advanced, action: decision };
+  }
+  return { schedule: sched, job: active, action: decision };
+}
+
 async function handleTick(req, res, store) {
   if (!tickAuthorized(req)) return res.status(401).json({ error: "unauthorized", store });
   const jobs = await listArmJobs("");
@@ -243,15 +330,37 @@ async function handleTick(req, res, store) {
       results.push({ id: job.id, ok: false, error: e.message || String(e) });
     }
   }
+  const schedules = await listArmSchedules();
+  const scheduleResults = [];
+  for (const sched of schedules) {
+    if (!sched.enabled) continue;
+    try {
+      const r = await applyScheduleReconcile(sched, Date.now());
+      scheduleResults.push({
+        clientId: r.schedule.clientId,
+        action: r.action.action,
+        reason: r.action.reason,
+        jobId: r.job && r.job.id,
+        ok: true,
+      });
+    } catch (e) {
+      scheduleResults.push({
+        clientId: sched.clientId,
+        ok: false,
+        error: e.message || String(e),
+      });
+    }
+  }
   return res.status(200).json({
     ok: true,
     store,
     ticked: results.length,
     results,
+    schedules: scheduleResults,
     hint:
       store.backend === "memory"
         ? "Configure UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN for durable multi-instance jobs."
-        : "Lazy advance also runs on GET when the user returns. Cron ticks advance with page closed.",
+        : "Cron diário 07:00+19:00 UTC (~08:00+20:00 Luanda) + lazy GET reconciliam a agenda 08–20.",
   });
 }
 
@@ -292,30 +401,46 @@ export default async function handler(req, res) {
           });
         }
       }
-      const job = createCloudArmJob({
+      const nowMs = Date.now();
+      // PLAY always enables daily 08–20 Africa/Luanda schedule (until STOP).
+      const schedule = createDailySchedule({
         symbol: body.symbol,
         strategyPreset: body.strategyPreset || body.strategy,
         stake: body.stake,
         leverage: body.leverage ?? 1,
         granularity: body.granularity ?? 300,
-        durationMinutes: body.durationMinutes ?? body.minutes,
+        durationMinutes: body.durationMinutes ?? body.minutes ?? CLOUD_ARM_MAX_DURATION_MINUTES,
         clientId: body.clientId,
         mode,
-      });
-      let advanced;
-      try {
-        advanced = await advanceAndSave(job);
-      } catch (e) {
-        await saveArmJob(job);
-        advanced = job;
-        return res.status(201).json({
-          ok: true,
-          job: publicCloudArmJob(advanced),
-          store,
-          warning: "arm_created_klines_pending:" + (e.message || String(e)),
-        });
+      }, nowMs);
+
+      // Cancel any previous running job for this client before starting fresh.
+      const prev = await getArmSchedule(schedule.clientId);
+      if (prev && prev.activeJobId) {
+        const prevJob = await getArmJob(prev.activeJobId);
+        if (prevJob && prevJob.status === "RUNNING") {
+          let cancelled = cancelCloudArmJob(prevJob, nowMs);
+          if (cancelled.mode === "REAL" && cancelled.needsRealFlatten) {
+            cancelled = await maybeFlattenReal(cancelled);
+          }
+          await saveArmJob(cancelled);
+        }
       }
-      return res.status(201).json({ ok: true, job: publicCloudArmJob(advanced), store });
+
+      await saveArmSchedule(schedule);
+      const reconciled = await applyScheduleReconcile(schedule, nowMs);
+      const job = reconciled.job;
+      const warning =
+        reconciled.action.action === "idle" && reconciled.action.reason === "outside_window"
+          ? "schedule_enabled_outside_window"
+          : undefined;
+      return res.status(201).json({
+        ok: true,
+        job: job ? publicCloudArmJob(job) : null,
+        schedule: publicCloudArmSchedule(reconciled.schedule),
+        store,
+        warning,
+      });
     }
 
     if (req.method === "GET") {
@@ -339,10 +464,28 @@ export default async function handler(req, res) {
             });
           }
         }
-        return res.status(200).json({ ok: true, job: publicCloudArmJob(job), store });
+        const sched = await getArmSchedule(job.clientId);
+        return res.status(200).json({
+          ok: true,
+          job: publicCloudArmJob(job),
+          schedule: publicCloudArmSchedule(sched),
+          store,
+        });
       }
       if (!clientId) {
         return res.status(400).json({ error: "clientId_required", store });
+      }
+      // Lazy reconcile schedule when the page returns (Hobby cron is daily-only).
+      let schedule = await getArmSchedule(clientId);
+      let scheduleJob = null;
+      if (schedule && schedule.enabled) {
+        try {
+          const r = await applyScheduleReconcile(schedule, Date.now());
+          schedule = r.schedule;
+          scheduleJob = r.job;
+        } catch (_e) {
+          /* keep schedule as-is */
+        }
       }
       const jobs = await listArmJobs(clientId);
       const out = [];
@@ -357,24 +500,62 @@ export default async function handler(req, res) {
         }
         out.push(publicCloudArmJob(job));
       }
-      return res.status(200).json({ ok: true, jobs: out, store });
+      return res.status(200).json({
+        ok: true,
+        jobs: out,
+        schedule: publicCloudArmSchedule(schedule),
+        activeJob: scheduleJob ? publicCloudArmJob(scheduleJob) : null,
+        store,
+      });
     }
 
     if (req.method === "DELETE") {
       const id = url.searchParams.get("id");
       const clientId = url.searchParams.get("clientId") || "";
-      if (!id) return res.status(400).json({ error: "id_required", store });
-      let job = await getArmJob(id);
-      if (!job) return res.status(404).json({ error: "not_found", store });
-      if (clientId && job.clientId !== clientId) {
-        return res.status(404).json({ error: "not_found", store });
+      const nowMs = Date.now();
+      // STOP: disable daily schedule (by clientId) + cancel active/requested job.
+      let schedule = clientId ? await getArmSchedule(clientId) : null;
+      if (schedule && schedule.enabled) {
+        schedule = disableDailySchedule(schedule, nowMs);
+        await saveArmSchedule(schedule);
       }
-      job = cancelCloudArmJob(job, Date.now());
-      if (job.mode === "REAL" && job.needsRealFlatten) {
-        job = await maybeFlattenReal(job);
+      let job = null;
+      const jobId = id || (schedule && schedule.activeJobId) || "";
+      if (jobId) {
+        job = await getArmJob(jobId);
+        if (!job) {
+          // Schedule disabled even if job already gone
+          if (!id) {
+            return res.status(200).json({
+              ok: true,
+              job: null,
+              schedule: publicCloudArmSchedule(schedule),
+              store,
+            });
+          }
+          return res.status(404).json({ error: "not_found", store });
+        }
+        if (clientId && job.clientId !== clientId) {
+          return res.status(404).json({ error: "not_found", store });
+        }
+        job = cancelCloudArmJob(job, nowMs);
+        if (job.mode === "REAL" && job.needsRealFlatten) {
+          job = await maybeFlattenReal(job);
+        }
+        await saveArmJob(job);
+      } else if (!clientId) {
+        return res.status(400).json({ error: "id_or_clientId_required", store });
       }
-      await saveArmJob(job);
-      return res.status(200).json({ ok: true, job: publicCloudArmJob(job), store });
+      if (schedule) {
+        schedule = { ...schedule, activeJobId: null, updatedAt: nowMs };
+        await saveArmSchedule(schedule);
+      }
+      return res.status(200).json({
+        ok: true,
+        job: job ? publicCloudArmJob(job) : null,
+        schedule: publicCloudArmSchedule(schedule),
+        store,
+      });
     }
 
     res.setHeader("Allow", "GET, POST, DELETE, OPTIONS");

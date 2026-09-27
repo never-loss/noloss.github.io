@@ -85,6 +85,7 @@
     lastLiveProxAt: 0,
     gateHeavyRunning: false,
     cloudJob: null,
+    cloudSchedule: null,
     cloudPollTimer: null,
     wsProxTick: 0,
     radar: {
@@ -1609,7 +1610,7 @@
       var canReal = state.bybitKeysConfigured && state.bybitRealAvailable;
       realEl.disabled = !canReal;
       realEl.title = canReal
-        ? "REAL: ordens Bybit Linear via servidor (porta + stake fixa + máx 3 h)"
+        ? "REAL: ordens Bybit Linear via servidor (porta + stake fixa + máx 12 h / agenda 08–20)"
         : "REAL bloqueado: faltam chaves no servidor";
       realEl.classList.toggle("active", state.tradingMode === "REAL" && canReal);
       realEl.setAttribute("aria-pressed", state.tradingMode === "REAL" && canReal ? "true" : "false");
@@ -1630,7 +1631,7 @@
     }
     if (actionHint) {
       actionHint.textContent = realOn
-        ? "REAL: PLAY envia ordens Bybit (porta + stake fixa + máx 3 h). Indicadores = evidência real."
+        ? "REAL: PLAY envia ordens Bybit (porta + stake fixa + máx 12 h). Indicadores = evidência real."
         : "Indicadores ao vivo. PLAY = PAPER por omissão. REAL só com toggle + confirmação.";
     }
   }
@@ -1684,6 +1685,7 @@
     var btnCloud = el("btnCloudArm");
     var btnCloudStop = el("btnCloudStop");
     var cloudRunning = !!(state.cloudJob && state.cloudJob.status === "RUNNING");
+    var cloudSchedOn = !!(state.cloudSchedule && state.cloudSchedule.enabled);
     var cloudRealWanted = state.tradingMode === "REAL";
     var cloudRealOk = !!(state.bybitKeysConfigured && state.bybitRealAvailable);
     if (btnCloud) {
@@ -1691,13 +1693,13 @@
       btnCloud.textContent = cloudLabel;
       btnCloud.title = cloudRealWanted
         ? (cloudRealOk
-          ? "REAL na nuvem — ordens Bybit Linear USDT com página fechada"
+          ? "REAL na nuvem — agenda diária 08–20 Luanda até STOP"
           : "REAL na nuvem precisa de BYBIT_API_KEY/SECRET no servidor")
-        : "Simulado na nuvem — podes sair da página";
+        : "Simulado na nuvem — agenda diária 08–20 Luanda até STOP";
       var blockCloudReal = cloudRealWanted && !cloudRealOk;
-      btnCloud.disabled = !state.strategySet || cloudRunning || !state.symbol || blockCloudReal;
+      btnCloud.disabled = !state.strategySet || cloudRunning || cloudSchedOn || !state.symbol || blockCloudReal;
     }
-    if (btnCloudStop) btnCloudStop.disabled = !cloudRunning;
+    if (btnCloudStop) btnCloudStop.disabled = !(cloudRunning || cloudSchedOn);
     var next = el("nextStepText");
     if (next) {
       if (running && state.session && state.session.hasOpenPosition) next.textContent = "ENTROU — posição aberta · PAUSE/STOP";
@@ -1729,7 +1731,7 @@
     // Symbol only via switchSymbol / boot — never orphan chart from select filter.
     if (strat) state.strategySet = strat.value || "";
     if (stake) state.stake = Number(stake.value) || 1;
-    if (mins) state.minutes = Math.min(180, Math.max(1, Number(mins.value) || 60));
+    if (mins) state.minutes = Math.min(720, Math.max(1, Number(mins.value) || 720));
     if (iv) state.granularity = Number(iv.value) || 300;
     if (lev) {
       var info = state.bybitLeverageInfo;
@@ -2051,7 +2053,7 @@
         stake: state.stake, slAtr: gate.slAtr, tpR: gate.tpR, maxBars: gate.maxBars,
         costFraction: costFraction, maxLoss: state.stake * 10,
         maxTrades: maxTradesForPreset(state.strategySet),
-        maxDurationMs: Math.min(state.minutes, 180) * 60 * 1000,
+        maxDurationMs: Math.min(state.minutes, 720) * 60 * 1000,
         maxConsecutiveLosses: 6, cooldownCandles: 0,
       });
       state.lastEpoch = last.epoch;
@@ -2447,7 +2449,7 @@
     return m + "m";
   }
 
-  function renderCloudArmBox(job, store) {
+  function renderCloudArmBox(job, store, schedule) {
     var box = el("cloudArmBox");
     var title = el("cloudArmTitle");
     var pill = el("cloudArmPill");
@@ -2455,28 +2457,52 @@
     var meta = el("cloudArmMeta");
     if (!box) return;
     state.cloudJob = job || null;
-    if (!job) {
+    state.cloudSchedule = schedule || state.cloudSchedule || null;
+    if (schedule) state.cloudSchedule = schedule;
+    var schedOn = state.cloudSchedule && state.cloudSchedule.enabled;
+    if (!job && !schedOn) {
       box.hidden = true;
       updateButtons();
       return;
     }
     box.hidden = false;
+    if (!job && schedOn) {
+      if (title) title.textContent = "Nuvem · agenda 08–20 · " + (state.cloudSchedule.symbol || "");
+      if (pill) {
+        pill.textContent = "AGENDA · " + (state.cloudSchedule.mode || "PAPER");
+        pill.className = "pill live-ok";
+      }
+      if (reason) {
+        reason.textContent = "Agenda diária activa (" + (state.cloudSchedule.windowLabel || "08:00–20:00 Africa/Luanda") +
+          "). Fora da janela — arranque automático às 08:00. STOP cancela a agenda.";
+      }
+      if (meta) {
+        meta.textContent = (state.cloudSchedule.strategyPreset || "") +
+          " · stake " + (state.cloudSchedule.stake != null ? state.cloudSchedule.stake : "—") +
+          (store && store.backend ? " · store " + store.backend : "") +
+          (store && store.durable === false ? " · ⚠ não durável" : "");
+      }
+      updateButtons();
+      return;
+    }
     var st = job.status || "—";
-    if (title) title.textContent = "Nuvem · " + job.symbol + " · " + (job.strategyPreset || "");
+    if (title) title.textContent = "Nuvem · " + job.symbol + " · " + (job.strategyPreset || "") +
+      (schedOn ? " · agenda 08–20" : "");
     if (pill) {
       var modeLabel = (job.mode === "REAL") ? "REAL" : "PAPER";
-      pill.textContent = st + " · " + modeLabel;
+      pill.textContent = st + " · " + modeLabel + (schedOn ? " · DIÁRIO" : "");
       pill.className = "pill " + (st === "RUNNING" ? "live-ok" : st === "CANCELLED" ? "warn" : "live-poll");
     }
     var sum = job.summary || {};
     var gate = job.gate;
     var lines = [];
     if (st === "RUNNING") {
-      lines.push("Armado na nuvem — podes sair. Resta " + formatRemain(job.remainingMs || (job.endsAt - Date.now())) + ".");
+      lines.push("Armado na nuvem (08–20 Luanda) — podes sair. Resta " + formatRemain(job.remainingMs || (job.endsAt - Date.now())) + ".");
     } else if (st === "CANCELLED") {
-      lines.push("Cancelado na nuvem.");
+      lines.push(schedOn ? "Sessão cancelada — agenda diária ainda activa até STOP." : "Cancelado na nuvem.");
     } else {
-      lines.push("Terminou" + (job.stopReason ? " (" + job.stopReason + ")" : "") + ".");
+      lines.push("Terminou" + (job.stopReason ? " (" + job.stopReason + ")" : "") +
+        (schedOn ? " · agenda diária continua amanhã às 08:00." : "."));
     }
     if (gate) {
       lines.push(gate.allowed ? ("Porta: aberta — " + (gate.reason || "")) : ("Porta: NO TRADE — " + (gate.reason || "")));
@@ -2505,8 +2531,11 @@
         if (dataL && dataL.jobs && dataL.jobs.length) {
           var latest = dataL.jobs[0];
           rememberCloudJobId(latest.id);
-          renderCloudArmBox(latest, dataL.store);
-          if (latest.status === "RUNNING") scheduleCloudPoll();
+          renderCloudArmBox(latest, dataL.store, dataL.schedule);
+          if ((latest && latest.status === "RUNNING") || (dataL.schedule && dataL.schedule.enabled)) scheduleCloudPoll();
+        } else if (dataL && dataL.schedule && dataL.schedule.enabled) {
+          renderCloudArmBox(null, dataL.store, dataL.schedule);
+          scheduleCloudPoll();
         }
       } catch (_e) {}
       return;
@@ -2519,11 +2548,11 @@
         if (res.status === 404) rememberCloudJobId("");
         return;
       }
-      renderCloudArmBox(data.job, data.store);
-      if (data.store && data.store.warning && data.job.status === "RUNNING") {
+      renderCloudArmBox(data.job, data.store, data.schedule);
+      if (data.store && data.store.warning && data.job && data.job.status === "RUNNING") {
         pushHistory("Nuvem store: " + data.store.warning, "stop");
       }
-      if (data.job.status === "RUNNING") scheduleCloudPoll();
+      if ((data.job && data.job.status === "RUNNING") || (data.schedule && data.schedule.enabled)) scheduleCloudPoll();
       else if (state.cloudPollTimer) { clearTimeout(state.cloudPollTimer); state.cloudPollTimer = null; }
     } catch (e) {
       pushHistory("Nuvem status: " + (e.message || String(e)), "stop");
@@ -2553,7 +2582,7 @@
       pushHistory("Stake mínima é " + NL.MIN_STAKE, "stop");
       return;
     }
-    var mins = Math.min(180, Math.max(1, Number(state.minutes) || 60));
+    var mins = Math.min(720, Math.max(1, Number(state.minutes) || 720));
     var cloudMode = isRealTradingMode() ? "REAL" : "PAPER";
     if (state.tradingMode === "REAL" && !isRealTradingMode()) {
       pushHistory("REAL na nuvem indisponível: faltam chaves no servidor. Usa Simulado ou configura BYBIT_API_KEY/SECRET.", "stop");
@@ -2562,8 +2591,9 @@
     if (cloudMode === "REAL") {
       var okReal = confirm(
         "Armar na NUVEM em REAL?\n\n" +
-        "Ordens reais Bybit Linear USDT enquanto a página está fechada.\n" +
-        "Stake fixa · sem martingale · máx. " + mins + " min.\n\n" +
+        "Agenda diária 08:00–20:00 Africa/Luanda até STOP.\n" +
+        "Ordens reais Bybit Linear USDT com a página fechada.\n" +
+        "Stake fixa · sem martingale · máx. 12 h/dia.\n\n" +
         "OK = REAL nuvem · Cancelar = não armar"
       );
       if (!okReal) {
@@ -2573,8 +2603,8 @@
     }
     var btn = el("btnCloudArm");
     if (btn) btn.disabled = true;
-    pushHistory("A armar na nuvem (" + (cloudMode === "REAL" ? "REAL" : "Simulado") + ") · " +
-      state.symbol + " · " + state.strategySet + " · " + mins + " min…", "");
+    pushHistory("A armar na nuvem (" + (cloudMode === "REAL" ? "REAL" : "Simulado") + ") · agenda 08–20 Luanda · " +
+      state.symbol + " · " + state.strategySet + "…", "");
     try {
       var payload = {
         symbol: state.symbol,
@@ -2593,15 +2623,22 @@
         body: JSON.stringify(payload),
       });
       var data = await res.json();
-      if (!res.ok || !data.job) {
+      if (!res.ok || (!data.job && !(data.schedule && data.schedule.enabled))) {
         var why = (data && (data.error_description || data.error)) || ("HTTP " + res.status);
         throw new Error(why);
       }
-      rememberCloudJobId(data.job.id);
-      renderCloudArmBox(data.job, data.store);
-      pushHistory("Nuvem " + cloudMode + " armada · " + data.job.symbol + " até " +
-        new Date(data.job.endsAt).toLocaleTimeString("pt-PT") +
-        " — podes sair da página.", "open");
+      if (data.job && data.job.id) rememberCloudJobId(data.job.id);
+      renderCloudArmBox(data.job || null, data.store, data.schedule);
+      if (data.job) {
+        pushHistory("Nuvem " + cloudMode + " · sessão até " +
+          new Date(data.job.endsAt).toLocaleTimeString("pt-PT", { timeZone: "Africa/Luanda" }) +
+          " (Luanda) — agenda diária 08–20 activa. Podes sair.", "open");
+      } else {
+        pushHistory("Nuvem " + cloudMode + " · agenda diária 08:00–20:00 Africa/Luanda activa (fora da janela agora — arranque automático amanhã às 08:00).", "open");
+      }
+      if (data.warning === "schedule_enabled_outside_window") {
+        pushHistory("Fora da janela 08–20 — o bot arranca sozinho no próximo 08:00 Luanda.", "");
+      }
       if (data.store && !data.store.durable) {
         pushHistory("Aviso: store em memória no servidor — configura Upstash Redis (UPSTASH_REDIS_REST_URL + TOKEN) para jobs duráveis.", "stop");
       }
@@ -2614,14 +2651,18 @@
 
   async function stopCloudArm() {
     var id = (state.cloudJob && state.cloudJob.id) || rememberedCloudJobId();
-    if (!id) return;
+    var schedOn = !!(state.cloudSchedule && state.cloudSchedule.enabled);
+    if (!id && !schedOn) return;
     try {
-      var res = await fetch(BYBIT_ARM_JOBS_URL + "?id=" + encodeURIComponent(id) +
-        "&clientId=" + encodeURIComponent(cloudClientId()), { method: "DELETE" });
+      var q = "?clientId=" + encodeURIComponent(cloudClientId());
+      if (id) q += "&id=" + encodeURIComponent(id);
+      var res = await fetch(BYBIT_ARM_JOBS_URL + q, { method: "DELETE" });
       var data = await res.json();
-      if (!res.ok || !data.job) throw new Error(data.error || ("HTTP " + res.status));
-      renderCloudArmBox(data.job, data.store);
-      pushHistory("Nuvem: STOP pedido.", "stop");
+      if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+      state.cloudSchedule = data.schedule || null;
+      if (!data.job) rememberCloudJobId("");
+      renderCloudArmBox(data.job || null, data.store, data.schedule);
+      pushHistory("Nuvem: STOP — agenda diária cancelada.", "stop");
       if (state.cloudPollTimer) { clearTimeout(state.cloudPollTimer); state.cloudPollTimer = null; }
     } catch (e) {
       pushHistory("Falha STOP nuvem: " + (e.message || String(e)), "stop");

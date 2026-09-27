@@ -14,6 +14,13 @@ import {
   markRealMirrorsApplied,
   cloudArmEventKey,
   CLOUD_ARM_MODE,
+  CLOUD_ARM_MAX_DURATION_MINUTES,
+  createDailySchedule,
+  disableDailySchedule,
+  reconcileDailySchedule,
+  isInTradingWindow,
+  durationMinutesUntilWindowEnd,
+  luandaDateParts,
 } from "../src/core/cloud-arm.ts";
 import type { Candle } from "../src/core/market-data.ts";
 
@@ -37,8 +44,9 @@ function synth(n: number, startEpoch = 1_700_000_000, step = 300): Candle[] {
   return out;
 }
 
-test("validate: rejects non-USDT/over-3h/bad mode; accepts PAPER|REAL", () => {
+test("validate: rejects non-USDT/over-12h/bad mode; accepts PAPER|REAL", () => {
   assert.equal(CLOUD_ARM_MODE, "PAPER");
+  assert.equal(CLOUD_ARM_MAX_DURATION_MINUTES, 720);
   assert.throws(() => validateCloudArmCreate({
     symbol: "BTCUSD", strategyPreset: "lucro_rapido", stake: 1, leverage: 1,
     granularity: 300, durationMinutes: 60, clientId: "c_abcdefgh",
@@ -49,8 +57,13 @@ test("validate: rejects non-USDT/over-3h/bad mode; accepts PAPER|REAL", () => {
   }));
   assert.throws(() => validateCloudArmCreate({
     symbol: "BTCUSDT", strategyPreset: "lucro_rapido", stake: 1, leverage: 1,
-    granularity: 300, durationMinutes: 200, clientId: "c_abcdefgh",
+    granularity: 300, durationMinutes: 800, clientId: "c_abcdefgh",
   }));
+  const twelve = validateCloudArmCreate({
+    symbol: "BTCUSDT", strategyPreset: "lucro_rapido", stake: 1, leverage: 1,
+    granularity: 300, durationMinutes: 720, clientId: "c_abcdefgh",
+  });
+  assert.equal(twelve.durationMs, 720 * 60 * 1000);
   assert.throws(() => validateCloudArmCreate({
     symbol: "BTCUSDT", strategyPreset: "lucro_rapido", stake: 1, leverage: 1,
     granularity: 300, durationMinutes: 60, clientId: "c_abcdefgh", mode: "SPOT",
@@ -242,12 +255,18 @@ test("API files: PAPER|REAL + confirmReal + no Deriv OAuth touch", () => {
   assert.match(jobs, /keys_missing/);
   assert.match(jobs, /createCloudArmJob/);
   assert.match(jobs, /advanceCloudArmJob/);
+  assert.match(jobs, /createDailySchedule/);
+  assert.match(jobs, /reconcileDailySchedule|applyScheduleReconcile/);
+  assert.match(jobs, /disableDailySchedule/);
   assert.doesNotMatch(jobs, /Force PAPER/);
   assert.match(store, /UPSTASH_REDIS_REST|KV_REST_API/);
   assert.match(store, /ephemeral|memory/);
+  assert.match(store, /saveArmSchedule|getArmSchedule|listArmSchedules/);
   assert.match(place, /placeLinearMarketOrder/);
   assert.match(vercel, /bybit-arm\?tick=1/);
   assert.match(vercel, /crons/);
+  assert.match(vercel, /0 7 \* \* \*/);
+  assert.match(vercel, /0 19 \* \* \*/);
   assert.doesNotMatch(jobs, /token\.js|deriv/i);
 });
 
@@ -257,7 +276,8 @@ test("UI: cloud follows PAPER/REAL toggle + chart light history", () => {
   assert.match(bybitHtml, /Armar na nuvem \(Simulado\)/);
   assert.match(bybitHtml, /ARMAR neste ecrã/);
   assert.match(bybitHtml, /btnCloudArm/);
-  assert.match(bybitHtml, /segue o toggle PAPER\/REAL/i);
+  assert.match(bybitHtml, /agenda diária 08/i);
+  assert.match(bybitHtml, /max="720"/);
   assert.match(bybitJs, /CHART_HISTORY = 96/);
   assert.match(bybitJs, /startCloudArm/);
   assert.match(bybitJs, /setData\(\[\]\)/);
@@ -266,6 +286,8 @@ test("UI: cloud follows PAPER/REAL toggle + chart light history", () => {
   assert.match(bybitJs, /Armar na nuvem \(REAL\)/);
   assert.match(bybitJs, /Armar na nuvem \(Simulado\)/);
   assert.match(bybitJs, /isRealTradingMode\(\)\s*\?\s*"REAL"\s*:\s*"PAPER"/);
+  assert.match(bybitJs, /Math\.min\(720/);
+  assert.match(bybitJs, /agenda diária 08/);
 });
 
 test("validateCloudArmCreate aceita blitz_zero", () => {
@@ -293,4 +315,91 @@ test("cloud-arm e presets: Agressivo (blitz_zero) = porta AGILE 10 + maxTrades 1
     fs.readFileSync(new URL("../src/core/cloud-arm.ts", import.meta.url), "utf8"),
   );
   assert.match(armSrc, /strategyPreset === "blitz_zero" \? 10 : 50/);
+});
+
+test("12h max + Luanda window helpers", () => {
+  // 10:00 Africa/Luanda = 09:00 UTC
+  const inWin = Date.parse("2026-09-27T09:00:00.000Z");
+  const parts = luandaDateParts(inWin);
+  assert.equal(parts.hour, 10);
+  assert.equal(parts.dateKey, "2026-09-27");
+  assert.equal(isInTradingWindow(inWin), true);
+  assert.equal(durationMinutesUntilWindowEnd(inWin), 600);
+
+  const before = Date.parse("2026-09-27T06:30:00.000Z"); // 07:30 Luanda
+  assert.equal(isInTradingWindow(before), false);
+  assert.equal(durationMinutesUntilWindowEnd(before), 0);
+
+  const atEight = Date.parse("2026-09-27T07:00:00.000Z"); // 08:00 Luanda
+  assert.equal(isInTradingWindow(atEight), true);
+  assert.equal(durationMinutesUntilWindowEnd(atEight), 720);
+
+  const atTwenty = Date.parse("2026-09-27T19:00:00.000Z"); // 20:00 Luanda
+  assert.equal(isInTradingWindow(atTwenty), false);
+});
+
+test("daily schedule enable/disable + reconcile start/stop/idle", () => {
+  const baseInput = {
+    symbol: "BTCUSDT",
+    strategyPreset: "lucro_rapido" as const,
+    stake: 1,
+    leverage: 1,
+    granularity: 300,
+    durationMinutes: 720,
+    clientId: "c_schedtest01",
+    mode: "PAPER" as const,
+  };
+  const t0 = Date.parse("2026-09-27T06:00:00.000Z"); // 07:00 Luanda — outside
+  let sched = createDailySchedule(baseInput, t0);
+  assert.equal(sched.enabled, true);
+  assert.equal(sched.startHour, 8);
+  assert.equal(sched.endHour, 20);
+  assert.equal(sched.tz, "Africa/Luanda");
+  assert.equal(sched.mode, "PAPER");
+  assert.equal(sched.strategyPreset, "lucro_rapido");
+
+  let decision = reconcileDailySchedule(sched, null, t0);
+  assert.equal(decision.action, "idle");
+  assert.equal(decision.reason, "outside_window");
+
+  const tOpen = Date.parse("2026-09-27T08:00:00.000Z"); // 09:00 Luanda
+  decision = reconcileDailySchedule(sched, null, tOpen);
+  assert.equal(decision.action, "start");
+  if (decision.action === "start") {
+    assert.ok(decision.durationMinutes >= 1 && decision.durationMinutes <= 720);
+    assert.equal(decision.dateKey, "2026-09-27");
+    assert.equal(decision.durationMinutes, 660); // 09:00→20:00
+  }
+
+  // Simulate already ran today
+  sched = { ...sched, lastSessionDate: "2026-09-27" };
+  decision = reconcileDailySchedule(sched, null, tOpen);
+  assert.equal(decision.action, "idle");
+  assert.equal(decision.reason, "already_ran_today");
+
+  // Running job stays idle inside window
+  const job = createCloudArmJob(baseInput, tOpen);
+  sched = { ...sched, lastSessionDate: "2026-09-27", activeJobId: job.id };
+  decision = reconcileDailySchedule(sched, job, tOpen);
+  assert.equal(decision.action, "idle");
+  assert.equal(decision.reason, "already_running");
+
+  // Outside window stops active
+  const tNight = Date.parse("2026-09-27T20:00:00.000Z"); // 21:00 Luanda
+  decision = reconcileDailySchedule(sched, job, tNight);
+  assert.equal(decision.action, "stop_active");
+
+  // Next day starts again
+  const tNext = Date.parse("2026-09-28T07:00:00.000Z"); // 08:00 Luanda next day
+  decision = reconcileDailySchedule(sched, null, tNext);
+  assert.equal(decision.action, "start");
+  if (decision.action === "start") assert.equal(decision.dateKey, "2026-09-28");
+
+  // REAL mode preserved
+  const realSched = createDailySchedule({ ...baseInput, mode: "REAL" }, tOpen);
+  assert.equal(realSched.mode, "REAL");
+
+  const disabled = disableDailySchedule(sched, tNight);
+  assert.equal(disabled.enabled, false);
+  assert.equal(reconcileDailySchedule(disabled, null, tNext).action, "idle");
 });
