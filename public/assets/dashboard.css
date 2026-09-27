@@ -30,23 +30,24 @@ body {
   background: linear-gradient(180deg, #020617 0%, #0a1628 40%, #07101f 100%);
   background-attachment: fixed;
 }
-body.world-deriv .deck { transform: none; }
 body.world-deriv .scene { max-width: 720px; }
 
+/* Regression: never use perspective / rotateX on .scene/.deck — decorative 3D
+   tilt breaks desktop click hit-testing (buttons look fine, clicks miss).
+   Mobile already forced transform:none; keep flat layout for all worlds. */
 .scene {
-  perspective: 1200px;
+  perspective: none;
   padding: 10px;
   max-width: 1100px;
   margin: 0 auto;
 }
 
 .deck {
-  transform-style: preserve-3d;
-  transform: rotateX(1deg);
+  transform: none;
+  transform-style: flat;
 }
 
 @media (max-width: 720px) {
-  .deck { transform: none; }
   .scene { padding: 12px; }
 }
 
@@ -939,7 +940,6 @@ button.ctrl.analyze:disabled { opacity: 0.4; cursor: not-allowed; }
   .journal-table td:nth-child(1) { grid-column: 1 / -1; font-weight: 700; color: var(--muted); font-size: 0.75rem; }
   .journal-table td:nth-child(2),
   .journal-table td:nth-child(3) { font-size: 0.9rem; }
-  .deck { transform: none; }
   .scene { padding: 10px; }
   .header { padding: 12px; }
   .view-tab { min-height: 48px; }
@@ -1265,7 +1265,6 @@ body.world-deriv #legacyHeroControls {
   .mkt-ctrls { grid-template-columns: 1fr 1fr 1fr; }
   .hero-bal-card .v { font-size: 0.9rem; }
   .scene { padding: 8px; }
-  .deck { transform: none; }
 }
 
 
@@ -1587,3 +1586,27 @@ body.world-deriv #legacyHeroControls {
 }
 .entry-ready-box.ready { border-color: rgba(52, 211, 153, 0.45); }
 .entry-ready-box.armed { border-color: rgba(251, 191, 36, 0.45); }
+
+/* Desktop hit-testing: keep interactive chrome above chart/canvas siblings */
+.btn-row-actions,
+.btn-row-hero,
+.btn-row-analise,
+.ctrl,
+.mode-btn,
+.view-tab,
+.radar-controls,
+.radar-controls .ghost,
+.mkt-ctrls,
+.cloud-arm-row {
+  position: relative;
+  z-index: 2;
+}
+.chart-wrap {
+  overflow: hidden;
+}
+.chart-empty {
+  pointer-events: none;
+}
+.chart-empty[hidden] {
+  display: none !important;
+}
