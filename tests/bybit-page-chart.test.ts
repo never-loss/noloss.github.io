@@ -323,6 +323,8 @@ test("Agressivo (blitz_zero) wired: selects, cards, porta 10 + máx 10 ops, AGIL
   assert.match(bybitJs, /blitzZeroStrategySet|NL\.blitzZeroStrategySet/);
   assert.match(bybitJs, /cardBlitzZero/);
   assert.match(bybitJs, /maxTradesForPreset/);
+  assert.match(bybitJs, /String\(summary\.opened\) \+ " \/ " \+ maxTrades/);
+  assert.match(bybitJs, /"Ops " \+ \(sum\.opened \|\| 0\) \+ "\/" \+ maxTrades/);
   assert.match(bybitJs, /presetId === "blitz_zero" \? 10 : 50/);
   assert.match(bybitJs, /["']lucro_rapido["'],\s*["']loss_zero["'],\s*["']blitz_zero["']/);
   assert.match(bybitJs, /return "AGILE"|=== "AGILE"/);

@@ -132,6 +132,7 @@ test("começa STOPPED e ignora velas até ao PLAY", () => {
   assert.equal(s.status, "STOPPED");
   assert.deepEqual(run(s, flat()), []);
   assert.equal(s.summary().opened, 0);
+  assert.equal(s.summary().maxTrades, 1000);
 });
 
 test("compra: alvo dá +2R e o resultado em dinheiro é R x stake", () => {

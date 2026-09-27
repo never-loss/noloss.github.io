@@ -52,6 +52,7 @@ export interface CloudArmEventSnap {
 export interface CloudArmSummarySnap {
   status: string;
   stopReason: string | null;
+  maxTrades: number;
   opened: number;
   closed: number;
   hasOpenPosition: boolean;
@@ -152,6 +153,7 @@ export function createCloudArmJob(input: CloudArmCreateInput, nowMs: number = Da
     summary: {
       status: "RUNNING",
       stopReason: null,
+      maxTrades: v.strategyPreset === "blitz_zero" ? 10 : 50,
       opened: 0,
       closed: 0,
       hasOpenPosition: false,
@@ -208,6 +210,7 @@ function snapSummary(s: CandlePaperSummary): CloudArmSummarySnap {
   return {
     status: s.status,
     stopReason: s.stopReason,
+    maxTrades: s.maxTrades,
     opened: s.opened,
     closed: s.closed,
     hasOpenPosition: s.hasOpenPosition,

@@ -2243,6 +2243,7 @@ var NL = (() => {
         status: this.#status,
         stopReason: this.#stopReason,
         stake: this.#cfg.stake,
+        maxTrades: this.#cfg.maxTrades,
         opened: this.#opened,
         closed: this.#rs.length,
         hasOpenPosition: this.#position !== null,
@@ -2283,7 +2284,7 @@ var NL = (() => {
     const lines = [
       "=== RESUMO (paper trading em velas, dados reais, sem dinheiro) ===",
       `Estado: ${s.status}${s.stopReason ? ` (${REASONS[s.stopReason]})` : ""}`,
-      `Opera\xE7\xF5es: ${s.closed} fechadas de ${s.opened} abertas | risco fixo por opera\xE7\xE3o ${s.stake}`
+      `Opera\xE7\xF5es: ${s.opened} abertas / m\xE1x. ${s.maxTrades} | ${s.closed} fechadas | risco fixo por opera\xE7\xE3o ${s.stake}`
     ];
     if (s.hasOpenPosition) lines.push("H\xE1 uma posi\xE7\xE3o simulada ainda aberta (n\xE3o contada no resultado).");
     if (s.closed === 0) {

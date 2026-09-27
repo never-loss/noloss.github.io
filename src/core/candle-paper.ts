@@ -58,6 +58,7 @@ export interface CandlePaperSummary {
   status: SessionStatus;
   stopReason: StopReason | null;
   stake: number;
+  maxTrades: number;
   opened: number;
   closed: number;
   hasOpenPosition: boolean;
@@ -314,6 +315,7 @@ export class CandlePaperSession {
       status: this.#status,
       stopReason: this.#stopReason,
       stake: this.#cfg.stake,
+      maxTrades: this.#cfg.maxTrades,
       opened: this.#opened,
       closed: this.#rs.length,
       hasOpenPosition: this.#position !== null,
@@ -360,7 +362,7 @@ export function formatCandleSummary(s: CandlePaperSummary): string {
   const lines = [
     "=== RESUMO (paper trading em velas, dados reais, sem dinheiro) ===",
     `Estado: ${s.status}${s.stopReason ? ` (${REASONS[s.stopReason]})` : ""}`,
-    `Operações: ${s.closed} fechadas de ${s.opened} abertas | risco fixo por operação ${s.stake}`,
+    `Operações: ${s.opened} abertas / máx. ${s.maxTrades} | ${s.closed} fechadas | risco fixo por operação ${s.stake}`,
   ];
   if (s.hasOpenPosition) lines.push("Há uma posição simulada ainda aberta (não contada no resultado).");
   if (s.closed === 0) {
