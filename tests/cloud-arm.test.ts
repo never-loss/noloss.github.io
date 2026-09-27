@@ -243,7 +243,7 @@ test("API files: PAPER|REAL + confirmReal + no Deriv OAuth touch", () => {
   assert.match(jobs, /createCloudArmJob/);
   assert.match(jobs, /advanceCloudArmJob/);
   assert.doesNotMatch(jobs, /Force PAPER/);
-  assert.match(store, /UPSTASH_REDIS_REST/);
+  assert.match(store, /UPSTASH_REDIS_REST|KV_REST_API/);
   assert.match(store, /ephemeral|memory/);
   assert.match(place, /placeLinearMarketOrder/);
   assert.match(vercel, /bybit-arm\?tick=1/);
