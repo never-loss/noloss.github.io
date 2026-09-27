@@ -329,6 +329,7 @@ test("Agressivo (blitz_zero) wired: selects, cards, porta 10 + máx 10 ops, AGIL
   assert.match(bybitHtml, /id="cardBlitzZero"/);
   assert.match(bybitHtml, /data-preset="blitz_zero"/);
   assert.match(bybitHtml, /porta 10/);
+  assert.match(bybitHtml, /5m/);
   assert.match(bybitHtml, /máx\. 10 ops/);
   assert.match(bybitHtml, /porta 100/);
   assert.match(bybitHtml, /porta 1000/);
@@ -343,4 +344,17 @@ test("Agressivo (blitz_zero) wired: selects, cards, porta 10 + máx 10 ops, AGIL
   assert.match(bybitJs, /return "AGILE"|=== "AGILE"/);
   assert.match(bybitJs, /portaOosNeed/);
   assert.match(bybitJs, /Agressivo/);
+
+  const onStrat = bybitJs.slice(
+    bybitJs.indexOf("function onStrategyChange"),
+    bybitJs.indexOf("function qtyFromFixedStake"),
+  );
+  assert.match(onStrat, /Agressivo: prefer 5m \(300s\) on select/);
+  assert.match(onStrat, /preset === "blitz_zero" && state\.granularity !== 300/);
+  assert.match(onStrat, /ivSel\.value = "300"/);
+  assert.match(onStrat, /switchInterval\(300\)/);
+  assert.doesNotMatch(onStrat, /switchInterval\(60\)/);
+  assert.match(bybitJs, /5m · porta 10 · máx\. 10 ops · entrada rápida quando porta\+sinal/);
+  assert.match(bybitJs, /cooldownCandles: 0/);
+  assert.match(bybitJs, /confirmed\) \{[\s\S]*?pushClosedCandleToSession\(closed\)/);
 });
