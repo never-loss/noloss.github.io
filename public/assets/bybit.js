@@ -1817,11 +1817,11 @@
     if (preset === "lucro_rapido" || preset === "loss_zero" || preset === "blitz_zero") {
       syncRadarPresetFromStrategy(); // rescana só se o preset efectivo mudou
     }
-    // Agressivo: prefer 1m (60s) on select — do not fight user if they change after.
-    if (preset === "blitz_zero" && state.granularity !== 60 && !state.running) {
+    // Agressivo: prefer 5m (300s) on select — do not fight user if they change after.
+    if (preset === "blitz_zero" && state.granularity !== 300 && !state.running) {
       var ivSel = el("bybitInterval");
-      if (ivSel) ivSel.value = "60";
-      switchInterval(60);
+      if (ivSel) ivSel.value = "300";
+      switchInterval(300);
     }
     syncPlayReadyFromSelection();
     scheduleLiveProximity();
@@ -2153,7 +2153,7 @@
     var mode = "disarmed";
     var titleTxt = "DESARMADO · co-piloto";
     var reasonTxt = "ARMAR para o co-piloto vigiar o alvo da estratégia no perpetual USDT. Entrada só com porta aberta + sinal. Sem martingale.";
-    if (preset === "blitz_zero") reasonTxt = "Agressivo: porta 10 OOS · máx. 10 ops/sessão · 1m. Entrada só com porta + sinal. Sem martingale.";
+    if (preset === "blitz_zero") reasonTxt = "Agressivo: 5m · porta 10 · máx. 10 ops · entrada rápida quando porta+sinal. Sem martingale.";
     if (hasPos) {
       mode = "entered";
       titleTxt = "ENTROU";
@@ -2167,7 +2167,9 @@
       syncSymbolSelectToState();
       if (!gateOk) reasonTxt = "NO TRADE (porta) — " + (gate ? gate.reason : "sem evidência") + (live ? " · " + live.detail : "");
       else if (!atTarget) reasonTxt = "Porta aberta · co-piloto à espera do sinal · " + (live ? live.detail : "");
-      else reasonTxt = "Porta aberta + alvo · entrada na abertura da próxima vela (PAPER/REAL)";
+      else reasonTxt = preset === "blitz_zero"
+        ? "Porta aberta + alvo · entrada rápida na próxima vela fechada (PAPER/REAL)"
+        : "Porta aberta + alvo · entrada na abertura da próxima vela (PAPER/REAL)";
       state.armState = "armed";
     } else if (gateOk && atTarget) {
       mode = "disarmed";
