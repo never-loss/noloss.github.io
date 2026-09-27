@@ -1652,6 +1652,7 @@
     state.tradingMode = mode;
     sessionStorage.setItem(TRADING_MODE_KEY, mode);
     updateTradingModeUI();
+    updateButtons();
     pushHistory("Modo = " + mode, mode === "REAL" ? "open" : "");
     return true;
   }
@@ -1683,7 +1684,19 @@
     var btnCloud = el("btnCloudArm");
     var btnCloudStop = el("btnCloudStop");
     var cloudRunning = !!(state.cloudJob && state.cloudJob.status === "RUNNING");
-    if (btnCloud) btnCloud.disabled = !state.strategySet || cloudRunning || !state.symbol;
+    var cloudRealWanted = state.tradingMode === "REAL";
+    var cloudRealOk = !!(state.bybitKeysConfigured && state.bybitRealAvailable);
+    if (btnCloud) {
+      var cloudLabel = cloudRealWanted ? "Armar na nuvem (REAL)" : "Armar na nuvem (Simulado)";
+      btnCloud.textContent = cloudLabel;
+      btnCloud.title = cloudRealWanted
+        ? (cloudRealOk
+          ? "REAL na nuvem — ordens Bybit Linear USDT com página fechada"
+          : "REAL na nuvem precisa de BYBIT_API_KEY/SECRET no servidor")
+        : "Simulado na nuvem — podes sair da página";
+      var blockCloudReal = cloudRealWanted && !cloudRealOk;
+      btnCloud.disabled = !state.strategySet || cloudRunning || !state.symbol || blockCloudReal;
+    }
     if (btnCloudStop) btnCloudStop.disabled = !cloudRunning;
     var next = el("nextStepText");
     if (next) {
@@ -2451,7 +2464,8 @@
     var st = job.status || "—";
     if (title) title.textContent = "Nuvem · " + job.symbol + " · " + (job.strategyPreset || "");
     if (pill) {
-      pill.textContent = st + " · PAPER";
+      var modeLabel = (job.mode === "REAL") ? "REAL" : "PAPER";
+      pill.textContent = st + " · " + modeLabel;
       pill.className = "pill " + (st === "RUNNING" ? "live-ok" : st === "CANCELLED" ? "warn" : "live-poll");
     }
     var sum = job.summary || {};
@@ -2474,7 +2488,9 @@
         " · PnL " + signed(sum.totalPnl || 0) +
         " · Queda " + Number(sum.maxDrawdown || 0).toFixed(2) +
         (sum.hasOpenPosition ? " · posição aberta" : "") +
-        (store && store.backend ? " · store " + store.backend : "");
+        (job.mode ? " · " + job.mode : "") +
+        (store && store.backend ? " · store " + store.backend : "") +
+        (store && store.durable === false ? " · ⚠ não durável" : "");
     }
     updateButtons();
   }
@@ -2538,33 +2554,56 @@
       return;
     }
     var mins = Math.min(180, Math.max(1, Number(state.minutes) || 60));
+    var cloudMode = isRealTradingMode() ? "REAL" : "PAPER";
+    if (state.tradingMode === "REAL" && !isRealTradingMode()) {
+      pushHistory("REAL na nuvem indisponível: faltam chaves no servidor. Usa Simulado ou configura BYBIT_API_KEY/SECRET.", "stop");
+      return;
+    }
+    if (cloudMode === "REAL") {
+      var okReal = confirm(
+        "Armar na NUVEM em REAL?\n\n" +
+        "Ordens reais Bybit Linear USDT enquanto a página está fechada.\n" +
+        "Stake fixa · sem martingale · máx. " + mins + " min.\n\n" +
+        "OK = REAL nuvem · Cancelar = não armar"
+      );
+      if (!okReal) {
+        pushHistory("Armar na nuvem REAL cancelado.", "");
+        return;
+      }
+    }
     var btn = el("btnCloudArm");
     if (btn) btn.disabled = true;
-    pushHistory("A armar na nuvem (PAPER) · " + state.symbol + " · " + state.strategySet + " · " + mins + " min…", "");
+    pushHistory("A armar na nuvem (" + (cloudMode === "REAL" ? "REAL" : "Simulado") + ") · " +
+      state.symbol + " · " + state.strategySet + " · " + mins + " min…", "");
     try {
+      var payload = {
+        symbol: state.symbol,
+        strategyPreset: state.strategySet,
+        stake: state.stake,
+        leverage: state.bybitLeverage || 1,
+        granularity: state.granularity,
+        durationMinutes: mins,
+        clientId: cloudClientId(),
+        mode: cloudMode,
+      };
+      if (cloudMode === "REAL") payload.confirmReal = true;
       var res = await fetch(BYBIT_ARM_JOBS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: state.symbol,
-          strategyPreset: state.strategySet,
-          stake: state.stake,
-          leverage: state.bybitLeverage || 1,
-          granularity: state.granularity,
-          durationMinutes: mins,
-          clientId: cloudClientId(),
-          mode: "PAPER",
-        }),
+        body: JSON.stringify(payload),
       });
       var data = await res.json();
-      if (!res.ok || !data.job) throw new Error(data.error || ("HTTP " + res.status));
+      if (!res.ok || !data.job) {
+        var why = (data && (data.error_description || data.error)) || ("HTTP " + res.status);
+        throw new Error(why);
+      }
       rememberCloudJobId(data.job.id);
       renderCloudArmBox(data.job, data.store);
-      pushHistory("Nuvem PAPER armada · " + data.job.symbol + " até " +
+      pushHistory("Nuvem " + cloudMode + " armada · " + data.job.symbol + " até " +
         new Date(data.job.endsAt).toLocaleTimeString("pt-PT") +
         " — podes sair da página.", "open");
       if (data.store && !data.store.durable) {
-        pushHistory("Aviso: store em memória no servidor — configura Upstash Redis para jobs duráveis entre instâncias.", "stop");
+        pushHistory("Aviso: store em memória no servidor — configura Upstash Redis (UPSTASH_REDIS_REST_URL + TOKEN) para jobs duráveis.", "stop");
       }
       scheduleCloudPoll();
     } catch (e) {
