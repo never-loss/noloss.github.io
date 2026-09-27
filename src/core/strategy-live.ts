@@ -1,11 +1,12 @@
 // NEVER LOSS — live proximity to strategy entry (same indicators as strategies.ts).
-// Informativo: NÃO substitui a porta de evidência. 100% = sinal no último bar OU
-// indicadores no limiar de cruzamento/threshold. Radar usa isto (leve); PLAY usa a porta.
+// Proximidade do sinal ≠ pronto a entrar. Use combineReadiness / gateProgressPct para HUD.
+// 100% de prontidão = porta aberta + live.atTarget. Radar leve = sinal (teto <100 sem porta).
 
 import { ema, rsi, macd, bollinger, stochastic, adx, atr } from "./indicators.ts";
 import type { Series } from "./indicators.ts";
 import type { Candle } from "./market-data.ts";
 import type { Signal, Strategy } from "./strategies.ts";
+import { PRELIMINARY_MIN_OBS, EVIDENCE_MIN_OBS } from "./stats.ts";
 
 export interface LiveEntryMetrics {
   /** 0–100: proximidade ao alvo de entrada (indicadores reais). */
@@ -360,24 +361,143 @@ export function evaluateLiveEntry(
   };
 }
 
-/** Combina porta (evidência) + proximidade de entrada para HUD. */
+export type MinEvidenceLabel = "PRELIMINARY" | "EVIDENCE";
+
+export interface GateProgressInput {
+  oosTrades?: number | null;
+  meanR?: number | null;
+  pValue?: number | null;
+  minLabel?: MinEvidenceLabel;
+  /** Já permitido pela porta → progresso 100. */
+  allowed?: boolean;
+}
+
+/** OOS mínimas pedidas pelo preset (100 PRELIMINARY / 1000 EVIDENCE). */
+export function requiredOosForMinLabel(minLabel: MinEvidenceLabel = "PRELIMINARY"): number {
+  return minLabel === "EVIDENCE" ? EVIDENCE_MIN_OBS : PRELIMINARY_MIN_OBS;
+}
+
+/**
+ * Progresso honesto da porta 0–99 a partir de oosTrades vs mínimo do preset.
+ * Crédito suave se meanR/p parecerem bons — nunca inventa operações.
+ * Só 100 via `allowed: true`.
+ */
+export function gateProgressPct(input: GateProgressInput): number {
+  if (input.allowed) return 100;
+  const need = requiredOosForMinLabel(input.minLabel ?? "PRELIMINARY");
+  const oos = Math.max(0, Number(input.oosTrades) || 0);
+  // Primário: fracção OOS (até 88)
+  let score = Math.min(88, Math.round((oos / Math.max(1, need)) * 88));
+  if (oos > 0) {
+    const meanR = typeof input.meanR === "number" && Number.isFinite(input.meanR) ? input.meanR : 0;
+    const p = input.pValue != null && Number.isFinite(Number(input.pValue)) ? Number(input.pValue) : 1;
+    if (meanR > 0) score += Math.min(7, Math.round((Math.min(meanR, 0.4) / 0.4) * 7));
+    if (p < 0.5) score += Math.min(5, Math.round((1 - p) * 5));
+  }
+  return Math.max(0, Math.min(99, score));
+}
+
+export interface CombineReadinessInput {
+  gateAllowed: boolean;
+  /** 0–100 de gateProgressPct (ou legado proximityScore). */
+  gateProgressPct: number;
+  live: LiveEntryMetrics | null | undefined;
+  /**
+   * false = porta ainda não avaliada (ex.: radar leve).
+   * Nestes casos nunca se mostra 100% nem "pronto a entrar".
+   */
+  gateKnown?: boolean;
+}
+
+export interface ReadinessScore {
+  score: number;
+  label: string;
+  ready: boolean;
+  /** Proximidade só do sinal (indicadores), para HUD secundário. */
+  signalPct: number;
+  kind: "ready" | "gate_open_waiting" | "gate_closed" | "signal_only";
+}
+
+/**
+ * Score único de prontidão (porta + sinal) — usar em radar, cards, barra e ARMADO.
+ * Regras:
+ * - 100 só com porta aberta E live.atTarget
+ * - Porta fechada: gate*0.85 + sinal*0.15, teto 94; 90–99 se porta quase a abrir e sinal quente
+ * - Sem porta conhecida: teto 70, rótulo "proximidade do sinal"
+ */
+export function combineReadiness(input: CombineReadinessInput): ReadinessScore {
+  const live = input.live;
+  const signalPct =
+    live && Number.isFinite(live.proximityPct)
+      ? Math.max(0, Math.min(100, Math.round(live.proximityPct)))
+      : 0;
+  const atTarget = !!(live && live.atTarget);
+  const gateKnown = input.gateKnown !== false;
+  const gateAllowed = !!input.gateAllowed;
+  const gProg = Math.max(0, Math.min(100, Math.round(Number(input.gateProgressPct) || 0)));
+
+  if (gateKnown && gateAllowed && atTarget) {
+    return {
+      score: 100,
+      label: "Pronto a entrar (porta+sinal)",
+      ready: true,
+      signalPct,
+      kind: "ready",
+    };
+  }
+
+  if (gateKnown && gateAllowed) {
+    const score = Math.min(99, Math.max(gProg, Math.min(95, 70 + Math.round(signalPct * 0.25))));
+    return {
+      score,
+      label: "Porta aberta · à espera do sinal",
+      ready: false,
+      signalPct,
+      kind: "gate_open_waiting",
+    };
+  }
+
+  if (!gateKnown) {
+    const score = Math.min(70, Math.round(signalPct * 0.7));
+    return {
+      score,
+      label: "Proximidade do sinal (porta por avaliar)",
+      ready: false,
+      signalPct,
+      kind: "signal_only",
+    };
+  }
+
+  // Porta conhecida fechada: peso forte na evidência
+  let score = Math.round(gProg * 0.85 + signalPct * 0.15);
+  const nearOpen = gProg >= 90;
+  const liveNear = atTarget || signalPct >= 70;
+  if (nearOpen && liveNear) {
+    score = Math.min(99, Math.max(90, score));
+  } else {
+    score = Math.min(94, score);
+  }
+
+  return {
+    score: Math.max(0, Math.min(99, score)),
+    label: "NO TRADE · porta " + gProg + "% · sinal " + signalPct + "%",
+    ready: false,
+    signalPct,
+    kind: "gate_closed",
+  };
+}
+
+/** Compat: bybit.js / testes antigos → combineReadiness. */
 export function combineGateAndLive(
   gateAllowed: boolean,
   gateScore: number,
   live: LiveEntryMetrics,
 ): { score: number; label: string; ready: boolean } {
-  if (gateAllowed && live.atTarget) {
-    return { score: 100, label: "PORTA + ALVO", ready: true };
-  }
-  if (gateAllowed) {
-    const score = Math.max(gateScore, Math.min(95, 55 + Math.round(live.proximityPct * 0.4)));
-    return {
-      score,
-      label: live.atTarget ? "PORTA ABERTA · alvo" : "PORTA ABERTA · à espera do sinal",
-      ready: false,
-    };
-  }
-  // Gate closed: show live proximity but cap below "ready"
-  const score = Math.min(70, Math.round(gateScore * 0.5 + live.proximityPct * 0.5));
-  return { score, label: "NO TRADE · " + live.detail, ready: false };
+  const r = combineReadiness({
+    gateAllowed,
+    gateProgressPct: gateScore,
+    live,
+    gateKnown: true,
+  });
+  return { score: r.score, label: r.label, ready: r.ready };
 }

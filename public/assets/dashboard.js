@@ -60,6 +60,13 @@
     digitPipSize: null,
     digitLast: null,
     digitTickCount: 0,
+    /** Live entry metrics (evaluateLiveEntry) for prontidão porta+sinal. */
+    liveEntry: null,
+    /** Candles kept for live proximity (beyond chart slice). */
+    entryCandles: [],
+    entryLiveTimer: null,
+    derivCloudJob: null,
+    derivCloudTimer: null,
     lcChart: null,
     lcSeries: null,
     lcRo: null,
@@ -708,45 +715,137 @@
     return true;
   }
 
+  function minLabelCurrent() {
+    const preset = currentPreset();
+    const g = (preset && preset.preferredGate) || {};
+    return g.minLabel === "EVIDENCE" ? "EVIDENCE" : "PRELIMINARY";
+  }
+
+  function computeReadiness(result, live) {
+    const allowed = !!(result && result.allowed);
+    const gateKnown = !!result;
+    let gateSc = 0;
+    if (typeof NL.gateProgressPct === "function") {
+      gateSc = NL.gateProgressPct({
+        allowed: allowed,
+        oosTrades: result && typeof result.oosTrades === "number" ? result.oosTrades : 0,
+        meanR: result && typeof result.meanR === "number" ? result.meanR : null,
+        pValue: result ? result.pValue : null,
+        minLabel: minLabelCurrent(),
+      });
+    } else if (result) {
+      gateSc = allowed ? 100 : Math.min(85, Math.round(((result.oosTrades || 0) / 100) * 85));
+    }
+    if (typeof NL.combineReadiness === "function") {
+      return NL.combineReadiness({
+        gateAllowed: allowed,
+        gateProgressPct: gateSc,
+        live: live || null,
+        gateKnown: gateKnown,
+      });
+    }
+    if (allowed && live && live.atTarget) {
+      return { score: 100, label: "Pronto a entrar (porta+sinal)", ready: true, signalPct: live.proximityPct || 0, kind: "ready" };
+    }
+    if (!gateKnown) {
+      const sig = live && live.proximityPct ? live.proximityPct : 0;
+      return { score: Math.min(70, Math.round(sig * 0.7)), label: "Proximidade do sinal (porta por avaliar)", ready: false, signalPct: sig, kind: "signal_only" };
+    }
+    const sig = live && live.proximityPct ? live.proximityPct : 0;
+    return {
+      score: Math.min(94, Math.round(gateSc * 0.85 + sig * 0.15)),
+      label: "NO TRADE · porta " + gateSc + "% · sinal " + Math.round(sig) + "%",
+      ready: false,
+      signalPct: sig,
+      kind: "gate_closed",
+    };
+  }
+
+  function paintEntryReadyBox(panel, combined) {
+    const box = el("entryReady-" + panel);
+    const fill = el("entryFill-" + panel);
+    const bar = el("entryBar-" + panel);
+    const pct = el("entryPct-" + panel);
+    const dot = el("entryDot-" + panel);
+    const title = el("entryTitle-" + panel);
+    const reason = el("entryReason-" + panel);
+    if (!box) return;
+    const score = combined ? combined.score : 0;
+    const ready = !!(combined && combined.ready);
+    box.classList.toggle("ready", ready);
+    box.classList.toggle("armed", !!(state.running && !ready));
+    if (fill) {
+      fill.style.width = score + "%";
+      fill.classList.toggle("ok", ready);
+      fill.classList.toggle("warn", score >= 40 && !ready);
+      fill.classList.toggle("bad", score < 40);
+    }
+    if (bar) bar.setAttribute("aria-valuenow", String(score));
+    if (pct) pct.textContent = score + "%";
+    if (dot) dot.className = "sem-dot " + (ready ? "green" : score >= 40 ? "amber" : "red");
+    if (title) {
+      const panelLabel = panel === "digits" ? "Dígitos" : panel === "forex" ? "Forex" : panel;
+      title.textContent = ready
+        ? "Pronto a entrar · " + panelLabel
+        : "Prontidão · " + panelLabel + (state.running ? " · ARMADO" : "");
+    }
+    if (reason) {
+      const sig = combined && combined.signalPct != null ? combined.signalPct : "—";
+      reason.textContent = (combined && combined.label ? combined.label : "Aguardando…") +
+        " · sinal " + sig + "%" +
+        (state.running ? " · sessão activa" : " · antes de PLAY");
+    }
+  }
+
   function updateProximityUI(result, isOpen) {
     const fill = el("proximityFill");
     const bar = el("proximityBar");
     const label = el("proximityLabel");
     const dot = el("proximityDot");
     if (!fill || !label) return;
-    const allowed = !!(result && result.allowed && (isOpen !== false));
-    let score = 0;
-    const reasons = [];
-    if (!result) {
-      label.textContent = "A aguardar análise / dados…";
-      score = 0;
-    } else if (allowed) {
-      score = 100;
-      label.textContent = "Porta aberta (evidência real) — confirmação PLAY ainda necessária";
-    } else {
-      // Informational progress from real gate metrics — never claim ready unless allowed.
-      const oos = typeof result.oosTrades === "number" ? result.oosTrades : 0;
-      const meanR = typeof result.meanR === "number" ? result.meanR : 0;
-      const p = result.pValue != null && Number.isFinite(result.pValue) ? result.pValue : 1;
-      score += Math.min(40, Math.round((oos / 30) * 40));
-      if (meanR > 0) score += Math.min(30, Math.round(Math.min(meanR, 0.5) / 0.5 * 30));
-      if (p < 0.5) score += Math.min(25, Math.round((1 - p) * 25));
-      score = Math.min(85, Math.max(5, score)); // cap below 100 when NO TRADE
-      const why =
-        typeof NL.formatCandleGate === "function"
-          ? NL.formatCandleGate(result)
-          : result.reason || result.label || "NO TRADE";
-      label.textContent = "NO TRADE · " + why;
-      reasons.push(why);
-    }
+    const gateResult = result || state.prePlayGate || (state.controller && state.controller.result) || null;
+    const allowed = !!(gateResult && gateResult.allowed && (isOpen !== false));
+    const live = state.liveEntry;
+    const combined = computeReadiness(allowed ? { ...gateResult, allowed: true } : gateResult, live);
+    // If isOpen explicitly false, force closed for readiness
+    const scoreCombined = (gateResult && gateResult.allowed && isOpen === false)
+      ? computeReadiness({ ...gateResult, allowed: false }, live)
+      : combined;
+    const score = scoreCombined.score;
+    const ready = scoreCombined.ready;
     fill.style.width = score + "%";
-    fill.classList.toggle("ok", allowed);
-    fill.classList.toggle("warn", !allowed && score >= 40);
-    fill.classList.toggle("bad", !allowed && score < 40);
+    fill.classList.toggle("ok", ready);
+    fill.classList.toggle("warn", !ready && score >= 40);
+    fill.classList.toggle("bad", score < 40);
     if (bar) bar.setAttribute("aria-valuenow", String(score));
+    label.textContent = scoreCombined.label || "A aguardar análise / dados…";
     if (dot) {
-      dot.className = "sem-dot " + (allowed ? "green" : score >= 40 ? "amber" : "red");
+      dot.className = "sem-dot " + (ready ? "green" : score >= 40 ? "amber" : "red");
     }
+    // Mirror into Digits + Forex entry cards (same readiness score)
+    paintEntryReadyBox("digits", scoreCombined);
+    paintEntryReadyBox("forex", scoreCombined);
+  }
+
+  function refreshLiveEntryFromCandles(candles) {
+    if (!candles || candles.length < 30) return;
+    if (typeof NL.evaluateLiveEntry !== "function" || !state.strategySet) return;
+    try {
+      const strats = resolveStrategies();
+      const live = NL.evaluateLiveEntry(candles, strats, { hold: 3 });
+      state.liveEntry = live;
+      const gate = state.prePlayGate || (state.controller && state.controller.result) || null;
+      updateProximityUI(gate, gate ? gate.allowed : false);
+    } catch (_e) {}
+  }
+
+  function scheduleLiveEntryRefresh() {
+    if (state.entryLiveTimer) clearTimeout(state.entryLiveTimer);
+    state.entryLiveTimer = setTimeout(function () {
+      state.entryLiveTimer = null;
+      const candles = state.entryCandles.length ? state.entryCandles : state.chartCandles;
+      refreshLiveEntryFromCandles(candles);
+    }, 120);
   }
 
   function simpleEma(closes, period) {
@@ -939,6 +1038,7 @@
       state.digitLast = d;
       state.digitTickCount += 1;
       renderDigitBars();
+      if (state.digitTickCount % 8 === 0) scheduleLiveEntryRefresh();
     } catch (_e) {}
   }
 
@@ -1093,6 +1193,10 @@
     const canvas = el("chartCanvas");
     const empty = el("chartEmpty");
     const status = el("chartStatus");
+    if (candles && candles.length) {
+      state.entryCandles = candles.slice(-Math.max(160, Math.min(400, candles.length)));
+      scheduleLiveEntryRefresh();
+    }
     const list = (candles || state.chartCandles || []).slice(-80);
     state.chartCandles = list;
     // Prefer lightweight-charts (mesmo lib que Bybit) quando disponível
@@ -2228,6 +2332,8 @@
   }
 
   function updateButtons() {
+    renderDerivCloudBox();
+
     if (isBybitWorld()) syncStateFromBybitForm();
     else if (!isBybitWorld()) syncSharedFormFromPanel(state.panel);
     const hasAccount = accountReady();
@@ -2621,7 +2727,14 @@
       const strategies = resolveStrategies();
       const gate = gateOptsForPreset(costFraction, trainSize, testSize);
       const result = NL.evaluateCandleGate(history, strategies, gate);
+      state.entryCandles = history.slice(-200);
+      try {
+        if (typeof NL.evaluateLiveEntry === "function") {
+          state.liveEntry = NL.evaluateLiveEntry(history.slice(-160), strategies, { hold: 3 });
+        }
+      } catch (_e) {}
       setPrePlayUI(result);
+      updateProximityUI(result, !!(result && result.allowed));
       pushHistory(
         "Análise pré-PLAY · " +
           (currentPreset() ? currentPreset().label : state.strategySet) +
@@ -3175,6 +3288,13 @@
     if (btnAnalyze) btnAnalyze.addEventListener("click", () => runPrePlayAnalysis());
     const btnAnaliseRun = el("btnAnaliseRun");
     if (btnAnaliseRun) btnAnaliseRun.addEventListener("click", () => runAnaliseFromTab());
+    const btnDerivCloudArm = el("btnDerivCloudArm");
+    if (btnDerivCloudArm) btnDerivCloudArm.addEventListener("click", () => startDerivCloudArm());
+    const btnDerivCloudStop = el("btnDerivCloudStop");
+    if (btnDerivCloudStop) btnDerivCloudStop.addEventListener("click", () => stopDerivCloudArm());
+    state.derivCloudJob = loadDerivCloudJob();
+    refreshDerivCloudStatus().catch(function () {});
+    renderDerivCloudBox();
     const btnAnaliseGo = el("btnAnaliseGoOperar");
     if (btnAnaliseGo) btnAnaliseGo.addEventListener("click", () => goOperarFromAnalise());
     const btnAnalisePlay = el("btnAnalisePlay");
@@ -3275,6 +3395,293 @@
     }
   }
 
+
+
+  /* —— Deriv cloud PAPER (client catch-up; sem ordens REAL) —— */
+  const DERIV_CLOUD_KEY = "nl_deriv_cloud_job_v1";
+
+  function loadDerivCloudJob() {
+    try {
+      const raw = localStorage.getItem(DERIV_CLOUD_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function saveDerivCloudJob(job) {
+    try {
+      if (job) localStorage.setItem(DERIV_CLOUD_KEY, JSON.stringify(job));
+      else localStorage.removeItem(DERIV_CLOUD_KEY);
+    } catch (_e) {}
+    state.derivCloudJob = job || null;
+  }
+
+  function accountIsDemo(acc) {
+    if (!acc) return false;
+    try {
+      if (typeof accountKind === "function" && accountKind(acc) === "DEMO") return true;
+    } catch (_e) {}
+    const id = String(acc.account_id || acc.loginid || "");
+    if (/^VR/i.test(id) || /demo/i.test(id)) return true;
+    if (acc.is_virtual === 1 || acc.is_virtual === true) return true;
+    return false;
+  }
+
+  function renderDerivCloudBox() {
+    const box = el("derivCloudBox");
+    const title = el("derivCloudTitle");
+    const pill = el("derivCloudPill");
+    const reason = el("derivCloudReason");
+    const meta = el("derivCloudMeta");
+    const btnArm = el("btnDerivCloudArm");
+    const btnStop = el("btnDerivCloudStop");
+    const job = state.derivCloudJob || loadDerivCloudJob();
+    state.derivCloudJob = job;
+    if (!box) return;
+    const hasAccount = !!state.selectedAccount;
+    const hasStrat = !!state.strategySet;
+    const running = !!(job && job.status === "RUNNING");
+    if (btnArm) {
+      btnArm.disabled = !hasAccount || !hasStrat || running || state.running;
+      btnArm.title = !hasAccount
+        ? "Escolhe Conta Demo ou Real"
+        : "PAPER catch-up na nuvem (sem contrato REAL)";
+    }
+    if (btnStop) btnStop.disabled = !running;
+    if (!job) {
+      box.hidden = true;
+      if (title) title.textContent = "Nuvem · inactivo";
+      if (pill) { pill.className = "pill"; pill.textContent = "—"; }
+      if (reason) {
+        reason.textContent =
+          "Demo ou Real (Tipo de Conta) · só PAPER na nuvem. REAL com contratos = mantenha a página aberta.";
+      }
+      if (meta) meta.textContent = "";
+      return;
+    }
+    box.hidden = false;
+    const remain = Math.max(0, (job.endsAt || 0) - Date.now());
+    if (title) {
+      title.textContent =
+        "Nuvem PAPER · " +
+        (job.symbol || "") +
+        " · " +
+        (job.accountKind || "?") +
+        " " +
+        (job.accountId || "");
+    }
+    if (pill) {
+      pill.className = "pill " + (job.status === "RUNNING" ? "live-ok" : job.status === "CANCELLED" ? "warn" : "ok");
+      pill.textContent = job.status || "—";
+    }
+    if (reason) {
+      reason.textContent =
+        (job.stopReason ? job.stopReason + " · " : "") +
+        "ops " +
+        (job.opened || 0) +
+        "/" +
+        (job.closed || 0) +
+        " · PnL " +
+        (typeof job.totalPnl === "number" ? (job.totalPnl >= 0 ? "+" : "") + job.totalPnl.toFixed(2) : "—") +
+        (job.gateAllowed ? " · porta aberta" : " · NO TRADE") +
+        " · sem ordens REAL na nuvem";
+    }
+    if (meta) {
+      meta.textContent =
+        "resta ~" +
+        Math.ceil(remain / 60000) +
+        " min · stake " +
+        job.stake +
+        " · " +
+        (job.strategyPreset || "");
+    }
+  }
+
+  async function advanceDerivCloudJob(job) {
+    if (!job || job.status !== "RUNNING") return job;
+    const now = Date.now();
+    if (now >= job.endsAt) {
+      job.status = "STOPPED";
+      job.stopReason = job.stopReason || "max_duration";
+      job.updatedAt = now;
+      return job;
+    }
+    try {
+      const kind = NL.marketOf(job.symbol);
+      const costFraction = kind && NL.MARKETS[kind] ? NL.MARKETS[kind].assumedCostFraction : 0.001;
+      const history = await fetchHistory(job.symbol, job.granularity || state.granularity || 300, 3500);
+      if (!history || history.length < 1500) {
+        job.warning = "histórico insuficiente para advance";
+        job.updatedAt = now;
+        return job;
+      }
+      const n = history.length;
+      const trainSize = Math.min(1000, Math.floor(n * 0.4));
+      const testSize = Math.min(500, Math.floor(n * 0.2));
+      const prevSet = state.strategySet;
+      state.strategySet = job.strategyPreset;
+      let strategies;
+      try {
+        strategies = resolveStrategies();
+      } finally {
+        state.strategySet = prevSet;
+      }
+      const preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(job.strategyPreset) : null;
+      const g = (preset && preset.preferredGate) || {};
+      const gateOpts = {
+        slAtr: g.slAtr || 1.5,
+        tpR: g.tpR || 2,
+        maxBars: g.maxBars || 24,
+        costFraction: costFraction,
+        trainSize: trainSize,
+        testSize: testSize,
+        minLabel: g.minLabel || "PRELIMINARY",
+      };
+      const gran = job.granularity || 300;
+      const nowSec = now / 1000;
+      const closed = history.filter(function (c) { return c.epoch + gran <= nowSec; });
+      const warmup = closed.filter(function (c) { return c.epoch * 1000 < job.startedAt; });
+      const live = closed.filter(function (c) { return c.epoch * 1000 >= job.startedAt; });
+      const durationMs = Math.max(60_000, Math.min(NL.MAX_SESSION_MS || 3 * 60 * 60 * 1000, job.endsAt - job.startedAt));
+      const controller = new NL.CandleGateController({
+        strategies: strategies,
+        gate: gateOpts,
+        revalidateEvery: 12,
+        maxBuffer: 3500,
+        initial: warmup.slice(-1500),
+      });
+      const session = new NL.CandlePaperSession({
+        strategy: controller.asStrategy(),
+        stake: job.stake,
+        slAtr: gateOpts.slAtr,
+        tpR: gateOpts.tpR,
+        maxBars: gateOpts.maxBars,
+        costFraction: costFraction,
+        maxLoss: job.stake * 10,
+        maxTrades: 50,
+        maxDurationMs: durationMs,
+        maxConsecutiveLosses: 6,
+        cooldownCandles: 0,
+      });
+      session.start(job.startedAt);
+      for (let i = 0; i < live.length; i++) {
+        const c = live[i];
+        if (c.epoch * 1000 > job.endsAt) break;
+        controller.push(c);
+        session.onCandle(c);
+      }
+      if (now >= job.endsAt && session.status === "RUNNING") {
+        session.stop(now);
+      }
+      const summary = session.summary();
+      const gate = controller.result;
+      job.opened = summary.opened;
+      job.closed = summary.closed;
+      job.totalPnl = summary.totalPnl;
+      job.hasOpenPosition = summary.hasOpenPosition;
+      job.gateAllowed = !!(gate && gate.allowed);
+      job.gateReason = gate ? gate.reason : "";
+      job.updatedAt = now;
+      if (summary.status === "STOPPED" && !summary.hasOpenPosition) {
+        job.status = "STOPPED";
+        job.stopReason = summary.stopReason || job.stopReason || "session_stopped";
+      } else if (now >= job.endsAt && !summary.hasOpenPosition) {
+        job.status = "STOPPED";
+        job.stopReason = job.stopReason || "max_duration";
+      }
+    } catch (e) {
+      job.warning = e.message || String(e);
+      job.updatedAt = now;
+    }
+    return job;
+  }
+
+  async function refreshDerivCloudStatus() {
+    let job = state.derivCloudJob || loadDerivCloudJob();
+    if (!job) {
+      renderDerivCloudBox();
+      return;
+    }
+    if (job.status === "RUNNING") {
+      job = await advanceDerivCloudJob(job);
+      saveDerivCloudJob(job);
+    }
+    renderDerivCloudBox();
+  }
+
+  async function startDerivCloudArm() {
+    resolveSelectedAccount();
+    readForm();
+    if (!state.selectedAccount) {
+      pushHistory("Nuvem Deriv: escolhe Conta Demo ou Real.", "stop");
+      return;
+    }
+    if (!state.strategySet || !state.symbol) {
+      pushHistory("Nuvem Deriv: escolhe mercado, símbolo e estratégia.", "stop");
+      return;
+    }
+    if (state.running) {
+      pushHistory("Para a sessão neste ecrã antes de armar na nuvem.", "stop");
+      return;
+    }
+    const minsEl = el("derivCloudMinutes");
+    let minutes = minsEl ? Math.floor(Number(minsEl.value) || 30) : 30;
+    if (minutes < 5) minutes = 5;
+    if (minutes > 180) minutes = 180;
+    const demo = accountIsDemo(state.selectedAccount);
+    const now = Date.now();
+    const job = {
+      id: "darm_" + now.toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+      mode: "PAPER",
+      status: "RUNNING",
+      accountId: String(state.selectedAccount.account_id || state.selectedAccount.loginid || ""),
+      accountKind: demo ? "DEMO" : "REAL",
+      symbol: state.symbol,
+      strategyPreset: state.strategySet,
+      stake: state.stake,
+      granularity: state.granularity || 300,
+      panel: state.panel,
+      startedAt: now,
+      endsAt: now + minutes * 60 * 1000,
+      opened: 0,
+      closed: 0,
+      totalPnl: 0,
+      gateAllowed: false,
+      stopReason: null,
+      note: "PAPER catch-up — sem contratos Deriv REAL na nuvem",
+    };
+    saveDerivCloudJob(job);
+    pushHistory(
+      "Nuvem PAPER armada · " +
+        job.accountKind +
+        " " +
+        job.accountId +
+        " · " +
+        job.symbol +
+        " · " +
+        minutes +
+        " min (podes sair; ao voltar há catch-up). REAL contratos = página aberta.",
+      "open",
+    );
+    await refreshDerivCloudStatus();
+    if (state.derivCloudTimer) clearInterval(state.derivCloudTimer);
+    state.derivCloudTimer = setInterval(function () {
+      refreshDerivCloudStatus().catch(function () {});
+    }, 60_000);
+  }
+
+  function stopDerivCloudArm() {
+    const job = state.derivCloudJob || loadDerivCloudJob();
+    if (!job) return;
+    job.status = "CANCELLED";
+    job.stopReason = "user_cancel";
+    job.updatedAt = Date.now();
+    saveDerivCloudJob(job);
+    pushHistory("Nuvem Deriv cancelada.", "stop");
+    renderDerivCloudBox();
+  }
 
   async function boot() {
     bind();

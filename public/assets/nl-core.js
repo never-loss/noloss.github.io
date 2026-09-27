@@ -50,6 +50,7 @@ var NL = (() => {
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
     clampBybitLeverage: () => clampBybitLeverage,
     combineGateAndLive: () => combineGateAndLive,
+    combineReadiness: () => combineReadiness,
     countDigits: () => countDigits,
     cryptoBaseLabel: () => cryptoBaseLabel,
     cryptoSourceOf: () => cryptoSourceOf,
@@ -70,6 +71,7 @@ var NL = (() => {
     formatCandleEvent: () => formatCandleEvent,
     formatCandleGate: () => formatCandleGate,
     formatCandleSummary: () => formatCandleSummary,
+    gateProgressPct: () => gateProgressPct,
     granularityToBinanceInterval: () => granularityToBinanceInterval,
     granularityToBybitInterval: () => granularityToBybitInterval,
     isBinanceUsdtSymbol: () => isBinanceUsdtSymbol,
@@ -102,6 +104,7 @@ var NL = (() => {
     parseTickMessage: () => parseMessage,
     percentages: () => percentages,
     proximityForStrategyName: () => proximityForStrategyName,
+    requiredOosForMinLabel: () => requiredOosForMinLabel,
     sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
     sortBybitUsdtPreferred: () => sortBybitUsdtPreferred,
     strategiesForPreset: () => strategiesForPreset,
@@ -2480,20 +2483,82 @@ var NL = (() => {
       detail
     };
   }
-  function combineGateAndLive(gateAllowed, gateScore, live) {
-    if (gateAllowed && live.atTarget) {
-      return { score: 100, label: "PORTA + ALVO", ready: true };
+  function requiredOosForMinLabel(minLabel = "PRELIMINARY") {
+    return minLabel === "EVIDENCE" ? EVIDENCE_MIN_OBS : PRELIMINARY_MIN_OBS;
+  }
+  function gateProgressPct(input) {
+    if (input.allowed) return 100;
+    const need = requiredOosForMinLabel(input.minLabel ?? "PRELIMINARY");
+    const oos = Math.max(0, Number(input.oosTrades) || 0);
+    let score = Math.min(88, Math.round(oos / Math.max(1, need) * 88));
+    if (oos > 0) {
+      const meanR = typeof input.meanR === "number" && Number.isFinite(input.meanR) ? input.meanR : 0;
+      const p = input.pValue != null && Number.isFinite(Number(input.pValue)) ? Number(input.pValue) : 1;
+      if (meanR > 0) score += Math.min(7, Math.round(Math.min(meanR, 0.4) / 0.4 * 7));
+      if (p < 0.5) score += Math.min(5, Math.round((1 - p) * 5));
     }
-    if (gateAllowed) {
-      const score2 = Math.max(gateScore, Math.min(95, 55 + Math.round(live.proximityPct * 0.4)));
+    return Math.max(0, Math.min(99, score));
+  }
+  function combineReadiness(input) {
+    const live = input.live;
+    const signalPct = live && Number.isFinite(live.proximityPct) ? Math.max(0, Math.min(100, Math.round(live.proximityPct))) : 0;
+    const atTarget = !!(live && live.atTarget);
+    const gateKnown = input.gateKnown !== false;
+    const gateAllowed = !!input.gateAllowed;
+    const gProg = Math.max(0, Math.min(100, Math.round(Number(input.gateProgressPct) || 0)));
+    if (gateKnown && gateAllowed && atTarget) {
       return {
-        score: score2,
-        label: live.atTarget ? "PORTA ABERTA \xB7 alvo" : "PORTA ABERTA \xB7 \xE0 espera do sinal",
-        ready: false
+        score: 100,
+        label: "Pronto a entrar (porta+sinal)",
+        ready: true,
+        signalPct,
+        kind: "ready"
       };
     }
-    const score = Math.min(70, Math.round(gateScore * 0.5 + live.proximityPct * 0.5));
-    return { score, label: "NO TRADE \xB7 " + live.detail, ready: false };
+    if (gateKnown && gateAllowed) {
+      const score2 = Math.min(99, Math.max(gProg, Math.min(95, 70 + Math.round(signalPct * 0.25))));
+      return {
+        score: score2,
+        label: "Porta aberta \xB7 \xE0 espera do sinal",
+        ready: false,
+        signalPct,
+        kind: "gate_open_waiting"
+      };
+    }
+    if (!gateKnown) {
+      const score2 = Math.min(70, Math.round(signalPct * 0.7));
+      return {
+        score: score2,
+        label: "Proximidade do sinal (porta por avaliar)",
+        ready: false,
+        signalPct,
+        kind: "signal_only"
+      };
+    }
+    let score = Math.round(gProg * 0.85 + signalPct * 0.15);
+    const nearOpen = gProg >= 90;
+    const liveNear = atTarget || signalPct >= 70;
+    if (nearOpen && liveNear) {
+      score = Math.min(99, Math.max(90, score));
+    } else {
+      score = Math.min(94, score);
+    }
+    return {
+      score: Math.max(0, Math.min(99, score)),
+      label: "NO TRADE \xB7 porta " + gProg + "% \xB7 sinal " + signalPct + "%",
+      ready: false,
+      signalPct,
+      kind: "gate_closed"
+    };
+  }
+  function combineGateAndLive(gateAllowed, gateScore, live) {
+    const r = combineReadiness({
+      gateAllowed,
+      gateProgressPct: gateScore,
+      live,
+      gateKnown: true
+    });
+    return { score: r.score, label: r.label, ready: r.ready };
   }
 
   // src/core/ticks.ts

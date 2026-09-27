@@ -109,9 +109,18 @@ export {
   evaluateLiveEntry,
   proximityForStrategyName,
   combineGateAndLive,
+  combineReadiness,
+  gateProgressPct,
+  requiredOosForMinLabel,
   LIVE_ENTRY_MAX_CANDLES,
 } from "../core/strategy-live.ts";
-export type { LiveEntryMetrics } from "../core/strategy-live.ts";
+export type {
+  LiveEntryMetrics,
+  GateProgressInput,
+  CombineReadinessInput,
+  ReadinessScore,
+  MinEvidenceLabel,
+} from "../core/strategy-live.ts";
 
 export {
   WINDOW_SIZES,
