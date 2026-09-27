@@ -17,10 +17,10 @@ Bybit cloud arm follows the existing **PAPER / REAL** toggle:
 
 ## Cron
 
-`vercel.json` schedules `*/5 * * * *` → `/api/bybit-arm?tick=1`.
+`vercel.json` schedules `0 0 * * *` (daily) → `/api/bybit-arm?tick=1` — Hobby-safe.
 
-- **Pro**: 5-minute ticks OK.
-- **Hobby**: may only allow once/day — if deploy rejects the schedule, change to `0 0 * * *` and rely on browser poll (60s) + lazy GET advance as backup.
+- Browser poll every 60s + lazy GET advance remain the primary “page closed then return” path.
+- On Pro you may tighten to `*/5 * * * *` for background ticks with the page closed.
 
 ## Safety
 

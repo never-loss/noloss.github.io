@@ -23,7 +23,7 @@
   "crons": [
     {
       "path": "/api/bybit-arm?tick=1",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
