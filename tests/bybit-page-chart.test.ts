@@ -203,8 +203,41 @@ test("readiness: bybit usa combineReadinessUI — nunca Math.max(gate, live) a 1
   assert.match(bybitJs, /NL\.gateProgressPct/);
   assert.doesNotMatch(bybitJs, /Math\.max\(gateSc,\s*live\.proximityPct\)/);
   assert.doesNotMatch(bybitJs, /score:\s*live \? live\.proximityPct/);
-  // Radar stores readiness score, keeps signalPct separate
-  assert.match(bybitJs, /signalPct:\s*live\.proximityPct/);
-  assert.match(bybitJs, /combineReadinessUI\(null,\s*live,\s*preset,\s*false\)/);
   assert.match(bybitHtml, /prontidão/i);
+});
+
+test("readiness: radar+arm unificados — mesmo score para símbolo seleccionado", () => {
+  assert.match(bybitJs, /function readinessForRadarSymbol\(/);
+  assert.match(bybitJs, /function patchSelectedRadarRow\(/);
+  assert.match(bybitJs, /function activeRadarPreset\(/);
+  assert.match(bybitJs, /function syncRadarPresetFromStrategy\(/);
+  // syncArmUi patches radar row so selected % === arm %
+  const syncArm = bybitJs.slice(
+    bybitJs.indexOf("function syncArmUi"),
+    bybitJs.indexOf("async function pushClosedCandleToSession"),
+  );
+  assert.match(syncArm, /patchSelectedRadarRow/);
+  assert.match(syncArm, /combineReadinessUI\(gate, live, preset/);
+  // Scan uses shared helper — not a parallel fake formula
+  assert.match(bybitJs, /readinessForRadarSymbol\(it\.symbol, live, preset\)/);
+  assert.doesNotMatch(bybitJs, /combineReadinessUI\(null,\s*live,\s*preset,\s*false\)/);
+  // Selected symbol with gate skips light overwrite
+  assert.match(bybitJs, /it\.symbol === state\.symbol && state\.liveGates\[preset\]/);
+});
+
+test("readiness: radar casado com estratégia — sem misturar presets", () => {
+  const onStrat = bybitJs.slice(
+    bybitJs.indexOf("function onStrategyChange"),
+    bybitJs.indexOf("function qtyFromFixedStake"),
+  );
+  assert.match(onStrat, /syncRadarPresetFromStrategy/);
+  assert.match(bybitJs, /r\.preset === preset/);
+  assert.match(bybitJs, /presetLabelPt/);
+  // Radar preset dropdown houses strategy (lucro/loss)
+  assert.match(bybitJs, /onStrategyChange\(p\)/);
+  assert.match(bybitJs, /tag-near">sinal/);
+  // Gate cache per symbol+preset+granularity
+  assert.match(bybitJs, /RADAR_GATE_CACHE_TTL_MS/);
+  assert.match(bybitJs, /putRadarGateCache/);
+  assert.match(bybitJs, /getRadarGateCached/);
 });
