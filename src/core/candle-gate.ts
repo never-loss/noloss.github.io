@@ -2,7 +2,7 @@
 // com custos, e só com operações executáveis. Caso contrário: NO TRADE, e diz porquê.
 
 import { walkForwardCandles, runCandleBacktest } from "./candle-backtest.ts";
-import { classify, PRELIMINARY_MIN_OBS } from "./stats.ts";
+import { classify, AGILE_MIN_OBS, PRELIMINARY_MIN_OBS, EVIDENCE_MIN_OBS } from "./stats.ts";
 import type { EvidenceLabel } from "./stats.ts";
 import type { Strategy, Signal } from "./strategies.ts";
 import type { Candle } from "./market-data.ts";
@@ -17,7 +17,8 @@ export interface CandleGateOptions {
   testSize: number;
   atrPeriod?: number;
   directions?: "both" | "long" | "short";
-  minLabel?: "PRELIMINARY" | "EVIDENCE";
+  /** AGILE (≥10 OOS), PRELIMINARY (≥100), EVIDENCE (≥1000). */
+  minLabel?: "AGILE" | "PRELIMINARY" | "EVIDENCE";
   alpha?: number;
   minTrainTrades?: number;
 }
@@ -34,6 +35,23 @@ export interface CandleGateResult {
 
 function closed(label: EvidenceLabel, reason: string, over: Partial<CandleGateResult> = {}): CandleGateResult {
   return { allowed: false, label, reason, strategy: null, oosTrades: 0, meanR: 0, pValue: null, ...over };
+}
+
+
+export type CandleMinLabel = "AGILE" | "PRELIMINARY" | "EVIDENCE";
+
+/** OOS mínimas pedidas pelo modo da porta. */
+export function requiredOosForCandleMinLabel(minLabel: CandleMinLabel = "PRELIMINARY"): number {
+  if (minLabel === "EVIDENCE") return EVIDENCE_MIN_OBS;
+  if (minLabel === "AGILE") return AGILE_MIN_OBS;
+  return PRELIMINARY_MIN_OBS;
+}
+
+/** Hierarquia: EVIDENCE ⊃ PRELIMINARY ⊃ AGILE. */
+export function candleLabelPermitted(label: EvidenceLabel, minLabel: CandleMinLabel): boolean {
+  if (minLabel === "EVIDENCE") return label === "EVIDENCE";
+  if (minLabel === "PRELIMINARY") return label === "PRELIMINARY" || label === "EVIDENCE";
+  return label === "AGILE" || label === "PRELIMINARY" || label === "EVIDENCE";
 }
 
 const sgn = (x: number): string => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
@@ -56,16 +74,18 @@ export function evaluateCandleGate(
 
   const wf = walkForwardCandles(candles, strategies, { ...bt, trainSize, testSize, ...(minTrainTrades !== undefined ? { minTrainTrades } : {}) });
   const oos = wf.oos;
-  if (oos.trades < PRELIMINARY_MIN_OBS || oos.pValue === null) {
-    return closed("INSUFFICIENT", `só ${oos.trades} operações fora da amostra (mínimo ${PRELIMINARY_MIN_OBS})`, { oosTrades: oos.trades });
+  const needOos = requiredOosForCandleMinLabel(minLabel);
+  if (oos.trades < needOos || oos.pValue === null) {
+    return closed("INSUFFICIENT", `só ${oos.trades} operações fora da amostra (mínimo ${needOos})`, { oosTrades: oos.trades });
   }
   const base = { oosTrades: oos.trades, meanR: oos.meanR, pValue: oos.pValue };
   if (oos.pValue >= alpha || oos.meanR <= 0) {
     return closed("NO_EVIDENCE", `sem evidência: média ${sgn(oos.meanR)}R por operação em ${oos.trades} operações (p = ${oos.pValue.toFixed(3)})`, base);
   }
   const label = classify(oos.trades, oos.pValue);
-  const permitted = minLabel === "EVIDENCE" ? label === "EVIDENCE" : label === "EVIDENCE" || label === "PRELIMINARY";
-  if (!permitted) return closed(label, `evidência ${label} insuficiente para este modo (pede ${minLabel})`, base);
+  if (!candleLabelPermitted(label, minLabel)) {
+    return closed(label, `evidência ${label} insuficiente para este modo (pede ${minLabel})`, base);
+  }
 
   // Estratégia com melhor resultado no treino mais recente.
   const start = Math.max(0, candles.length - trainSize);

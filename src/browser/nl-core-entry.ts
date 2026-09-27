@@ -78,6 +78,7 @@ export {
   STRATEGY_PRESETS,
   strategyPreset,
   strategiesForPreset,
+  oosMinForPreset,
 } from "../core/strategies.ts";
 export type {
   Strategy,
@@ -89,12 +90,24 @@ export type {
 
 export { feasible, maxStopFromMultiplier } from "../core/feasible.ts";
 
+
+export {
+  AGILE_MIN_OBS,
+  PRELIMINARY_MIN_OBS,
+  EVIDENCE_MIN_OBS,
+  ALPHA,
+  classify,
+} from "../core/stats.ts";
+export type { EvidenceLabel } from "../core/stats.ts";
+
 export {
   evaluateCandleGate,
   formatCandleGate,
   CandleGateController,
+  requiredOosForCandleMinLabel,
+  candleLabelPermitted,
 } from "../core/candle-gate.ts";
-export type { CandleGateResult, CandleGateOptions } from "../core/candle-gate.ts";
+export type { CandleGateResult, CandleGateOptions, CandleMinLabel } from "../core/candle-gate.ts";
 
 export {
   CandlePaperSession,

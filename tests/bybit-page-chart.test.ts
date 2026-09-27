@@ -94,7 +94,7 @@ test("wiring proof: each preset → strategies → gate controller → asStrateg
         costFraction: 0.001,
         trainSize: 700,
         testSize: 350,
-        minLabel: id === "loss_zero" ? "EVIDENCE" : "PRELIMINARY",
+        minLabel: id === "loss_zero" ? "EVIDENCE" : id === "blitz_zero" ? "AGILE" : "PRELIMINARY",
       },
       revalidateEvery: 12,
       maxBuffer: 3500,
@@ -309,14 +309,23 @@ test("readiness: radar casado com estratégia — sem misturar presets", () => {
   assert.match(bybitJs, /getRadarGateCached/);
 });
 
-test("Blitz zero preset wired on Bybit page (select + live card + JS)", () => {
+test("Agressivo (blitz_zero) wired: selects, cards, porta 10 + máx 10 ops, AGILE", () => {
   assert.match(bybitHtml, /value="blitz_zero"/);
-  assert.match(bybitHtml, /Blitz zero/);
+  assert.match(bybitHtml, /Agressivo/);
+  assert.doesNotMatch(bybitHtml, /Blitz zero/);
   assert.match(bybitHtml, /id="cardBlitzZero"/);
   assert.match(bybitHtml, /data-preset="blitz_zero"/);
+  assert.match(bybitHtml, /porta 10/);
+  assert.match(bybitHtml, /máx\. 10 ops/);
+  assert.match(bybitHtml, /porta 100/);
+  assert.match(bybitHtml, /porta 1000/);
   assert.match(bybitJs, /blitz_zero/);
   assert.match(bybitJs, /blitzZeroStrategySet|NL\.blitzZeroStrategySet/);
   assert.match(bybitJs, /cardBlitzZero/);
-  assert.match(bybitJs, /maxTrades:\s*state\.strategySet\s*===\s*"blitz_zero"\s*\?\s*10\s*:\s*50/);
+  assert.match(bybitJs, /maxTradesForPreset/);
+  assert.match(bybitJs, /presetId === "blitz_zero" \? 10 : 50/);
   assert.match(bybitJs, /["']lucro_rapido["'],\s*["']loss_zero["'],\s*["']blitz_zero["']/);
+  assert.match(bybitJs, /return "AGILE"|=== "AGILE"/);
+  assert.match(bybitJs, /portaOosNeed/);
+  assert.match(bybitJs, /Agressivo/);
 });

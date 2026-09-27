@@ -2,7 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CandlePaperSession } from "../src/core/candle-paper.ts";
 import type { CandlePaperConfig, CandlePaperEvent } from "../src/core/candle-paper.ts";
-import { evaluateCandleGate, formatCandleGate, CandleGateController } from "../src/core/candle-gate.ts";
+import {
+  evaluateCandleGate,
+  requiredOosForCandleMinLabel,
+  candleLabelPermitted,
+  formatCandleGate,
+  CandleGateController,
+} from "../src/core/candle-gate.ts";
 import { runCandleBacktest } from "../src/core/candle-backtest.ts";
 import { strategyLibrary, emaCross } from "../src/core/strategies.ts";
 import type { Strategy, Signal } from "../src/core/strategies.ts";
@@ -351,4 +357,19 @@ test("texto dos eventos e do resumo", async () => {
   const vazio = formatCandleSummary(started(cfg()).summary());
   assert.ok(vazio.includes("NO TRADE"));
   assert.ok(formatCandleEvent({ type: "stopped", at: 0, reason: "max_loss" }).includes("perda máxima atingida"));
+});
+
+test("porta AGILE: mínimos OOS 10/100/1000 e hierarquia de labels", () => {
+  assert.equal(requiredOosForCandleMinLabel("AGILE"), 10);
+  assert.equal(requiredOosForCandleMinLabel("PRELIMINARY"), 100);
+  assert.equal(requiredOosForCandleMinLabel("EVIDENCE"), 1000);
+  assert.equal(candleLabelPermitted("AGILE", "AGILE"), true);
+  assert.equal(candleLabelPermitted("PRELIMINARY", "AGILE"), true);
+  assert.equal(candleLabelPermitted("EVIDENCE", "AGILE"), true);
+  assert.equal(candleLabelPermitted("AGILE", "PRELIMINARY"), false);
+  assert.equal(candleLabelPermitted("PRELIMINARY", "PRELIMINARY"), true);
+  assert.equal(candleLabelPermitted("EVIDENCE", "EVIDENCE"), true);
+  assert.equal(candleLabelPermitted("PRELIMINARY", "EVIDENCE"), false);
+  assert.equal(candleLabelPermitted("INSUFFICIENT", "AGILE"), false);
+  assert.equal(candleLabelPermitted("NO_EVIDENCE", "AGILE"), false);
 });

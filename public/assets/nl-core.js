@@ -20,6 +20,8 @@ var NL = (() => {
   // src/browser/nl-core-entry.ts
   var nl_core_entry_exports = {};
   __export(nl_core_entry_exports, {
+    AGILE_MIN_OBS: () => AGILE_MIN_OBS,
+    ALPHA: () => ALPHA,
     BINANCE_FUTURES_PATH_EXCHANGE_INFO: () => BINANCE_FUTURES_PATH_EXCHANGE_INFO,
     BINANCE_FUTURES_PATH_KLINES: () => BINANCE_FUTURES_PATH_KLINES,
     BINANCE_FUTURES_PUBLIC_BASES: () => BINANCE_FUTURES_PUBLIC_BASES,
@@ -31,6 +33,7 @@ var NL = (() => {
     BYBIT_PUBLIC_BASES: () => BYBIT_PUBLIC_BASES,
     CandleGateController: () => CandleGateController,
     CandlePaperSession: () => CandlePaperSession,
+    EVIDENCE_MIN_OBS: () => EVIDENCE_MIN_OBS,
     EXPECTED_PCT: () => EXPECTED_PCT,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
     LIVE_ENTRY_MAX_CANDLES: () => LIVE_ENTRY_MAX_CANDLES,
@@ -39,6 +42,7 @@ var NL = (() => {
     MAX_SESSION_MS: () => MAX_SESSION_MS,
     MAX_WINDOW: () => MAX_WINDOW,
     MIN_STAKE: () => MIN_STAKE,
+    PRELIMINARY_MIN_OBS: () => PRELIMINARY_MIN_OBS,
     STRATEGY_PRESETS: () => STRATEGY_PRESETS,
     TickWindow: () => TickWindow,
     WINDOW_SIZES: () => WINDOW_SIZES,
@@ -49,7 +53,9 @@ var NL = (() => {
     bybitBaseAsset: () => bybitBaseAsset,
     bybitFetch: () => bybitFetch,
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
+    candleLabelPermitted: () => candleLabelPermitted,
     clampBybitLeverage: () => clampBybitLeverage,
+    classify: () => classify,
     combineGateAndLive: () => combineGateAndLive,
     combineReadiness: () => combineReadiness,
     countDigits: () => countDigits,
@@ -93,6 +99,7 @@ var NL = (() => {
     mergeCandlePages: () => mergeCandlePages,
     mergeCryptoUsdListings: () => mergeCryptoUsdListings,
     nextCandleEnd: () => nextCandleEnd,
+    oosMinForPreset: () => oosMinForPreset,
     parseActiveSymbols: () => parseActiveSymbols,
     parseBinanceExchangeInfo: () => parseBinanceExchangeInfo,
     parseBinanceFuturesExchangeInfo: () => parseBinanceFuturesExchangeInfo,
@@ -105,6 +112,7 @@ var NL = (() => {
     parseTickMessage: () => parseMessage,
     percentages: () => percentages,
     proximityForStrategyName: () => proximityForStrategyName,
+    requiredOosForCandleMinLabel: () => requiredOosForCandleMinLabel,
     requiredOosForMinLabel: () => requiredOosForMinLabel,
     sortBinanceUsdtPreferred: () => sortBinanceUsdtPreferred,
     sortBybitUsdtPreferred: () => sortBybitUsdtPreferred,
@@ -1498,9 +1506,9 @@ var NL = (() => {
     },
     {
       id: "blitz_zero",
-      label: "Blitz zero",
-      description: "Spin agressivo 1m (futuros Linear USDT) da conflu\xEAncia Loss zero. M\xE1x. 10 ops/sess\xE3o. Stake fixa \xB7 porta \xB7 NO TRADE se falhar \xB7 sem martingale. N\xC3O garante lucro.",
-      preferredGate: { tpR: 1.5, maxBars: 10, slAtr: 1.2, minLabel: "PRELIMINARY" },
+      label: "Agressivo",
+      description: "Modo \xE1gil 1m (futuros Linear USDT) da conflu\xEAncia Loss zero. Porta \xE1gil (10 OOS) \xB7 m\xE1x. 10 ops/sess\xE3o. Stake fixa \xB7 NO TRADE se falhar \xB7 sem martingale. N\xC3O garante lucro.",
+      preferredGate: { tpR: 1.5, maxBars: 10, slAtr: 1.2, minLabel: "AGILE" },
       strategies: blitzZeroStrategySet
     },
     {
@@ -1526,6 +1534,14 @@ var NL = (() => {
     const p = strategyPreset(id);
     if (!p) throw new RangeError(`preset de estrat\xE9gia desconhecido: ${id}`);
     return p.strategies();
+  }
+  function oosMinForPreset(id) {
+    const p = strategyPreset(id);
+    const ml = p?.preferredGate?.minLabel;
+    if (ml === "EVIDENCE") return 1e3;
+    if (ml === "AGILE") return 10;
+    if (ml === "PRELIMINARY") return 100;
+    return p ? 100 : null;
   }
 
   // src/core/feasible.ts
@@ -1558,6 +1574,7 @@ var NL = (() => {
   }
 
   // src/core/stats.ts
+  var AGILE_MIN_OBS = 10;
   var PRELIMINARY_MIN_OBS = 100;
   var EVIDENCE_MIN_OBS = 1e3;
   var ALPHA = 0.05;
@@ -1616,8 +1633,9 @@ var NL = (() => {
     return x < a + 1 ? 1 - gammaPSeries(a, x) : gammaQContinuedFraction(a, x);
   }
   function classify(n, adjustedP) {
-    if (n < PRELIMINARY_MIN_OBS) return "INSUFFICIENT";
+    if (n < AGILE_MIN_OBS) return "INSUFFICIENT";
     if (adjustedP >= ALPHA) return "NO_EVIDENCE";
+    if (n < PRELIMINARY_MIN_OBS) return "AGILE";
     if (n < EVIDENCE_MIN_OBS) return "PRELIMINARY";
     return "EVIDENCE";
   }
@@ -1793,6 +1811,16 @@ var NL = (() => {
   function closed(label, reason, over = {}) {
     return { allowed: false, label, reason, strategy: null, oosTrades: 0, meanR: 0, pValue: null, ...over };
   }
+  function requiredOosForCandleMinLabel(minLabel = "PRELIMINARY") {
+    if (minLabel === "EVIDENCE") return EVIDENCE_MIN_OBS;
+    if (minLabel === "AGILE") return AGILE_MIN_OBS;
+    return PRELIMINARY_MIN_OBS;
+  }
+  function candleLabelPermitted(label, minLabel) {
+    if (minLabel === "EVIDENCE") return label === "EVIDENCE";
+    if (minLabel === "PRELIMINARY") return label === "PRELIMINARY" || label === "EVIDENCE";
+    return label === "AGILE" || label === "PRELIMINARY" || label === "EVIDENCE";
+  }
   var sgn = (x) => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
   function evaluateCandleGate(candles, strategies, opts) {
     if (strategies.length === 0) throw new RangeError("Sem estrat\xE9gias");
@@ -1807,16 +1835,18 @@ var NL = (() => {
     void _b;
     const wf = walkForwardCandles(candles, strategies, { ...bt, trainSize, testSize, ...minTrainTrades !== void 0 ? { minTrainTrades } : {} });
     const oos = wf.oos;
-    if (oos.trades < PRELIMINARY_MIN_OBS || oos.pValue === null) {
-      return closed("INSUFFICIENT", `s\xF3 ${oos.trades} opera\xE7\xF5es fora da amostra (m\xEDnimo ${PRELIMINARY_MIN_OBS})`, { oosTrades: oos.trades });
+    const needOos = requiredOosForCandleMinLabel(minLabel);
+    if (oos.trades < needOos || oos.pValue === null) {
+      return closed("INSUFFICIENT", `s\xF3 ${oos.trades} opera\xE7\xF5es fora da amostra (m\xEDnimo ${needOos})`, { oosTrades: oos.trades });
     }
     const base = { oosTrades: oos.trades, meanR: oos.meanR, pValue: oos.pValue };
     if (oos.pValue >= alpha || oos.meanR <= 0) {
       return closed("NO_EVIDENCE", `sem evid\xEAncia: m\xE9dia ${sgn(oos.meanR)}R por opera\xE7\xE3o em ${oos.trades} opera\xE7\xF5es (p = ${oos.pValue.toFixed(3)})`, base);
     }
     const label = classify(oos.trades, oos.pValue);
-    const permitted = minLabel === "EVIDENCE" ? label === "EVIDENCE" : label === "EVIDENCE" || label === "PRELIMINARY";
-    if (!permitted) return closed(label, `evid\xEAncia ${label} insuficiente para este modo (pede ${minLabel})`, base);
+    if (!candleLabelPermitted(label, minLabel)) {
+      return closed(label, `evid\xEAncia ${label} insuficiente para este modo (pede ${minLabel})`, base);
+    }
     const start = Math.max(0, candles.length - trainSize);
     let best = null;
     let bestNet = -Infinity;
@@ -2525,7 +2555,9 @@ var NL = (() => {
     };
   }
   function requiredOosForMinLabel(minLabel = "PRELIMINARY") {
-    return minLabel === "EVIDENCE" ? EVIDENCE_MIN_OBS : PRELIMINARY_MIN_OBS;
+    if (minLabel === "EVIDENCE") return EVIDENCE_MIN_OBS;
+    if (minLabel === "AGILE") return AGILE_MIN_OBS;
+    return PRELIMINARY_MIN_OBS;
   }
   function gateProgressPct(input) {
     if (input.allowed) return 100;

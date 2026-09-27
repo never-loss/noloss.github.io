@@ -1,6 +1,7 @@
 // NEVER LOSS - estatística (Fase 2). Funções puras, sem rede.
 // Um resultado "EVIDENCE" nunca é garantia de lucro futuro.
 
+export const AGILE_MIN_OBS = 10;
 export const PRELIMINARY_MIN_OBS = 100;
 export const EVIDENCE_MIN_OBS = 1000;
 export const ALPHA = 0.05;
@@ -232,12 +233,17 @@ export function evaluateContract(wins: number, n: number, returnRate: number): C
   };
 }
 
-export type EvidenceLabel = "INSUFFICIENT" | "NO_EVIDENCE" | "PRELIMINARY" | "EVIDENCE";
+export type EvidenceLabel = "INSUFFICIENT" | "NO_EVIDENCE" | "AGILE" | "PRELIMINARY" | "EVIDENCE";
 
-/** Rótulo de pesquisa (não é recomendação de operar). adjustedP vem da correção FDR. */
+/**
+ * Rótulo de pesquisa (não é recomendação de operar). adjustedP vem da correção FDR.
+ * Bandas OOS: <10 INSUFFICIENT · 10–99 AGILE · 100–999 PRELIMINARY · ≥1000 EVIDENCE
+ * (só se o p-value passar; caso contrário NO_EVIDENCE a partir de 10).
+ */
 export function classify(n: number, adjustedP: number): EvidenceLabel {
-  if (n < PRELIMINARY_MIN_OBS) return "INSUFFICIENT";
+  if (n < AGILE_MIN_OBS) return "INSUFFICIENT";
   if (adjustedP >= ALPHA) return "NO_EVIDENCE";
+  if (n < PRELIMINARY_MIN_OBS) return "AGILE";
   if (n < EVIDENCE_MIN_OBS) return "PRELIMINARY";
   return "EVIDENCE";
 }

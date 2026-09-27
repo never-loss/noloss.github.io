@@ -302,8 +302,11 @@ export interface StrategyPresetGateHints {
   tpR?: number;
   maxBars?: number;
   slAtr?: number;
-  /** Loss zero pede evidência mais forte; Lucro rápido aceita PRELIMINARY. */
-  minLabel?: "PRELIMINARY" | "EVIDENCE";
+  /**
+   * Porta mínima OOS: AGILE=10 (Agressivo), PRELIMINARY=100 (Lucro rápido),
+   * EVIDENCE=1000 (Loss zero). Ver oosMinForPreset / AGILE_MIN_OBS etc.
+   */
+  minLabel?: "AGILE" | "PRELIMINARY" | "EVIDENCE";
 }
 
 export interface StrategyPreset {
@@ -366,8 +369,9 @@ export function lossZeroStrategySet(): Strategy[] {
 
 
 /**
- * Blitz zero: spin ágil 1m da família Loss zero (mesmas confluências, hold mais curto + lookbacks 1m).
- * Nome agressivo — NÃO garante lucro; NO TRADE se a porta falhar. Stake fixa, sem martingale.
+ * Agressivo (id estável `blitz_zero`): spin ágil 1m da família Loss zero
+ * (mesmas confluências, hold mais curto + lookbacks 1m).
+ * Porta AGILE (10 OOS) — NÃO garante lucro; NO TRADE se a porta falhar. Stake fixa, sem martingale.
  * Sessão tipicamente limitada a 10 ops (maxTrades) no arm Bybit.
  */
 export function blitzZeroStrategySet(): Strategy[] {
@@ -424,10 +428,10 @@ export const STRATEGY_PRESETS: readonly StrategyPreset[] = [
   },
   {
     id: "blitz_zero",
-    label: "Blitz zero",
+    label: "Agressivo",
     description:
-      "Spin agressivo 1m (futuros Linear USDT) da confluência Loss zero. Máx. 10 ops/sessão. Stake fixa · porta · NO TRADE se falhar · sem martingale. NÃO garante lucro.",
-    preferredGate: { tpR: 1.5, maxBars: 10, slAtr: 1.2, minLabel: "PRELIMINARY" },
+      "Modo ágil 1m (futuros Linear USDT) da confluência Loss zero. Porta ágil (10 OOS) · máx. 10 ops/sessão. Stake fixa · NO TRADE se falhar · sem martingale. NÃO garante lucro.",
+    preferredGate: { tpR: 1.5, maxBars: 10, slAtr: 1.2, minLabel: "AGILE" },
     strategies: blitzZeroStrategySet,
   },
   {
@@ -458,4 +462,14 @@ export function strategiesForPreset(id: string): Strategy[] {
   const p = strategyPreset(id);
   if (!p) throw new RangeError(`preset de estratégia desconhecido: ${id}`);
   return p.strategies();
+}
+
+/** Mínimo OOS da porta preferida do preset (10 AGILE / 100 PRELIMINARY / 1000 EVIDENCE). */
+export function oosMinForPreset(id: string): number | null {
+  const p = strategyPreset(id);
+  const ml = p?.preferredGate?.minLabel;
+  if (ml === "EVIDENCE") return 1000;
+  if (ml === "AGILE") return 10;
+  if (ml === "PRELIMINARY") return 100;
+  return p ? 100 : null;
 }

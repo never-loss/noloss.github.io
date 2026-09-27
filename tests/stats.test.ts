@@ -125,9 +125,17 @@ test("avaliar contrato: 55 vitórias em 100 com retorno 0,82 não prova nada", (
   assert.ok(e.pValue > 0.4);
 });
 
-test("classificação respeita amostra mínima e correção", () => {
-  assert.equal(classify(50, 0.001), "INSUFFICIENT");
+test("classificação respeita amostra mínima e correção (AGILE/PRELIMINARY/EVIDENCE)", () => {
+  assert.equal(classify(5, 0.001), "INSUFFICIENT");
+  assert.equal(classify(9, 0.001), "INSUFFICIENT");
+  assert.equal(classify(10, 0.001), "AGILE");
+  assert.equal(classify(50, 0.001), "AGILE");
+  assert.equal(classify(99, 0.001), "AGILE");
+  assert.equal(classify(50, 0.2), "NO_EVIDENCE");
+  assert.equal(classify(100, 0.01), "PRELIMINARY");
   assert.equal(classify(500, 0.2), "NO_EVIDENCE");
   assert.equal(classify(500, 0.01), "PRELIMINARY");
+  assert.equal(classify(999, 0.01), "PRELIMINARY");
+  assert.equal(classify(1000, 0.01), "EVIDENCE");
   assert.equal(classify(5000, 0.01), "EVIDENCE");
 });
