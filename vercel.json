@@ -19,5 +19,11 @@
       "source": "/token",
       "destination": "/api/token"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/bybit-arm?tick=1",
+      "schedule": "0 0 * * *"
+    }
   ]
 }

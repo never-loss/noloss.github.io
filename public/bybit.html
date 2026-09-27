@@ -292,18 +292,18 @@
                 <button type="button" class="ctrl stop" id="btnBybitStop" disabled>STOP</button>
               </div>
               <div class="cloud-arm-row" id="cloudArmRow">
-                <button type="button" class="ctrl cloud" id="btnCloudArm" disabled title="PAPER na nuvem — podes sair da página">Armar na nuvem (PAPER)</button>
+                <button type="button" class="ctrl cloud" id="btnCloudArm" disabled title="Nuvem — segue o modo PAPER/REAL do toggle">Armar na nuvem (Simulado)</button>
                 <button type="button" class="ctrl stop cloud-stop" id="btnCloudStop" disabled title="Cancelar job na nuvem">STOP nuvem</button>
               </div>
               <p id="bybitActionHint" class="footer-note" style="margin:10px 0 0;text-align:left">
-                <strong>Neste ecrã</strong> = browser aberto. <strong>Na nuvem</strong> = PAPER com tempo (Duração) — podes sair; ao voltar vês se operou. Sem ordens REAL na nuvem (v1).
+                <strong>Neste ecrã</strong> = browser aberto. <strong>Na nuvem</strong> = segue o toggle PAPER/REAL · tempo (Duração) · podes sair. REAL na nuvem precisa de chaves no servidor; Upstash Redis torna os jobs duráveis entre instâncias.
               </p>
               <div id="cloudArmBox" class="cloud-arm-box" role="status" aria-live="polite" hidden>
                 <div class="cloud-arm-top">
                   <strong id="cloudArmTitle">Nuvem · inactivo</strong>
                   <span class="pill" id="cloudArmPill">—</span>
                 </div>
-                <p class="cloud-arm-reason" id="cloudArmReason">Escolhe par, estratégia e duração · Armar na nuvem (PAPER).</p>
+                <p class="cloud-arm-reason" id="cloudArmReason">Escolhe par, estratégia e duração · Armar na nuvem (Simulado ou REAL).</p>
                 <div class="cloud-arm-meta" id="cloudArmMeta"></div>
               </div>
               <div id="bybitLinkingNote" class="bybit-linking" hidden>Bybit: ainda em ligação…</div>
