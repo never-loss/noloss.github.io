@@ -878,7 +878,22 @@
   function minLabelForPreset(presetId) {
     var preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(presetId) : null;
     var g = (preset && preset.preferredGate) || {};
-    return g.minLabel === "EVIDENCE" ? "EVIDENCE" : "PRELIMINARY";
+    if (g.minLabel === "EVIDENCE" || g.minLabel === "AGILE" || g.minLabel === "PRELIMINARY") return g.minLabel;
+    if (presetId === "loss_zero") return "EVIDENCE";
+    if (presetId === "blitz_zero") return "AGILE";
+    return "PRELIMINARY";
+  }
+
+  function portaOosNeed(presetId) {
+    var ml = minLabelForPreset(presetId);
+    if (ml === "EVIDENCE") return 1000;
+    if (ml === "AGILE") return 10;
+    return 100;
+  }
+
+  /** Sessão: Agressivo (blitz_zero) hard-capped at 10 ops; others 50. */
+  function maxTradesForPreset(presetId) {
+    return presetId === "blitz_zero" ? 10 : 50;
   }
 
   /** Progresso da porta (OOS vs mínimo do preset). Preferir NL.gateProgressPct. */
@@ -896,7 +911,7 @@
     if (!result) return 0;
     if (allowed) return 100;
     var oos = typeof result.oosTrades === "number" ? result.oosTrades : 0;
-    var need = minLabelForPreset(presetId) === "EVIDENCE" ? 1000 : 100;
+    var need = portaOosNeed(presetId);
     var score = Math.min(88, Math.round((oos / need) * 88));
     var meanR = typeof result.meanR === "number" ? result.meanR : 0;
     var p = result.pValue != null && Number.isFinite(result.pValue) ? result.pValue : 1;
@@ -994,7 +1009,7 @@
   function presetLabelPt(presetId) {
     if (presetId === "loss_zero") return "Loss zero";
     if (presetId === "lucro_rapido") return "Lucro rápido";
-    if (presetId === "blitz_zero") return "Blitz zero";
+    if (presetId === "blitz_zero") return "Agressivo";
     if (presetId === "tendencia_diaria") return "Tendência diária";
     if (presetId === "biblioteca") return "Biblioteca";
     return presetId || "—";
@@ -1091,7 +1106,7 @@
     return {
       slAtr: g.slAtr || 1.5, tpR: g.tpR || 2, maxBars: g.maxBars || 24,
       costFraction: costFraction, trainSize: trainSize, testSize: testSize,
-      minLabel: g.minLabel || "PRELIMINARY",
+      minLabel: minLabelForPreset(presetId),
     };
   }
 
@@ -1169,7 +1184,7 @@
 
   function renderStratCard(presetId, result, errMsg) {
     var keyMap = { lucro_rapido: "LucroRapido", loss_zero: "LossZero", blitz_zero: "BlitzZero" };
-    var labelMapCard = { lucro_rapido: "Lucro rápido", loss_zero: "Loss zero", blitz_zero: "Blitz zero" };
+    var labelMapCard = { lucro_rapido: "Lucro rápido", loss_zero: "Loss zero", blitz_zero: "Agressivo" };
     var key = keyMap[presetId] || "LossZero";
     var label = labelMapCard[presetId] || presetId;
     var card = el("card" + key);
@@ -1228,10 +1243,14 @@
       if (status) status.textContent = label + ": PORTA + ALVO";
     } else if (allowed) {
       if (badge) badge.textContent = "PORTA";
-      if (status) status.textContent = label + ": porta aberta · à espera do sinal";
+      if (status) status.textContent = label + ": porta aberta (" + portaOosNeed(presetId) + ") · à espera do sinal";
     } else {
       if (badge) badge.textContent = "NO TRADE";
-      if (status) status.textContent = label + ": NO TRADE";
+      if (status) {
+        var st = label + ": NO TRADE · porta " + portaOosNeed(presetId);
+        if (presetId === "blitz_zero") st += " · máx. " + maxTradesForPreset(presetId) + " ops";
+        status.textContent = st;
+      }
     }
     if (reason) {
       var gateTxt = result
@@ -1254,7 +1273,7 @@
     var labelMap = {
       lucro_rapido: "Lucro rápido",
       loss_zero: "Loss zero",
-      blitz_zero: "Blitz zero",
+      blitz_zero: "Agressivo",
       tendencia_diaria: "Tendência diária",
       biblioteca: "Biblioteca",
     };
@@ -1360,7 +1379,7 @@
     status.classList.remove("open", "closed", "muted");
     if (!result) {
       status.classList.add("muted");
-      status.textContent = "Escolhe Lucro rápido, Loss zero ou Blitz zero — indicadores atualizam ao vivo.";
+      status.textContent = "Escolhe Lucro rápido (porta 100), Loss zero (porta 1000) ou Agressivo (porta 10 · máx. 10 ops) — indicadores atualizam ao vivo.";
       if (metrics) metrics.hidden = true;
       return;
     }
@@ -1653,7 +1672,7 @@
       btnP.disabled = !hasStrategy || (!!running && !paused);
       btnP.textContent = running ? "ARMADO neste ecrã" : paused ? "RETOMAR" : "ARMAR neste ecrã";
       btnP.title = !hasStrategy
-        ? "Escolhe Lucro rápido, Loss zero ou Blitz zero"
+        ? "Escolhe Lucro rápido / Loss zero / Agressivo"
         : running
           ? "Sessão armada — entrada só com porta + sinal"
           : "ARMAR: vigia o alvo (porta + sinal). Sem entrada cega.";
@@ -1671,7 +1690,7 @@
       if (running && state.session && state.session.hasOpenPosition) next.textContent = "ENTROU — posição aberta · PAUSE/STOP";
       else if (running) next.textContent = "ARMADO — à espera do alvo (porta + sinal) · futuros USDT";
       else if (paused) next.textContent = "Em pausa — RETOMAR ou STOP";
-      else if (!hasStrategy) next.textContent = "1 Escolhe Lucro rápido, Loss zero ou Blitz zero";
+      else if (!hasStrategy) next.textContent = "1 Escolhe Lucro rápido / Loss zero / Agressivo";
       else if (!gateOk) next.textContent = "2 Porta fechada (NO TRADE) — podes ARMAR; entrada só quando abrir + sinal";
       else if (!atTarget) next.textContent = "3 Porta aberta — ARMAR e espera o sinal no gráfico";
       else next.textContent = "4 Porta + alvo — ARMAR para entrar na próxima vela (manual)";
@@ -1797,7 +1816,7 @@
     if (preset === "lucro_rapido" || preset === "loss_zero" || preset === "blitz_zero") {
       syncRadarPresetFromStrategy(); // rescana só se o preset efectivo mudou
     }
-    // Blitz zero: prefer 1m (60s) on select — do not fight user if they change after.
+    // Agressivo: prefer 1m (60s) on select — do not fight user if they change after.
     if (preset === "blitz_zero" && state.granularity !== 60 && !state.running) {
       var ivSel = el("bybitInterval");
       if (ivSel) ivSel.value = "60";
@@ -1892,7 +1911,7 @@
   async function runAnalyze() {
     readForm();
     if (!state.strategySet) {
-      pushHistory("Escolhe uma estratégia (Lucro rápido / Loss zero / Blitz zero / …).", "stop");
+      pushHistory("Escolhe uma estratégia (Lucro rápido · porta 100 / Loss zero · porta 1000 / Agressivo · porta 10 · máx. 10 ops / …).", "stop");
       updateButtons();
       return null;
     }
@@ -2017,7 +2036,7 @@
         strategy: state.controller.asStrategy(),
         stake: state.stake, slAtr: gate.slAtr, tpR: gate.tpR, maxBars: gate.maxBars,
         costFraction: costFraction, maxLoss: state.stake * 10,
-        maxTrades: state.strategySet === "blitz_zero" ? 10 : 50,
+        maxTrades: maxTradesForPreset(state.strategySet),
         maxDurationMs: Math.min(state.minutes, 180) * 60 * 1000,
         maxConsecutiveLosses: 6, cooldownCandles: 0,
       });
@@ -2133,6 +2152,7 @@
     var mode = "disarmed";
     var titleTxt = "DESARMADO · co-piloto";
     var reasonTxt = "ARMAR para o co-piloto vigiar o alvo da estratégia no perpetual USDT. Entrada só com porta aberta + sinal. Sem martingale.";
+    if (preset === "blitz_zero") reasonTxt = "Agressivo: porta 10 OOS · máx. 10 ops/sessão · 1m. Entrada só com porta + sinal. Sem martingale.";
     if (hasPos) {
       mode = "entered";
       titleTxt = "ENTROU";
@@ -2140,7 +2160,7 @@
       state.armState = "entered";
     } else if (running) {
       mode = "armed";
-      var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "blitz_zero" ? "Blitz zero" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : (preset || "");
+      var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "blitz_zero" ? "Agressivo" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : (preset || "");
       var armPair = tradeSymbol() || state.symbol || "";
       titleTxt = "ARMADO · " + armPair + " · " + stratLabel + " — à espera do alvo";
       syncSymbolSelectToState();

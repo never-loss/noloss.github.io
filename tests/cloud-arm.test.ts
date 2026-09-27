@@ -165,3 +165,16 @@ test("validateCloudArmCreate aceita blitz_zero", () => {
   assert.equal(v.strategyPreset, "blitz_zero");
   assert.equal(v.granularity, 60);
 });
+
+test("cloud-arm e presets: Agressivo (blitz_zero) = porta AGILE 10 + maxTrades 10", async () => {
+  const { strategyPreset, oosMinForPreset } = await import("../src/core/strategies.ts");
+  const bz = strategyPreset("blitz_zero")!;
+  assert.equal(bz.label, "Agressivo");
+  assert.equal(bz.preferredGate?.minLabel, "AGILE");
+  assert.equal(bz.preferredGate?.maxBars, 10);
+  assert.equal(oosMinForPreset("blitz_zero"), 10);
+  const armSrc = await import("node:fs").then((fs) =>
+    fs.readFileSync(new URL("../src/core/cloud-arm.ts", import.meta.url), "utf8"),
+  );
+  assert.match(armSrc, /strategyPreset === "blitz_zero" \? 10 : 50/);
+});

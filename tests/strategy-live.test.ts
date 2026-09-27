@@ -103,7 +103,8 @@ test("combineGateAndLive só ready com porta + alvo", () => {
   assert.ok(/espera/i.test(c.label));
 });
 
-test("gateProgressPct usa OOS vs PRELIMINARY/EVIDENCE sem inventar trades", () => {
+test("gateProgressPct usa OOS vs AGILE/PRELIMINARY/EVIDENCE sem inventar trades", () => {
+  assert.equal(requiredOosForMinLabel("AGILE"), 10);
   assert.equal(requiredOosForMinLabel("PRELIMINARY"), 100);
   assert.equal(requiredOosForMinLabel("EVIDENCE"), 1000);
   assert.equal(gateProgressPct({ allowed: true }), 100);
@@ -116,6 +117,9 @@ test("gateProgressPct usa OOS vs PRELIMINARY/EVIDENCE sem inventar trades", () =
   const evidSlow = gateProgressPct({ oosTrades: 100, minLabel: "EVIDENCE" });
   assert.ok(evidSlow <= 20, `evidSlow=${evidSlow}`); // 100/1000 * 88 ≈ 9
   assert.ok(gateProgressPct({ oosTrades: 999, minLabel: "EVIDENCE" }) < 100);
+  const agileMid = gateProgressPct({ oosTrades: 5, minLabel: "AGILE" });
+  assert.ok(agileMid >= 40 && agileMid <= 50, `agileMid=${agileMid}`); // 5/10 * 88 ≈ 44
+  assert.ok(gateProgressPct({ oosTrades: 9, minLabel: "AGILE" }) < 100);
 });
 
 test("combineReadiness: 100% só porta+alvo; sinal sozinho nunca 100", () => {

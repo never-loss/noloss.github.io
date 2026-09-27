@@ -70,7 +70,7 @@
               <select id="radarPreset" title="Preset para ranking">
                 <option value="lucro_rapido">Lucro rápido</option>
                 <option value="loss_zero">Loss zero</option>
-                <option value="blitz_zero">Blitz zero</option>
+                <option value="blitz_zero">Agressivo</option>
               </select>
               <button type="button" class="ghost" id="btnRadarPause" title="Pausar/retomar scan">Pausar</button>
             </div>
@@ -100,6 +100,7 @@
                   <header class="strat-live-head">
                     <span class="sem-dot amber" id="dotLucroRapido"></span>
                     <strong>Lucro rápido</strong>
+                    <span class="strat-live-gate-chip" title="Porta mínima: 100 OOS">porta 100</span>
                     <span class="strat-live-badge" id="badgeLucroRapido">…</span>
                   </header>
                   <div class="proximity-wrap">
@@ -115,6 +116,7 @@
                   <header class="strat-live-head">
                     <span class="sem-dot amber" id="dotLossZero"></span>
                     <strong>Loss zero</strong>
+                    <span class="strat-live-gate-chip" title="Porta mínima: 1000 OOS">porta 1000</span>
                     <span class="strat-live-badge" id="badgeLossZero">…</span>
                   </header>
                   <div class="proximity-wrap">
@@ -129,7 +131,9 @@
                 <article class="strat-live-card closed" id="cardBlitzZero" data-preset="blitz_zero">
                   <header class="strat-live-head">
                     <span class="sem-dot amber" id="dotBlitzZero"></span>
-                    <strong>Blitz zero</strong>
+                    <strong>Agressivo</strong>
+                    <span class="strat-live-gate-chip" title="Porta mínima: 10 operações fora da amostra">porta 10</span>
+                    <span class="strat-live-ops-chip" title="Máximo 10 operações por sessão">máx. 10 ops</span>
                     <span class="strat-live-badge" id="badgeBlitzZero">…</span>
                   </header>
                   <div class="proximity-wrap">
@@ -256,7 +260,7 @@
                     <option value="" selected disabled>— Escolhe —</option>
                     <option value="lucro_rapido">Lucro rápido</option>
                     <option value="loss_zero">Loss zero</option>
-                    <option value="blitz_zero">Blitz zero</option>
+                    <option value="blitz_zero">Agressivo</option>
                     <option value="tendencia_diaria">Tendência diária</option>
                     <option value="biblioteca">Biblioteca</option>
                   </select>

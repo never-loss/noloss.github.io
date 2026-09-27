@@ -6,7 +6,7 @@ import { ema, rsi, macd, bollinger, stochastic, adx, atr } from "./indicators.ts
 import type { Series } from "./indicators.ts";
 import type { Candle } from "./market-data.ts";
 import type { Signal, Strategy } from "./strategies.ts";
-import { PRELIMINARY_MIN_OBS, EVIDENCE_MIN_OBS } from "./stats.ts";
+import { AGILE_MIN_OBS, PRELIMINARY_MIN_OBS, EVIDENCE_MIN_OBS } from "./stats.ts";
 
 export interface LiveEntryMetrics {
   /** 0–100: proximidade ao alvo de entrada (indicadores reais). */
@@ -361,7 +361,7 @@ export function evaluateLiveEntry(
   };
 }
 
-export type MinEvidenceLabel = "PRELIMINARY" | "EVIDENCE";
+export type MinEvidenceLabel = "AGILE" | "PRELIMINARY" | "EVIDENCE";
 
 export interface GateProgressInput {
   oosTrades?: number | null;
@@ -372,9 +372,11 @@ export interface GateProgressInput {
   allowed?: boolean;
 }
 
-/** OOS mínimas pedidas pelo preset (100 PRELIMINARY / 1000 EVIDENCE). */
+/** OOS mínimas pedidas pelo preset (10 AGILE / 100 PRELIMINARY / 1000 EVIDENCE). */
 export function requiredOosForMinLabel(minLabel: MinEvidenceLabel = "PRELIMINARY"): number {
-  return minLabel === "EVIDENCE" ? EVIDENCE_MIN_OBS : PRELIMINARY_MIN_OBS;
+  if (minLabel === "EVIDENCE") return EVIDENCE_MIN_OBS;
+  if (minLabel === "AGILE") return AGILE_MIN_OBS;
+  return PRELIMINARY_MIN_OBS;
 }
 
 /**

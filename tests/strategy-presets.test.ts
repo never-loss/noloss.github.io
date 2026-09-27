@@ -9,13 +9,15 @@ import {
   blitzZeroStrategySet,
   strategyLibrary,
   dailyTrendStrategySet,
+  oosMinForPreset,
 } from "../src/core/strategies.ts";
 
-test("presets incluem Lucro rápido, Loss zero e Blitz zero com labels exactos", () => {
+test("presets incluem Lucro rápido, Loss zero e Agressivo (id blitz_zero) com labels exactos", () => {
   const labels = STRATEGY_PRESETS.map((p) => p.label);
   assert.ok(labels.includes("Lucro rápido"));
   assert.ok(labels.includes("Loss zero"));
-  assert.ok(labels.includes("Blitz zero"));
+  assert.ok(labels.includes("Agressivo"));
+  assert.ok(!labels.includes("Blitz zero"));
   const lr = strategyPreset("lucro_rapido");
   const lz = strategyPreset("loss_zero");
   const bz = strategyPreset("blitz_zero");
@@ -24,7 +26,7 @@ test("presets incluem Lucro rápido, Loss zero e Blitz zero com labels exactos",
   assert.ok(bz);
   assert.equal(lr!.label, "Lucro rápido");
   assert.equal(lz!.label, "Loss zero");
-  assert.equal(bz!.label, "Blitz zero");
+  assert.equal(bz!.label, "Agressivo");
 });
 
 test("cada preset devolve estratégias nomeadas e não vazias", () => {
@@ -61,10 +63,10 @@ test("descrições são honestas: NO TRADE / sem martingale / sem garantia de lu
   assert.ok(!/garante zero perdas/i.test(lz.description));
 });
 
-test("Loss zero pede evidência mais forte; Lucro rápido e Blitz zero aceitam PRELIMINARY", () => {
+test("Loss zero EVIDENCE 1000; Lucro PRELIMINARY 100; Agressivo AGILE 10 + maxBars 10", () => {
   assert.equal(strategyPreset("loss_zero")!.preferredGate?.minLabel, "EVIDENCE");
   assert.equal(strategyPreset("lucro_rapido")!.preferredGate?.minLabel, "PRELIMINARY");
-  assert.equal(strategyPreset("blitz_zero")!.preferredGate?.minLabel, "PRELIMINARY");
+  assert.equal(strategyPreset("blitz_zero")!.preferredGate?.minLabel, "AGILE");
   assert.equal(strategyPreset("blitz_zero")!.preferredGate?.maxBars, 10);
   assert.equal(strategyPreset("blitz_zero")!.preferredGate?.tpR, 1.5);
   assert.equal(strategyPreset("blitz_zero")!.preferredGate?.slAtr, 1.2);
@@ -105,6 +107,8 @@ test("blitzZeroStrategySet: confluências hold 2, lookbacks 1m, sem throw em vel
   assert.ok(/sem martingale/i.test(bz.description));
   assert.ok(/NÃO garante|não garante/i.test(bz.description));
   assert.ok(/10/.test(bz.description));
+  assert.ok(/porta ágil|10 OOS|ágil/i.test(bz.description));
+  assert.ok(/máx\.\s*10|10 ops/i.test(bz.description));
 });
 
 test("nenhum nome de estratégia sugere martingale", () => {
@@ -113,4 +117,11 @@ test("nenhum nome de estratégia sugere martingale", () => {
       assert.ok(!/martingale|double.?stake|recupera/i.test(s.name));
     }
   }
+});
+
+test("oosMinForPreset: Agressivo 10 / Lucro 100 / Loss zero 1000", () => {
+  assert.equal(oosMinForPreset("blitz_zero"), 10);
+  assert.equal(oosMinForPreset("lucro_rapido"), 100);
+  assert.equal(oosMinForPreset("loss_zero"), 1000);
+  assert.equal(oosMinForPreset("nope"), null);
 });
