@@ -37,6 +37,7 @@ import {
   placeLinearMarketOrder,
   quantityFromFixedStake,
 } from "../lib/bybit-place.js";
+import { recordRealFill } from "../lib/arm-real-fill.js";
 
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -143,6 +144,7 @@ async function mirrorRealIfNeeded(jobBefore, jobAfter) {
           openSide = m.side;
           j = appendJobEvent(j, `REAL Bybit MARKET ${m.side} qty=${qty}`, "text");
           j = markRealMirrorsApplied(j, [m.key], { qty: openQty, side: openSide });
+          j = await recordRealFill(j, res, { side: m.side, price: m.price ?? m.entry, key: m.key, action: "open", orderLinkId: `nl_${j.id}_${m.key}`.slice(0, 36) });
         }
       } else {
         // close
@@ -173,6 +175,7 @@ async function mirrorRealIfNeeded(jobBefore, jobAfter) {
           openSide = null;
           j = appendJobEvent(j, `REAL Bybit FECHA ${side} qty=${qty} (reduceOnly)`, "text");
           j = markRealMirrorsApplied(j, [m.key], { qty: null, side: null });
+          j = await recordRealFill(j, res, { side, price: m.price, key: m.key, action: "close", orderLinkId: `nl_${j.id}_${m.key}`.slice(0, 36) });
         }
       }
     } catch (e) {

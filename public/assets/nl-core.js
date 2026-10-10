@@ -22,17 +22,21 @@ var NL = (() => {
   __export(nl_core_entry_exports, {
     AGILE_MIN_OBS: () => AGILE_MIN_OBS,
     ALPHA: () => ALPHA,
+    ASSUMED_SLIPPAGE_PER_SIDE: () => ASSUMED_SLIPPAGE_PER_SIDE,
     BINANCE_FUTURES_PATH_EXCHANGE_INFO: () => BINANCE_FUTURES_PATH_EXCHANGE_INFO,
     BINANCE_FUTURES_PATH_KLINES: () => BINANCE_FUTURES_PATH_KLINES,
     BINANCE_FUTURES_PUBLIC_BASES: () => BINANCE_FUTURES_PUBLIC_BASES,
     BINANCE_PREFERRED_USDT: () => BINANCE_PREFERRED_USDT,
     BINANCE_PUBLIC_BASES: () => BINANCE_PUBLIC_BASES,
+    BYBIT_MAKER_FEE: () => BYBIT_MAKER_FEE,
     BYBIT_PATH_INSTRUMENTS: () => BYBIT_PATH_INSTRUMENTS,
     BYBIT_PATH_KLINE: () => BYBIT_PATH_KLINE,
     BYBIT_PREFERRED_USDT: () => BYBIT_PREFERRED_USDT,
     BYBIT_PUBLIC_BASES: () => BYBIT_PUBLIC_BASES,
+    BYBIT_TAKER_FEE: () => BYBIT_TAKER_FEE,
     CandleGateController: () => CandleGateController,
     CandlePaperSession: () => CandlePaperSession,
+    DEFAULT_FILL_MODEL: () => DEFAULT_FILL_MODEL,
     EVIDENCE_MIN_OBS: () => EVIDENCE_MIN_OBS,
     EXPECTED_PCT: () => EXPECTED_PCT,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
@@ -42,6 +46,7 @@ var NL = (() => {
     MAX_SESSION_MS: () => MAX_SESSION_MS,
     MAX_WINDOW: () => MAX_WINDOW,
     MIN_STAKE: () => MIN_STAKE,
+    MODELED_COST_LABEL: () => MODELED_COST_LABEL,
     PRELIMINARY_MIN_OBS: () => PRELIMINARY_MIN_OBS,
     STRATEGY_PRESETS: () => STRATEGY_PRESETS,
     TickWindow: () => TickWindow,
@@ -80,6 +85,8 @@ var NL = (() => {
     formatCandleEvent: () => formatCandleEvent,
     formatCandleGate: () => formatCandleGate,
     formatCandleSummary: () => formatCandleSummary,
+    formatModeledCostLine: () => formatModeledCostLine,
+    formatRealCostLine: () => formatRealCostLine,
     gateProgressPct: () => gateProgressPct,
     gateProvenanceLabel: () => gateProvenanceLabel,
     granularityToBinanceInterval: () => granularityToBinanceInterval,
@@ -102,6 +109,7 @@ var NL = (() => {
     mergeBybitInstrumentPages: () => mergeBybitInstrumentPages,
     mergeCandlePages: () => mergeCandlePages,
     mergeCryptoUsdListings: () => mergeCryptoUsdListings,
+    modelTradeFill: () => modelTradeFill,
     nextCandleEnd: () => nextCandleEnd,
     oosMinForPreset: () => oosMinForPreset,
     parseActiveSymbols: () => parseActiveSymbols,
@@ -124,6 +132,8 @@ var NL = (() => {
     strategyLibrary: () => strategyLibrary,
     strategyPreset: () => strategyPreset,
     summarizeMarkets: () => summarizeMarkets,
+    summarizeModeledFills: () => summarizeModeledFills,
+    summarizeRealFills: () => summarizeRealFills,
     toBybitInterval: () => toBybitInterval
   });
 
@@ -1654,10 +1664,10 @@ var NL = (() => {
   function expectancyPValue(rs) {
     const n = rs.length;
     if (n < 2) return null;
-    const mean = rs.reduce((a, b) => a + b, 0) / n;
-    const sd = Math.sqrt(rs.reduce((s, x) => s + (x - mean) ** 2, 0) / (n - 1));
-    if (sd === 0) return mean > 0 ? 0 : 1;
-    const z = mean / (sd / Math.sqrt(n));
+    const mean2 = rs.reduce((a, b) => a + b, 0) / n;
+    const sd = Math.sqrt(rs.reduce((s, x) => s + (x - mean2) ** 2, 0) / (n - 1));
+    if (sd === 0) return mean2 > 0 ? 0 : 1;
+    const z = mean2 / (sd / Math.sqrt(n));
     const tail = 0.5 * gammaQ(0.5, z * z / 2);
     return z >= 0 ? tail : 1 - tail;
   }
@@ -1685,14 +1695,14 @@ var NL = (() => {
       if (net > peak) peak = net;
       if (peak - net > dd) dd = peak - net;
     }
-    const mean = trades === 0 ? 0 : net / trades;
-    const sd = trades < 2 ? 0 : Math.sqrt(rs.reduce((s, x) => s + (x - mean) ** 2, 0) / (trades - 1));
+    const mean2 = trades === 0 ? 0 : net / trades;
+    const sd = trades < 2 ? 0 : Math.sqrt(rs.reduce((s, x) => s + (x - mean2) ** 2, 0) / (trades - 1));
     return {
       trades,
       wins,
       winRate: trades === 0 ? 0 : wins / trades,
       netR: net,
-      meanR: mean,
+      meanR: mean2,
       profitFactor: gl === 0 ? null : gw / gl,
       maxDrawdownR: dd,
       longestLosingStreak: longest,
@@ -2034,6 +2044,101 @@ var NL = (() => {
   var MIN_STAKE = 0.5;
   var MAX_SESSION_MS = 12 * 60 * 60 * 1e3;
 
+  // src/core/trade-cost.ts
+  var BYBIT_TAKER_FEE = 55e-5;
+  var BYBIT_MAKER_FEE = 2e-4;
+  var ASSUMED_SLIPPAGE_PER_SIDE = 1e-4;
+  var MODELED_COST_LABEL = "modelado (taxas oficiais + derrapagem SUPOSTA, n\xE3o medida)";
+  var DEFAULT_FILL_MODEL = Object.freeze({
+    takerFee: BYBIT_TAKER_FEE,
+    makerFee: BYBIT_MAKER_FEE,
+    slippagePerSide: ASSUMED_SLIPPAGE_PER_SIDE,
+    takeProfitIsMaker: true
+  });
+  function resolveFillModel(over) {
+    const m = { ...DEFAULT_FILL_MODEL, ...over ?? {} };
+    for (const k of ["takerFee", "makerFee", "slippagePerSide"]) {
+      if (!Number.isFinite(m[k]) || m[k] < 0 || m[k] > 0.05) throw new RangeError(`fillModel.${k} inv\xE1lido: ${m[k]}`);
+    }
+    return m;
+  }
+  function modelTradeFill(i, model = DEFAULT_FILL_MODEL) {
+    const tpMaker = i.reason === "tp" && model.takeProfitIsMaker;
+    const exitKind = tpMaker ? "maker" : "taker";
+    const feeFrac = model.takerFee + (tpMaker ? model.makerFee : model.takerFee);
+    const slipFrac = model.slippagePerSide * (tpMaker ? 1 : 2);
+    const entryFill = i.entry * (1 + i.direction * model.slippagePerSide);
+    const exitFill = tpMaker ? i.exit : i.exit * (1 - i.direction * model.slippagePerSide);
+    const modeledCostFrac = feeFrac + slipFrac;
+    return {
+      entry: i.entry,
+      entryFill,
+      exit: i.exit,
+      exitFill,
+      stopPrice: i.stopPrice,
+      exitCandleClose: i.exitCandleClose,
+      gapVsStopFrac: i.direction * (i.stopPrice - i.exit) / i.entry,
+      exitKind,
+      feeFrac,
+      slipFrac,
+      modeledCostFrac,
+      modeledCostR: modeledCostFrac * i.entry / i.dist,
+      assumedCostFrac: i.assumedCostFrac,
+      assumedCostR: i.assumedCostFrac * i.entry / i.dist
+    };
+  }
+  var mean = (a) => a.length === 0 ? 0 : a.reduce((x, y) => x + y, 0) / a.length;
+  function summarizeModeledFills(fills) {
+    const f = fills.filter((x) => x && Number.isFinite(x.modeledCostFrac));
+    if (f.length === 0) return null;
+    return {
+      n: f.length,
+      meanModeledFrac: mean(f.map((x) => x.modeledCostFrac)),
+      meanFeeFrac: mean(f.map((x) => x.feeFrac)),
+      meanSlipFrac: mean(f.map((x) => x.slipFrac)),
+      meanAssumedFrac: mean(f.map((x) => x.assumedCostFrac)),
+      meanModeledR: mean(f.map((x) => x.modeledCostR)),
+      meanAssumedR: mean(f.map((x) => x.assumedCostR))
+    };
+  }
+  function summarizeRealFills(fills) {
+    const ok = fills.filter((f) => f && Number.isFinite(f.costFrac) && Number.isFinite(f.feeFrac) && Number.isFinite(f.slipFrac));
+    if (ok.length === 0) return null;
+    const sorted = [...ok].sort((a, b) => a.at - b.at);
+    const trips = [];
+    let open = null;
+    for (const f of sorted) {
+      if (f.action === "open") {
+        open = f;
+      } else if (open !== null && open.symbol === f.symbol) {
+        trips.push({ fee: open.feeFrac + f.feeFrac, slip: open.slipFrac + f.slipFrac });
+        open = null;
+      }
+    }
+    return {
+      fills: ok.length,
+      roundTrips: trips.length,
+      meanSideFrac: mean(ok.map((f) => f.costFrac)),
+      meanSideFee: mean(ok.map((f) => f.feeFrac)),
+      meanSideSlip: mean(ok.map((f) => f.slipFrac)),
+      meanRoundTripFrac: trips.length ? mean(trips.map((t) => t.fee + t.slip)) : null,
+      meanRoundTripFee: trips.length ? mean(trips.map((t) => t.fee)) : null,
+      meanRoundTripSlip: trips.length ? mean(trips.map((t) => t.slip)) : null
+    };
+  }
+  var pct = (x, d = 3) => `${(x * 100).toFixed(d).replace(".", ",")} %`;
+  function formatRealCostLine(s, assumed) {
+    if (s === null) return null;
+    if (s.roundTrips > 0 && s.meanRoundTripFrac !== null) {
+      return `Custo real m\xE9dio: ${pct(s.meanRoundTripFrac)} por opera\xE7\xE3o (taxas ${pct(s.meanRoundTripFee ?? 0)} + derrapagem ${pct(s.meanRoundTripSlip ?? 0)}) \xB7 n = ${s.roundTrips} ${s.roundTrips === 1 ? "opera\xE7\xE3o" : "opera\xE7\xF5es"} \xB7 assumido ${pct(assumed, 2)}`;
+    }
+    return `Custo real m\xE9dio: ${pct(s.meanSideFrac)} por lado (\u2248 ${pct(s.meanSideFrac * 2)} ida e volta) \xB7 n = ${s.fills} ${s.fills === 1 ? "execu\xE7\xE3o" : "execu\xE7\xF5es"} (sem opera\xE7\xE3o completa ainda) \xB7 assumido ${pct(assumed, 2)}`;
+  }
+  function formatModeledCostLine(s) {
+    if (s === null) return null;
+    return `Custo ${MODELED_COST_LABEL}: ${pct(s.meanModeledFrac)} por opera\xE7\xE3o \xB7 n = ${s.n} \xB7 assumido ${pct(s.meanAssumedFrac, 2)}`;
+  }
+
   // src/core/candle-paper.ts
   var ALLOWED_KEYS = /* @__PURE__ */ new Set([
     "strategy",
@@ -2049,7 +2154,8 @@ var NL = (() => {
     "maxTrades",
     "maxDurationMs",
     "maxConsecutiveLosses",
-    "cooldownCandles"
+    "cooldownCandles",
+    "fillModel"
   ]);
   function positive(v, label) {
     if (!Number.isFinite(v) || v <= 0) throw new RangeError(`${label} inv\xE1lido: ${v}`);
@@ -2075,6 +2181,7 @@ var NL = (() => {
     positiveInt(cfg.maxConsecutiveLosses, "maxConsecutiveLosses");
     if (!Number.isInteger(cfg.cooldownCandles) || cfg.cooldownCandles < 0) throw new RangeError(`cooldownCandles inv\xE1lido: ${cfg.cooldownCandles}`);
     if (cfg.maxBuffer !== void 0) positiveInt(cfg.maxBuffer, "maxBuffer");
+    resolveFillModel(cfg.fillModel);
   }
   var CandlePaperSession = class {
     #cfg;
@@ -2219,7 +2326,11 @@ var NL = (() => {
           }
           if (this.#pnl > this.#peak) this.#peak = this.#pnl;
           if (this.#peak - this.#pnl > this.#maxDrawdown) this.#maxDrawdown = this.#peak - this.#pnl;
-          events.push({ type: "trade_closed", at: now, direction: pos.dir, entry: pos.entry, exit, reason, r, pnl, totalPnl: this.#pnl });
+          const fill = modelTradeFill(
+            { direction: pos.dir, entry: pos.entry, exit, stopPrice: pos.sl, exitCandleClose: c.close, dist: pos.dist, reason, assumedCostFrac: cfg.costFraction },
+            resolveFillModel(cfg.fillModel)
+          );
+          events.push({ type: "trade_closed", at: now, direction: pos.dir, entry: pos.entry, exit, reason, r, pnl, totalPnl: this.#pnl, fill });
           if (this.#status !== "STOPPED") {
             const why = this.#limitReached();
             if (why !== null) events.push(this.#doStop(now, why));
@@ -2322,7 +2433,7 @@ var NL = (() => {
     if (!Number.isFinite(x)) return 0;
     return Math.max(0, Math.min(1, x));
   }
-  function pct(x) {
+  function pct2(x) {
     return Math.round(clamp01(x) * 100);
   }
   function nearZero(dist, scale) {
@@ -2508,7 +2619,7 @@ var NL = (() => {
       }
       if (p > maxProx) {
         maxProx = p;
-        if (p >= 0.55) details.push(`${s.name.slice(0, 28)}\u2026 ${pct(p)}%`);
+        if (p >= 0.55) details.push(`${s.name.slice(0, 28)}\u2026 ${pct2(p)}%`);
       }
     }
     return { lastSignal, barsSince, agreeingLong, agreeingShort, maxProx, details };
@@ -2545,7 +2656,7 @@ var NL = (() => {
     const atTarget = st.lastSignal !== 0;
     const agree = Math.max(st.agreeingLong, st.agreeingShort);
     const agreeFrac = agree / strategies.length;
-    let proximityPct = atTarget ? 100 : pct(Math.max(st.maxProx, agreeFrac * 0.85));
+    let proximityPct = atTarget ? 100 : pct2(Math.max(st.maxProx, agreeFrac * 0.85));
     if (!atTarget && Number.isFinite(st.barsSince) && st.barsSince <= hold) {
       proximityPct = Math.max(proximityPct, 70 + Math.round((hold - st.barsSince) * 8));
       proximityPct = Math.min(95, proximityPct);

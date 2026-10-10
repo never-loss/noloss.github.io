@@ -10,6 +10,8 @@ import { MIN_STAKE, MAX_SESSION_MS } from "./paper.ts";
 import type { SessionStatus, StopReason } from "./paper.ts";
 import type { Strategy } from "./strategies.ts";
 import type { Candle } from "./market-data.ts";
+import { modelTradeFill, resolveFillModel } from "./trade-cost.ts";
+import type { FillModelConfig, ModeledFill } from "./trade-cost.ts";
 
 export interface CandlePaperConfig {
   strategy: Strategy;
@@ -30,11 +32,13 @@ export interface CandlePaperConfig {
   maxConsecutiveLosses: number;
   /** Nº de velas sem novas entradas depois de uma perda (inclui a vela da perda). */
   cooldownCandles: number;
+  /** Só informativo: taxas/derrapagem do preenchimento simulado (não altera r, pnl, entradas nem saídas). */
+  fillModel?: Partial<FillModelConfig>;
 }
 
 const ALLOWED_KEYS = new Set([
   "strategy", "stake", "slAtr", "tpR", "maxBars", "costFraction", "atrPeriod", "directions", "maxBuffer",
-  "maxLoss", "maxTrades", "maxDurationMs", "maxConsecutiveLosses", "cooldownCandles",
+  "maxLoss", "maxTrades", "maxDurationMs", "maxConsecutiveLosses", "cooldownCandles", "fillModel",
 ]);
 
 export type CandlePaperEvent =
@@ -52,6 +56,8 @@ export type CandlePaperEvent =
       r: number;
       pnl: number;
       totalPnl: number;
+      /** Preenchimento simulado e custo modelado (informativo). */
+      fill: ModeledFill;
     };
 
 export interface CandlePaperSummary {
@@ -93,6 +99,7 @@ function validate(cfg: CandlePaperConfig): void {
   positiveInt(cfg.maxConsecutiveLosses, "maxConsecutiveLosses");
   if (!Number.isInteger(cfg.cooldownCandles) || cfg.cooldownCandles < 0) throw new RangeError(`cooldownCandles inválido: ${cfg.cooldownCandles}`);
   if (cfg.maxBuffer !== undefined) positiveInt(cfg.maxBuffer, "maxBuffer");
+  resolveFillModel(cfg.fillModel);
 }
 
 interface Pending {
@@ -266,7 +273,11 @@ export class CandlePaperSession {
         }
         if (this.#pnl > this.#peak) this.#peak = this.#pnl;
         if (this.#peak - this.#pnl > this.#maxDrawdown) this.#maxDrawdown = this.#peak - this.#pnl;
-        events.push({ type: "trade_closed", at: now, direction: pos.dir, entry: pos.entry, exit, reason, r, pnl, totalPnl: this.#pnl });
+        const fill = modelTradeFill(
+          { direction: pos.dir, entry: pos.entry, exit, stopPrice: pos.sl, exitCandleClose: c.close, dist: pos.dist, reason, assumedCostFrac: cfg.costFraction },
+          resolveFillModel(cfg.fillModel),
+        );
+        events.push({ type: "trade_closed", at: now, direction: pos.dir, entry: pos.entry, exit, reason, r, pnl, totalPnl: this.#pnl, fill });
         if (this.#status !== "STOPPED") {
           const why = this.#limitReached();
           if (why !== null) events.push(this.#doStop(now, why));

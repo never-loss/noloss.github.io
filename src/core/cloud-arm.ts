@@ -17,6 +17,7 @@ import type { StrategyPresetId } from "./strategies.ts";
 import { feasible } from "./feasible.ts";
 import { MARKETS, marketOf } from "./markets.ts";
 import type { Candle } from "./market-data.ts";
+import type { RealFill } from "./trade-cost.ts";
 
 /** Default mode when create omits mode. */
 export const CLOUD_ARM_MODE = "PAPER" as const;
@@ -78,6 +79,21 @@ export interface CloudArmEventSnap {
   r?: number;
   pnl?: number;
   entry?: number;
+  /** trade_closed: preço de saída da simulação (preço do sinal do fecho REAL). */
+  exit?: number;
+  /** trade_closed: custo MODELADO (informativo). */
+  fill?: CloudArmFillSnap;
+}
+
+/** Subconjunto compacto do preenchimento simulado guardado em cada trade_closed. */
+export interface CloudArmFillSnap {
+  feeFrac: number;
+  slipFrac: number;
+  modeledCostFrac: number;
+  modeledCostR: number;
+  assumedCostFrac: number;
+  assumedCostR: number;
+  exitKind: "taker" | "maker";
 }
 
 export interface CloudArmSummarySnap {
@@ -121,6 +137,8 @@ export interface CloudArmJob {
   realAppliedEventKeys: string[];
   /** REAL: cancel while a mirrored position may still be open → API should reduceOnly flatten. */
   needsRealFlatten: boolean;
+  /** REAL: execuções lidas da Bybit (taxa + derrapagem vs preço do sinal), por ordem. Só medição; capped. */
+  realFills?: RealFill[];
 }
 
 export interface CloudArmRealMirror {
@@ -128,6 +146,8 @@ export interface CloudArmRealMirror {
   side: "BUY" | "SELL";
   key: string;
   entry?: number;
+  /** Preço do sinal (abertura: entrada da simulação; fecho: saída da simulação). */
+  price?: number;
   evidenceAllowed: boolean;
 }
 
@@ -224,6 +244,7 @@ export function createCloudArmJob(input: CloudArmCreateInput, nowMs: number = Da
     realOpenQty: null,
     realOpenSide: null,
     realAppliedEventKeys: [],
+    realFills: [],
     needsRealFlatten: false,
   };
 }
@@ -317,6 +338,16 @@ function snapEvent(ev: CandlePaperEvent, mode: CloudArmMode): CloudArmEventSnap 
     base.r = ev.r;
     base.pnl = ev.pnl;
     base.entry = ev.entry;
+    base.exit = ev.exit;
+    base.fill = {
+      feeFrac: ev.fill.feeFrac,
+      slipFrac: ev.fill.slipFrac,
+      modeledCostFrac: ev.fill.modeledCostFrac,
+      modeledCostR: ev.fill.modeledCostR,
+      assumedCostFrac: ev.fill.assumedCostFrac,
+      assumedCostR: ev.fill.assumedCostR,
+      exitKind: ev.fill.exitKind,
+    };
   }
   return base;
 }
@@ -347,6 +378,7 @@ export function pendingRealMirrors(jobBefore: CloudArmJob, jobAfter: CloudArmJob
         side,
         key,
         entry: ev.entry,
+        price: ev.entry,
         // Paper session only opens when gate was open; trust historical open.
         evidenceAllowed: true,
       });
@@ -359,11 +391,22 @@ export function pendingRealMirrors(jobBefore: CloudArmJob, jobAfter: CloudArmJob
         side: closeSide,
         key,
         entry: ev.entry,
+        price: ev.exit,
         evidenceAllowed: true,
       });
     }
   }
   return out;
+}
+
+export const CLOUD_ARM_MAX_REAL_FILLS = 60;
+
+/** Guarda uma execução REAL medida (sem duplicados por key+action, capped). Só medição. */
+export function addRealFill(job: CloudArmJob, fill: RealFill): CloudArmJob {
+  const prev = job.realFills ?? [];
+  if (prev.some((f) => f.key === fill.key && f.action === fill.action)) return job;
+  const next = [...prev, fill];
+  return { ...job, realFills: next.length > CLOUD_ARM_MAX_REAL_FILLS ? next.slice(-CLOUD_ARM_MAX_REAL_FILLS) : next };
 }
 
 /** Persist mirror attempt markers + optional open position state (capped keys). */
@@ -522,6 +565,7 @@ export function advanceCloudArmJob(
     realOpenSide: job.realOpenSide ?? null,
     realAppliedEventKeys: job.realAppliedEventKeys ? [...job.realAppliedEventKeys] : [],
     needsRealFlatten: job.needsRealFlatten === true,
+    realFills: job.realFills ? [...job.realFills] : [],
   };
 }
 
@@ -799,5 +843,6 @@ export function publicCloudArmJob(job: CloudArmJob): Record<string, unknown> {
     needsRealFlatten: job.needsRealFlatten === true,
     realOpenSide: job.realOpenSide || null,
     hasRealOpen: !!(job.realOpenQty && job.realOpenSide),
+    realFills: job.realFills ?? [],
   };
 }

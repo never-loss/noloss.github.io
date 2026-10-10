@@ -2017,6 +2017,63 @@
     return raw;
   }
 
+  // ---- Custo por operação: real (execuções Bybit) e modelado (PAPER) vs assumido. Só medição/rótulos. ----
+  var REAL_FILLS_KEY = "nl.bybit.realFills.v1";
+  var ASSUMED_COST_FRACTION = (NL.MARKETS && NL.MARKETS.crypto && NL.MARKETS.crypto.assumedCostFraction) || 0.001;
+  var manualRealFills = [];
+  var sessionModeledFills = [];
+  try {
+    var rawFills = JSON.parse(localStorage.getItem(REAL_FILLS_KEY) || "[]");
+    if (Array.isArray(rawFills)) manualRealFills = rawFills.slice(-100);
+  } catch (_e) { manualRealFills = []; }
+
+  function noteManualRealFill(f) {
+    if (!f || !isFinite(f.costFrac)) return;
+    manualRealFills.push(f);
+    manualRealFills = manualRealFills.slice(-100);
+    try { localStorage.setItem(REAL_FILLS_KEY, JSON.stringify(manualRealFills)); } catch (_e) {}
+    renderCostLine();
+  }
+
+  function noteModeledFill(ev) {
+    if (!ev || ev.type !== "trade_closed" || !ev.fill) return;
+    sessionModeledFills.push(ev.fill);
+    sessionModeledFills = sessionModeledFills.slice(-200);
+    renderCostLine();
+  }
+
+  function uniqFills(list) {
+    var seen = {}, out = [];
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      if (!f) continue;
+      var k = f.key + "|" + f.action + "|" + f.symbol;
+      if (seen[k]) continue;
+      seen[k] = true;
+      out.push(f);
+    }
+    return out;
+  }
+
+  /** Mostra as linhas só quando n > 0. Nunca lança (não pode partir o resto da página). */
+  function renderCostLine() {
+    try {
+      var realEl = el("costLineReal");
+      var modEl = el("costLineModeled");
+      if (!realEl && !modEl) return;
+      var cloudReal = state.cloudJob && Array.isArray(state.cloudJob.realFills) ? state.cloudJob.realFills : [];
+      var real = NL.summarizeRealFills(uniqFills(manualRealFills.concat(cloudReal)));
+      var realText = real ? NL.formatRealCostLine(real, ASSUMED_COST_FRACTION) : null;
+      if (realEl) { realEl.textContent = realText || ""; realEl.hidden = !realText; }
+      var cloudModeled = [];
+      var evs = state.cloudJob && Array.isArray(state.cloudJob.events) ? state.cloudJob.events : [];
+      for (var i = 0; i < evs.length; i++) if (evs[i].type === "trade_closed" && evs[i].fill) cloudModeled.push(evs[i].fill);
+      var modeled = NL.summarizeModeledFills(sessionModeledFills.concat(cloudModeled));
+      var modText = modeled ? NL.formatModeledCostLine(modeled) : null;
+      if (modEl) { modEl.textContent = modText || ""; modEl.hidden = !modText; }
+    } catch (_e) { /* só informação */ }
+  }
+
   async function placeBybitOrder(side, quantity, opts) {
     opts = opts || {};
     var reduceOnly = opts.reduceOnly === true;
@@ -2035,6 +2092,7 @@
       stake: state.stake, evidenceAllowed: true, sessionElapsedMs: elapsed,
     };
     if (reduceOnly) body.reduceOnly = true;
+    if (opts.signalPrice > 0) body.signalPrice = opts.signalPrice; // só para medir a derrapagem real (não altera a ordem)
     var res = await fetch(BYBIT_ORDER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2058,7 +2116,8 @@
       state.realOpenQty = qty;
       state.realOpenSide = side;
       try {
-        var resp = await placeBybitOrder(side, qty);
+        var resp = await placeBybitOrder(side, qty, { signalPrice: e.entry });
+        if (resp && resp.nlExecution) noteManualRealFill(resp.nlExecution);
         var oid = resp && ((resp.result && resp.result.orderId) || resp.orderId);
         pushHistory("REAL Bybit MARKET " + side + " " + tradeSymbol() + " qty=" + qty + (oid ? " orderId=" + oid : ""), "open");
       } catch (err) {
@@ -2070,7 +2129,8 @@
       var closeSide = state.realOpenSide === "BUY" ? "SELL" : "BUY";
       var q = state.realOpenQty;
       try {
-        var resp2 = await placeBybitOrder(closeSide, q, { reduceOnly: true });
+        var resp2 = await placeBybitOrder(closeSide, q, { reduceOnly: true, signalPrice: e.exit });
+        if (resp2 && resp2.nlExecution) noteManualRealFill(resp2.nlExecution);
         var oid2 = resp2 && ((resp2.result && resp2.result.orderId) || resp2.orderId);
         pushHistory("REAL Bybit FECHA " + closeSide + " " + tradeSymbol() + " qty=" + q + " (reduceOnly)" + (oid2 ? " orderId=" + oid2 : ""),
           e.r >= 0 ? "close-win" : "close-loss");
@@ -2302,6 +2362,7 @@
           else if (ev.type === "trade_closed") cls = ev.r >= 0 ? "close-win" : "close-loss";
           else if (ev.type === "stopped" || ev.type === "paused") cls = "stop";
           pushHistory(NL.formatCandleEvent(ev), cls);
+          noteModeledFill(ev);
           if (isRealTradingMode() && (ev.type === "trade_opened" || ev.type === "trade_closed")) {
             await mirrorRealBybitEvent(ev);
           }
@@ -2416,6 +2477,7 @@
         else if (ev.type === "trade_closed") cls = ev.r >= 0 ? "close-win" : "close-loss";
         else if (ev.type === "stopped" || ev.type === "paused") cls = "stop";
         pushHistory(NL.formatCandleEvent(ev), cls);
+          noteModeledFill(ev);
         if (isRealTradingMode() && (ev.type === "trade_opened" || ev.type === "trade_closed")) {
           await mirrorRealBybitEvent(ev);
         }
@@ -2632,6 +2694,7 @@
     var meta = el("cloudArmMeta");
     if (!box) return;
     state.cloudJob = job || null;
+    renderCostLine();
     state.cloudSchedule = schedule || state.cloudSchedule || null;
     if (schedule) state.cloudSchedule = schedule;
     var schedOn = state.cloudSchedule && state.cloudSchedule.enabled;

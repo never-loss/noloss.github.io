@@ -154,3 +154,18 @@ export type { ParsedMessage as ParsedTickMessage } from "../core/ticks.ts";
 
 export { formatAgePt, isCacheUsable, cachedVerdictToResult, gateProvenanceLabel } from "../core/gate-view.ts";
 export type { CachedGateView, CachedPresetView, CachedGateResult } from "../core/gate-view.ts";
+
+// Custo por operação: modelado (PAPER) e real (execuções Bybit) vs assumido. Só medição.
+export {
+  BYBIT_TAKER_FEE,
+  BYBIT_MAKER_FEE,
+  ASSUMED_SLIPPAGE_PER_SIDE,
+  MODELED_COST_LABEL,
+  DEFAULT_FILL_MODEL,
+  modelTradeFill,
+  summarizeModeledFills,
+  summarizeRealFills,
+  formatRealCostLine,
+  formatModeledCostLine,
+} from "../core/trade-cost.ts";
+export type { ModeledFill, RealFill, ModeledCostSummary, RealCostSummary } from "../core/trade-cost.ts";
