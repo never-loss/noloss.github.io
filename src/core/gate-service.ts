@@ -3,8 +3,10 @@
 // Puro (sem rede, sem Redis): o servidor trata do IO. Só Bybit Linear USDT, velas de 5 min.
 // Nada aqui promete lucro: é o veredicto estatístico fora da amostra, com custos, e diz a profundidade usada.
 
-import { computeLedger, updateLedger, evaluateLedgerGate, makeLedgerParams, ledgerTailNeeded, LEDGER_VERSION, paramsHash } from "./gate-ledger.ts";
+import { computeLedger, updateLedger, evaluateLedgerGate, makeLedgerParams, ledgerTailNeeded, ledgerOos, LEDGER_VERSION, paramsHash } from "./gate-ledger.ts";
 import { ledgerAsOf, GATE_VERDICT_FOLDS } from "./ledger-gate-controller.ts";
+import { legacyVerdict } from "./gate-shadow.ts";
+import type { LegacyVerdict } from "./gate-shadow.ts";
 import type { GateLedger, LedgerParams } from "./gate-ledger.ts";
 import { strategiesForPreset, strategyPreset } from "./strategies.ts";
 import type { Strategy } from "./strategies.ts";
@@ -83,6 +85,11 @@ export interface GateVerdict {
   streakAt: number | null;
   minLabel: string;
   needOos: number;
+  /** Média de R e p-value do OOS agregado mesmo abaixo do mínimo do preset (para o FDR; informativo). */
+  oosMeanR?: number;
+  oosP?: number | null;
+  /** MODO SOMBRA: o que a porta ANTIGA (walk-forward curto sobre a cauda) diria. Só informativo. */
+  legacy?: LegacyVerdict;
 }
 
 export interface GateConfigInfo {
@@ -198,6 +205,10 @@ export function computeGateEntry(
     const sameCfg = prevLedger !== null && prevLedger.paramsHash === ledger.paramsHash;
     const pv = sameCfg && prev ? prev.verdicts[s.presetId] ?? null : null;
     const st = nextStreak(pv ? { streak: pv.streak, streakAt: pv.streakAt } : null, r.allowed, lastEpoch, GATE_GRAN);
+    const oosAgg = ledgerOos(ledgerAsOf(ledger, Number.POSITIVE_INFINITY, GATE_VERDICT_FOLDS));
+    const legacy = legacyVerdict(tailForGate, s.strategies, {
+      slAtr: s.params.slAtr, tpR: s.params.tpR, maxBars: s.params.maxBars, costFraction: s.params.costFraction, minLabel: s.minLabel,
+    });
     verdicts[s.presetId] = {
       allowed: r.allowed,
       label: r.label,
@@ -215,6 +226,9 @@ export function computeGateEntry(
       streakAt: st.streakAt,
       minLabel: s.minLabel,
       needOos: s.minLabel === "EVIDENCE" ? 1000 : s.minLabel === "AGILE" ? 10 : 100,
+      oosMeanR: oosAgg.meanR,
+      oosP: oosAgg.pValue,
+      legacy,
     };
   }
   return {
@@ -239,3 +253,6 @@ export function verdictIsOpen(v: GateVerdict, confirmations: number = GATE_CONFI
 export function isFresh(s: Pick<GateSummary, "updatedAt">, nowMs: number, maxAgeMs: number = GATE_FRESH_MS): boolean {
   return nowMs - s.updatedAt <= maxAgeMs;
 }
+
+export { legacyVerdict, summarizeShadow, fdrByPreset, shadowRelation, benjaminiHochberg, FDR_Q, FDR_MIN_OOS } from "./gate-shadow.ts";
+export type { LegacyVerdict, ShadowPresetStats, FdrFlag } from "./gate-shadow.ts";

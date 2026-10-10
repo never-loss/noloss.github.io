@@ -147,3 +147,30 @@ test("proxy clássico intacto: sem mode devolve o envelope da Bybit", async () =
   assert.equal((await call("/api/bybit-klines?symbol=XX&interval=5")).code, 400);
   assert.equal((await call("/api/bybit-klines?symbol=BTCUSDT&interval=7")).code, 400);
 });
+
+test("modo sombra + FDR: gate-shadow compara nova vs antiga; bulk traz fdr informativo sem mexer em allowed", async () => {
+  await call("/api/bybit-klines?mode=gate&symbol=ETHUSDT&interval=5");
+  await call("/api/bybit-klines?mode=gate&symbol=SOLUSDT&interval=5");
+  const n = bybitCalls;
+  const sh = await call("/api/bybit-klines?mode=gate-shadow");
+  assert.equal(sh.code, 200);
+  assert.equal(bybitCalls, n, "só leitura da cache");
+  const b = sh.body as { symbols: number; q: number; presets: Record<string, { tested: number; bothClosed: number; newOpenFdrPass: number; newOpen: number }>; note: string };
+  assert.equal(b.symbols, 2);
+  assert.equal(b.q, 0.1);
+  assert.deepEqual(Object.keys(b.presets).sort(), ["blitz_zero", "loss_zero", "lucro_rapido"]);
+  for (const p of Object.values(b.presets)) {
+    assert.equal(p.tested, 2);
+    assert.ok(p.newOpenFdrPass <= p.newOpen);
+  }
+  assert.match(b.note, /Informativo/);
+  const bulk = await call("/api/bybit-klines?mode=gate&symbols=all");
+  const gates = (bulk.body as { gates: Record<string, { presets: Record<string, { allowed: boolean; fdr: { pass: boolean; strictOpen: boolean; m: number }; legacy: { label: string } | null }> }> }).gates;
+  for (const g of Object.values(gates)) {
+    for (const p of Object.values(g.presets)) {
+      assert.ok(p.fdr && typeof p.fdr.pass === "boolean");
+      if (p.fdr.strictOpen) assert.equal(p.allowed, true, "FDR só pode restringir, nunca abrir");
+      assert.ok(p.legacy && typeof p.legacy.label === "string");
+    }
+  }
+});

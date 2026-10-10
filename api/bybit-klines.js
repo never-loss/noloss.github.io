@@ -56,6 +56,12 @@ async function handleGate(req, res, url, mode) {
     const out = await lib.backfillGate({ budgetMs: 40_000 });
     return res.status(200).json({ ok: true, store: info, ...out });
   }
+  if (mode === "gate-shadow") {
+    // Modo sombra: porta nova (livro) vs antiga (walk-forward curto) + FDR. Só leitura.
+    const all = await store.readAllGateSummaries(300);
+    res.setHeader("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300");
+    return res.status(200).json({ ok: true, store: info, ...lib.shadowReport(all) });
+  }
   const interval = String(url.searchParams.get("interval") || "5");
   if (!GATE_INTERVALS.has(interval)) {
     return res.status(400).json({ error: "gate_only_5m", error_description: "A porta em cache existe só para velas de 5 minutos." });
@@ -72,6 +78,7 @@ async function handleGate(req, res, url, mode) {
       if (want && !want.includes(sym)) continue;
       gates[sym] = lib.publicGate(summary, now, { source: "cache" });
     }
+    lib.attachFdr(gates, all); // informativo (critério mais estrito), não muda "allowed"
     res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
     return res.status(200).json({ ok: true, store: info, count: Object.keys(gates).length, gates });
   }
@@ -96,7 +103,7 @@ export default async function handler(req, res) {
   try {
     const url = new URL(req.url, "http://localhost");
     const mode = String(url.searchParams.get("mode") || "");
-    if (mode === "gate" || mode === "gate-backfill") {
+    if (mode === "gate" || mode === "gate-backfill" || mode === "gate-shadow") {
       try {
         return await handleGate(req, res, url, mode);
       } catch (e) {
