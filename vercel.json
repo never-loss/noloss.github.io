@@ -28,6 +28,15 @@
     {
       "path": "/api/bybit-arm?tick=1",
       "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/bybit-klines?mode=gate-backfill",
+      "schedule": "30 3 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/bybit-klines.js": {
+      "maxDuration": 60
+    }
+  }
 }
