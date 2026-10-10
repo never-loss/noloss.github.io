@@ -151,3 +151,6 @@ export type { DigitColor, WindowStats } from "../core/digits.ts";
 
 export { parseMessage as parseTickMessage } from "../core/ticks.ts";
 export type { ParsedMessage as ParsedTickMessage } from "../core/ticks.ts";
+
+export { formatAgePt, isCacheUsable, cachedVerdictToResult, gateProvenanceLabel } from "../core/gate-view.ts";
+export type { CachedGateView, CachedPresetView, CachedGateResult } from "../core/gate-view.ts";

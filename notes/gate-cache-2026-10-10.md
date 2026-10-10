@@ -42,3 +42,14 @@ Se o buraco desde a última vela guardada for > 480 velas (≈ 40 h), refaz-se o
 Hobby: funções até 300 s (fluid compute); definimos `maxDuration: 60` só em `api/bybit-klines.js` (válido com e sem fluid).
 Crons Hobby: 1×/dia por expressão. Upstash grátis: 500 k comandos/mês — leitura de 1 símbolo = 1 comando, radar = 1,
 actualização ≈ 8 comandos, backfill de 40 símbolos ≈ 320/dia.
+
+## UI (PR5)
+- **Analisar e painel**: ao carregar um símbolo (5m), o gráfico pinta primeiro; depois lê `?mode=gate&symbol=…` (≈0,3 s a quente).
+  Se os 3 presets vierem utilizáveis (≤ 6 h), **não** se descarregam as 4 páginas de 1000 velas nem se recalcula no browser.
+  Falhou, velho ou fora da cache (Tendência diária/Biblioteca, outro intervalo, outro multiplicador) → cálculo local de sempre.
+- **Radar**: 1 pedido `?mode=gate&symbols=all` (renovado a cada 5 min) dá `gateKnown` a todos os símbolos em cache (top 40 + os já pedidos);
+  os restantes ficam "sinal · porta pendente". Tooltip de cada linha mostra a proveniência da porta.
+- **Etiqueta honesta** sob a porta e nos cartões: `histórico: 90d · OOS 83d (48 blocos) · n OOS 610 · atualizado há 3 min · cache do servidor`
+  ou `cálculo local: 3500 velas (≈12d) · n OOS 85 · sem cache`. Porta aberta com 1 só validação aparece como "a confirmar (1/2)".
+- **ARMAR (sessão no browser)** passa a cálculo local (o controlador local é quem decide as entradas) — coerente e sem surpresas.
+- Backfill: o cursor já não salta o símbolo que ficou sem orçamento; orçamento de arranques a frio subiu para 60/h.

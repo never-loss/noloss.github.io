@@ -53,6 +53,7 @@ var NL = (() => {
     bybitBaseAsset: () => bybitBaseAsset,
     bybitFetch: () => bybitFetch,
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
+    cachedVerdictToResult: () => cachedVerdictToResult,
     candleLabelPermitted: () => candleLabelPermitted,
     clampBybitLeverage: () => clampBybitLeverage,
     classify: () => classify,
@@ -75,14 +76,17 @@ var NL = (() => {
     fetchBybitKlinesPage: () => fetchBybitKlinesPage,
     fetchBybitUsdtSymbols: () => fetchBybitUsdtSymbols,
     filterCryptoUsd: () => filterCryptoUsd,
+    formatAgePt: () => formatAgePt,
     formatCandleEvent: () => formatCandleEvent,
     formatCandleGate: () => formatCandleGate,
     formatCandleSummary: () => formatCandleSummary,
     gateProgressPct: () => gateProgressPct,
+    gateProvenanceLabel: () => gateProvenanceLabel,
     granularityToBinanceInterval: () => granularityToBinanceInterval,
     granularityToBybitInterval: () => granularityToBybitInterval,
     isBinanceUsdtSymbol: () => isBinanceUsdtSymbol,
     isBybitUsdtSymbol: () => isBybitUsdtSymbol,
+    isCacheUsable: () => isCacheUsable,
     isCryptoUsd: () => isCryptoUsd,
     isLinearUsdtPerpetual: () => isLinearUsdtPerpetual,
     isOptionsFeedOnly: () => isOptionsFeedOnly,
@@ -2687,6 +2691,66 @@ var NL = (() => {
       quote,
       pipSize: typeof pip === "number" && Number.isInteger(pip) ? pip : null
     };
+  }
+
+  // src/core/gate-view.ts
+  function formatAgePt(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return "\u2014";
+    const s = Math.floor(ms / 1e3);
+    if (s < 60) return "agora";
+    const m = Math.floor(s / 60);
+    if (m < 60) return `h\xE1 ${m} min`;
+    const h = Math.floor(m / 60);
+    if (h < 48) return `h\xE1 ${h} h`;
+    return `h\xE1 ${Math.floor(h / 24)} d`;
+  }
+  function isCacheUsable(gate, presetId, maxAgeMs = 6 * 3600 * 1e3) {
+    if (!gate || !gate.presets || !gate.presets[presetId]) return false;
+    if (!Number.isFinite(gate.ageMs) || gate.ageMs > maxAgeMs) return false;
+    const v = gate.presets[presetId];
+    return typeof v.allowed === "boolean" && typeof v.nOOS === "number" && typeof v.label === "string";
+  }
+  function cachedVerdictToResult(gate, presetId) {
+    const v = gate.presets[presetId];
+    if (!v) return null;
+    const confirming = v.allowed && v.streak < 2;
+    const reason = confirming ? `${v.reason} \xB7 a confirmar (valida\xE7\xE3o ${v.streak}/2)` : v.reason;
+    return {
+      allowed: v.allowed,
+      label: v.label,
+      reason,
+      strategy: v.strategy ? { name: v.strategy } : null,
+      oosTrades: v.nOOS,
+      meanR: v.meanR,
+      pValue: v.p,
+      source: "cache",
+      folds: v.folds,
+      foldsPositive: v.foldsPositive ?? 0,
+      foldsWithTrades: v.foldsWithTrades ?? 0,
+      depthDays: v.depthDays,
+      historyDays: gate.historyDays,
+      asOf: v.asOf,
+      ageMs: gate.ageMs,
+      stale: gate.stale,
+      streak: v.streak,
+      confirming,
+      needOos: v.needOos ?? 0
+    };
+  }
+  var days = (d) => d === null || d === void 0 || !Number.isFinite(d) ? "?" : String(Math.round(d));
+  function gateProvenanceLabel(r) {
+    if (!r) return "";
+    const n = typeof r.oosTrades === "number" ? ` \xB7 n OOS ${r.oosTrades}` : "";
+    if (r.source === "cache") {
+      const age = typeof r.ageMs === "number" ? formatAgePt(r.ageMs) : "\u2014";
+      const blocks = typeof r.folds === "number" ? ` (${r.folds} blocos)` : "";
+      return `hist\xF3rico: ${days(r.historyDays)}d \xB7 OOS ${days(r.depthDays)}d${blocks}${n} \xB7 atualizado ${age}${r.stale ? " \xB7 desatualizado" : ""} \xB7 cache do servidor`;
+    }
+    if (typeof r.candlesUsed === "number") {
+      const g = r.gran && r.gran > 0 ? r.gran : 300;
+      return `c\xE1lculo local: ${r.candlesUsed} velas (\u2248${days(r.candlesUsed * g / 86400)}d)${n} \xB7 sem cache`;
+    }
+    return "";
   }
   return __toCommonJS(nl_core_entry_exports);
 })();

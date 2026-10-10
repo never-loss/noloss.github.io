@@ -222,23 +222,45 @@ test("leitura em massa (radar): 1 resumo por símbolo", async () => {
 
 test("backfill: processa em lotes com cursor, retoma e fecha o ciclo", async () => {
   const w = world();
-  const slow = async (...a: unknown[]) => { await new Promise((r) => setTimeout(r, 15)); return (w.history as (...x: unknown[]) => Promise<unknown>)(...a); };
+  let tick = 0; // relógio simulado: cada descarga custa 100 ms (sem depender do relógio real)
+  const clock = () => tick;
+  const slow = async (...a: unknown[]) => { tick += 100; return (w.history as (...x: unknown[]) => Promise<unknown>)(...a); };
   const symbols = ["S1USDT", "S2USDT", "S3USDT", "S4USDT", "S5USDT"];
-  const r1 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 1, concurrency: 2 });
+  const r1 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 150, concurrency: 2, clock });
   assert.equal(r1.cycleComplete, false);
   assert.equal(r1.processed, 2);
   assert.equal(r1.nextIndex, 2);
-  const r2 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 1, concurrency: 2 });
+  tick = 0;
+  const r2 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 150, concurrency: 2, clock });
   assert.equal(r2.nextIndex, 4);
-  const r3 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 10_000, concurrency: 2 });
+  tick = 0;
+  const r3 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 10_000, concurrency: 2, clock });
   assert.equal(r3.cycleComplete, true);
   assert.equal(r3.nextIndex, 0);
   assert.equal(Object.keys(await store.readAllGateSummaries(300, ENV)).length, 5);
   // novo ciclo: símbolos frescos não são descarregados outra vez
   const calls = w.state.calls.length;
-  const r4 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 10_000 });
+  const r4 = await backfillGate({ env: ENV, history: slow, now: w.now, symbols, budgetMs: 10_000, clock });
   assert.equal(r4.cycleComplete, true);
   assert.equal(w.state.calls.length, calls);
+});
+
+test("backfill: sem orçamento o cursor NÃO salta o símbolo que ficou por fazer", async () => {
+  const w = world();
+  const hour = Math.floor(w.state.now / 3_600_000);
+  const symbols = ["B1USDT", "B2USDT", "B3USDT"];
+  // deixa só 1 arranque a frio disponível
+  for (let i = 0; i < COLD_BUDGET_PER_HOUR - 1; i++) await store.bumpBudget(store.budgetKey("cold", hour), 7200, ENV);
+  const r1 = await backfillGate({ env: ENV, history: w.history, now: w.now, symbols, concurrency: 1, budgetMs: 10_000 });
+  assert.equal(r1.budgetHit, true);
+  assert.equal(r1.cycleComplete, false);
+  assert.equal(r1.nextIndex, 1, "retoma em B2, que não foi feito");
+  assert.deepEqual(r1.done.map((d: { symbol: string }) => d.symbol), ["B1USDT"]);
+  // hora seguinte: retoma e completa
+  w.state.now += 3_600_000;
+  const r2 = await backfillGate({ env: ENV, history: w.history, now: w.now, symbols, concurrency: 1, budgetMs: 10_000 });
+  assert.equal(r2.cycleComplete, true);
+  assert.deepEqual(Object.keys(await store.readAllGateSummaries(300, ENV)).sort(), symbols);
 });
 
 test("topSymbols: ordena por turnover, filtra, guarda em cache; recurso se a Bybit falhar", async () => {
