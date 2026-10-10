@@ -1696,7 +1696,7 @@ var NL = (() => {
       pValue: trades < 2 ? null : expectancyPValue(rs)
     };
   }
-  function runCandleBacktest(candles, strategy, opts) {
+  function runCandleBacktest(candles, strategy, opts, prepared) {
     assertOpts2(opts);
     const n = candles.length;
     const start = opts.start ?? 0;
@@ -1705,9 +1705,10 @@ var NL = (() => {
       throw new RangeError(`Intervalo inv\xE1lido: ${start}..${end}`);
     }
     const dirs = opts.directions ?? "both";
-    const signals = strategy.signals(candles);
+    const signals = prepared ? prepared.signals : strategy.signals(candles);
     if (signals.length !== n) throw new RangeError("A estrat\xE9gia devolveu um n\xFAmero errado de sinais");
-    const atrs = atr(candles, opts.atrPeriod ?? 14);
+    const atrs = prepared ? prepared.atrs : atr(candles, opts.atrPeriod ?? 14);
+    if (atrs.length !== n) throw new RangeError("ATR com tamanho errado");
     const trades = [];
     let i = start;
     while (i < end - 1) {
@@ -1774,6 +1775,17 @@ var NL = (() => {
     const minTrades = opts.minTrainTrades ?? 20;
     const { trainSize, testSize, minTrainTrades: _ignored, ...base } = opts;
     void _ignored;
+    const atrPeriod = base.atrPeriod ?? 14;
+    const atrs = atr(candles, atrPeriod);
+    const prepared = /* @__PURE__ */ new Map();
+    const prep = (s) => {
+      let p = prepared.get(s);
+      if (!p) {
+        p = { signals: s.signals(candles), atrs };
+        prepared.set(s, p);
+      }
+      return p;
+    };
     const folds = [];
     const oosR = [];
     let start = 0;
@@ -1784,7 +1796,7 @@ var NL = (() => {
       let chosen = null;
       let chosenTrain = null;
       for (const s of strategies) {
-        const m = runCandleBacktest(candles, s, { ...base, start, end: testStart }).metrics;
+        const m = runCandleBacktest(candles, s, { ...base, start, end: testStart }, prep(s)).metrics;
         if (m.trades < minTrades) continue;
         if (chosenTrain === null || m.netR > chosenTrain.netR) {
           chosen = s;
@@ -1793,7 +1805,7 @@ var NL = (() => {
       }
       let test = null;
       if (chosen !== null) {
-        const r = runCandleBacktest(candles, chosen, { ...base, start: testStart, end: testEnd });
+        const r = runCandleBacktest(candles, chosen, { ...base, start: testStart, end: testEnd }, prep(chosen));
         oosR.push(...r.trades.map((t) => t.r));
         test = r.metrics;
       }
