@@ -2681,6 +2681,12 @@
     }
     if (gate) {
       lines.push(gate.allowed ? ("Porta: aberta — " + (gate.reason || "")) : ("Porta: NO TRADE — " + (gate.reason || "")));
+      if (gate.source === "ledger") {
+        lines.push("[porta: livro em cache · OOS " + (gate.depthDays != null ? Math.round(gate.depthDays) : "?") + "d · " +
+          (gate.folds != null ? gate.folds : "?") + " blocos · n OOS " + (gate.oosTrades != null ? gate.oosTrades : "?") + "]");
+      } else if (gate.source === "legacy") {
+        lines.push("[porta: cálculo curto (~1500 velas) · sem cache]");
+      }
     }
     if (reason) reason.textContent = lines.join(" ");
     if (meta) {

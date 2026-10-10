@@ -37,6 +37,9 @@
   "functions": {
     "api/bybit-klines.js": {
       "maxDuration": 60
+    },
+    "api/bybit-arm.js": {
+      "maxDuration": 60
     }
   }
 }
