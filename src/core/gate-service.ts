@@ -4,6 +4,7 @@
 // Nada aqui promete lucro: é o veredicto estatístico fora da amostra, com custos, e diz a profundidade usada.
 
 import { computeLedger, updateLedger, evaluateLedgerGate, makeLedgerParams, ledgerTailNeeded, LEDGER_VERSION, paramsHash } from "./gate-ledger.ts";
+import { ledgerAsOf, GATE_VERDICT_FOLDS } from "./ledger-gate-controller.ts";
 import type { GateLedger, LedgerParams } from "./gate-ledger.ts";
 import { strategiesForPreset, strategyPreset } from "./strategies.ts";
 import type { Strategy } from "./strategies.ts";
@@ -192,7 +193,8 @@ export function computeGateEntry(
       ? updateLedger(prevLedger, candles, s.strategies, s.params, { keepFolds: GATE_KEEP_FOLDS })
       : computeLedger(candles, s.strategies, s.params, { keepFolds: GATE_KEEP_FOLDS });
     ledgers[s.presetId] = ledger;
-    const r = evaluateLedgerGate(ledger, tailForGate, s.strategies, { minLabel: s.minLabel });
+    // Mesma regra do arm: só os blocos mais recentes (GATE_VERDICT_FOLDS) contam.
+    const r = evaluateLedgerGate(ledgerAsOf(ledger, Number.POSITIVE_INFINITY, GATE_VERDICT_FOLDS), tailForGate, s.strategies, { minLabel: s.minLabel });
     const sameCfg = prevLedger !== null && prevLedger.paramsHash === ledger.paramsHash;
     const pv = sameCfg && prev ? prev.verdicts[s.presetId] ?? null : null;
     const st = nextStreak(pv ? { streak: pv.streak, streakAt: pv.streakAt } : null, r.allowed, lastEpoch, GATE_GRAN);

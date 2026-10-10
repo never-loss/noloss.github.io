@@ -7,6 +7,10 @@ import { MAX_SESSION_MS, MIN_STAKE } from "./paper.ts";
 import { CandlePaperSession } from "./candle-paper.ts";
 import type { CandlePaperEvent, CandlePaperSummary } from "./candle-paper.ts";
 import { CandleGateController } from "./candle-gate.ts";
+import { LedgerGateController } from "./ledger-gate-controller.ts";
+import { gateSetup, GATE_PRESET_IDS } from "./gate-service.ts";
+import { paramsHash } from "./gate-ledger.ts";
+import type { GateLedger } from "./gate-ledger.ts";
 import type { CandleGateOptions, CandleGateResult } from "./candle-gate.ts";
 import { strategiesForPreset, strategyPreset } from "./strategies.ts";
 import type { StrategyPresetId } from "./strategies.ts";
@@ -49,6 +53,21 @@ export interface CloudArmGateSnap {
   strategyName: string | null;
   oosTrades: number;
   meanR: number;
+  /** "ledger" = porta ancorada no livro-razão em cache (histórico profundo); "legacy" = walk-forward sobre ~1500 velas. */
+  source?: "ledger" | "legacy";
+  /** Validações positivas seguidas (só no modo ledger). */
+  streak?: number;
+  /** Dias de histórico fora da amostra coberto pelos blocos (só no modo ledger). */
+  depthDays?: number;
+  folds?: number;
+}
+
+/** Como o job decide a porta. Fixado no 1.º tick de um job novo e nunca muda (reconstrução determinística). */
+export type CloudArmGateMode = "ledger" | "legacy";
+
+export interface CloudArmAdvanceOptions {
+  /** Livro-razão em cache do preset do job (modo ledger). Sem isto → modo legacy. */
+  ledger?: GateLedger | null;
 }
 
 export interface CloudArmEventSnap {
@@ -92,6 +111,8 @@ export interface CloudArmJob {
   events: CloudArmEventSnap[];
   summary: CloudArmSummarySnap;
   gate: CloudArmGateSnap | null;
+  /** Modo da porta (fixado no 1.º tick). Ausente em jobs antigos = legacy. */
+  gateMode?: CloudArmGateMode;
   /** REAL: last mirrored open qty string (Bybit qty). */
   realOpenQty: string | null;
   /** REAL: last mirrored open side. */
@@ -246,7 +267,13 @@ function snapGate(res: CandleGateResult, open: boolean): CloudArmGateSnap {
     strategyName: res.strategy ? res.strategy.name : null,
     oosTrades: res.oosTrades,
     meanR: res.meanR,
+    source: "legacy",
   };
+}
+
+/** O arm só usa o livro para os 3 presets em cache e velas de 5 min. */
+export function cloudArmLedgerEligible(presetId: string, granularity: number): boolean {
+  return granularity === 300 && (GATE_PRESET_IDS as readonly string[]).includes(presetId);
 }
 
 function snapSummary(s: CandlePaperSummary): CloudArmSummarySnap {
@@ -376,6 +403,7 @@ export function advanceCloudArmJob(
   job: CloudArmJob,
   candlesAsc: readonly Candle[],
   nowMs: number = Date.now(),
+  opts: CloudArmAdvanceOptions = {},
 ): CloudArmJob {
   if (job.mode !== "PAPER" && job.mode !== "REAL") {
     throw new Error("cloud arm mode must be PAPER or REAL");
@@ -398,13 +426,31 @@ export function advanceCloudArmJob(
   const strategies = strategiesFor(job.strategyPreset);
   const gate = gateOptsFor(job.strategyPreset, costFraction, Math.max(50, trainSize), Math.max(30, testSize));
 
-  const controller = new CandleGateController({
-    strategies,
-    gate,
-    revalidateEvery: CLOUD_ARM_REVALIDATE_EVERY,
-    maxBuffer: CLOUD_ARM_WARMUP,
-    initial: warmup.slice(-CLOUD_ARM_WARMUP),
-  });
+  let ledgerCtl: LedgerGateController | null = null;
+  const ledgerMode = !!opts.ledger && cloudArmLedgerEligible(job.strategyPreset, job.granularity);
+  let controller: Pick<CandleGateController, "result" | "isOpen" | "push" | "asStrategy">;
+  if (ledgerMode) {
+    const setup = gateSetup(job.strategyPreset as (typeof GATE_PRESET_IDS)[number]);
+    if (opts.ledger!.paramsHash !== paramsHash(setup.params)) throw new Error("ledger_params_mismatch");
+    // Warmup = todas as velas fechadas antes do arranque (cauda guardada + novas): chega para escolher a estratégia.
+    const lc = new LedgerGateController({
+      ledger: opts.ledger!,
+      strategies: setup.strategies,
+      minLabel: setup.minLabel,
+      revalidateEvery: CLOUD_ARM_REVALIDATE_EVERY,
+      initial: warmup,
+    });
+    controller = lc;
+    ledgerCtl = lc;
+  } else {
+    controller = new CandleGateController({
+      strategies,
+      gate,
+      revalidateEvery: CLOUD_ARM_REVALIDATE_EVERY,
+      maxBuffer: CLOUD_ARM_WARMUP,
+      initial: warmup.slice(-CLOUD_ARM_WARMUP),
+    });
+  }
 
   const maxTrades = job.strategyPreset === "blitz_zero" ? 10 : 50;
   const session = new CandlePaperSession({
@@ -469,12 +515,29 @@ export function advanceCloudArmJob(
     lastTickAt: nowMs,
     events: capped,
     summary: summaryOut,
-    gate: snapGate(controller.result, controller.isOpen),
+    gate: ledgerCtl ? snapLedgerGate(ledgerCtl) : snapGate(controller.result, controller.isOpen),
+    gateMode: ledgerCtl ? "ledger" : (job.gateMode ?? undefined),
     // Preserve REAL mirror state across deterministic rebuilds
     realOpenQty: job.realOpenQty ?? null,
     realOpenSide: job.realOpenSide ?? null,
     realAppliedEventKeys: job.realAppliedEventKeys ? [...job.realAppliedEventKeys] : [],
     needsRealFlatten: job.needsRealFlatten === true,
+  };
+}
+
+function snapLedgerGate(c: LedgerGateController): CloudArmGateSnap {
+  const r = c.result;
+  return {
+    allowed: c.isOpen && r.allowed,
+    label: r.label,
+    reason: c.result.allowed && !c.isOpen ? `${r.reason} · a confirmar (validação ${c.streak}/2)` : r.reason,
+    strategyName: r.strategy ? r.strategy.name : null,
+    oosTrades: r.oosTrades,
+    meanR: r.meanR,
+    source: "ledger",
+    streak: c.streak,
+    depthDays: Math.round(r.depthDays * 10) / 10,
+    folds: r.folds,
   };
 }
 
@@ -731,6 +794,7 @@ export function publicCloudArmJob(job: CloudArmJob): Record<string, unknown> {
     events: job.events,
     summary: job.summary,
     gate: job.gate,
+    gateMode: job.gateMode ?? "legacy",
     remainingMs: job.status === "RUNNING" ? Math.max(0, job.endsAt - Date.now()) : 0,
     needsRealFlatten: job.needsRealFlatten === true,
     realOpenSide: job.realOpenSide || null,

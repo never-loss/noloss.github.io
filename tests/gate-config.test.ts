@@ -28,8 +28,10 @@ test("Hobby: crons só 1x/dia (minuto e hora fixos), <= 100 por projecto", () =>
 });
 
 test("maxDuration do endpoint da porta <= 300 s (máximo do Hobby) e suficiente para o backfill (40 s)", () => {
-  const d = vercel.functions?.["api/bybit-klines.js"]?.maxDuration;
-  assert.ok(d !== undefined && d >= 45 && d <= 300, `maxDuration ${d}`);
+  for (const f of ["api/bybit-klines.js", "api/bybit-arm.js"]) {
+    const d = vercel.functions?.[f]?.maxDuration;
+    assert.ok(d !== undefined && d >= 45 && d <= 300, `maxDuration ${f}: ${d}`);
+  }
 });
 
 test("bundle do servidor (lib/nl-gate.mjs) está em dia com o código-fonte: mesmos hashes e mesmo resultado", () => {

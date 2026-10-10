@@ -18,6 +18,7 @@ import {
   reconcileDailySchedule,
   CLOUD_ARM_WARMUP,
   CLOUD_ARM_MAX_DURATION_MINUTES,
+  cloudArmLedgerEligible,
 } from "../lib/nl-cloud.mjs";
 import {
   saveArmJob,
@@ -29,6 +30,8 @@ import {
   listArmSchedules,
 } from "../lib/arm-store.js";
 import { fetchArmCandleHistory } from "../lib/arm-klines.js";
+import { loadArmGateContext } from "../lib/gate-cache.js";
+import { gateStoreInfo } from "../lib/gate-store.js";
 import {
   hasBybitKeys,
   placeLinearMarketOrder,
@@ -228,10 +231,43 @@ async function maybeFlattenReal(job) {
   }
 }
 
+/**
+ * Modo da porta do job (fixado no 1.º tick de um job NOVO, nunca muda):
+ *  - "ledger": veredicto ancorado no livro-razão em cache (histórico profundo) + cauda guardada → sem esperar 12 velas
+ *    quando a porta já estava aberta, e Loss zero deixa de ser impossível por falta de velas.
+ *  - "legacy": walk-forward sobre ~1500 velas (jobs antigos, presets fora da cache, sem Redis durável, cache indisponível).
+ * Em modo ledger, se a cache não estiver disponível num tick, SALTA o tick (não mistura dados parciais).
+ */
 async function advanceAndSave(job) {
   const before = job;
-  const candles = await fetchArmCandleHistory(job.symbol, job.granularity, CLOUD_ARM_WARMUP);
-  let next = advanceCloudArmJob(job, candles, Date.now());
+  let mode = job.gateMode;
+  let ctx = null;
+  const eligible = cloudArmLedgerEligible(job.strategyPreset, job.granularity);
+  if (mode === undefined) {
+    const isNew = job.lastTickAt == null;
+    if (isNew && eligible && gateStoreInfo().durable) {
+      try {
+        ctx = await loadArmGateContext(job.symbol, job.strategyPreset, job.granularity);
+      } catch {
+        ctx = null;
+      }
+    }
+    mode = ctx ? "ledger" : "legacy";
+  } else if (mode === "ledger") {
+    try {
+      ctx = await loadArmGateContext(job.symbol, job.strategyPreset, job.granularity);
+    } catch {
+      ctx = null;
+    }
+    if (!ctx) throw new Error("gate_ledger_unavailable");
+  }
+  let next;
+  if (mode === "ledger" && ctx) {
+    next = advanceCloudArmJob({ ...job, gateMode: "ledger" }, ctx.candles, Date.now(), { ledger: ctx.ledger });
+  } else {
+    const candles = await fetchArmCandleHistory(job.symbol, job.granularity, CLOUD_ARM_WARMUP);
+    next = advanceCloudArmJob({ ...job, gateMode: "legacy" }, candles, Date.now());
+  }
   await saveArmJob(next);
   if (next.mode === "REAL") {
     next = await mirrorRealIfNeeded(before, next);

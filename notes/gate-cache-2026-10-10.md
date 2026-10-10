@@ -53,3 +53,20 @@ actualização ≈ 8 comandos, backfill de 40 símbolos ≈ 320/dia.
   ou `cálculo local: 3500 velas (≈12d) · n OOS 85 · sem cache`. Porta aberta com 1 só validação aparece como "a confirmar (1/2)".
 - **ARMAR (sessão no browser)** passa a cálculo local (o controlador local é quem decide as entradas) — coerente e sem surpresas.
 - Backfill: o cursor já não salta o símbolo que ficou sem orçamento; orçamento de arranques a frio subiu para 60/h.
+
+## Arm na nuvem (PR6) — modo "ledger"
+- **Modo fixado no 1.º tick de um job NOVO** (`job.gateMode`): `ledger` se o preset é Lucro rápido/Loss zero/Agressivo, vela 5m, Redis durável e
+  o contexto da cache está completo; senão `legacy` (comportamento de antes, também para jobs antigos em curso e presets fora da cache).
+  Nunca muda a meio: a reconstrução determinística do arm não pode misturar duas lógicas.
+- **Fonte da evidência**: blocos do livro-razão (90 d+ de OOS) em vez de walk-forward sobre ~1500 velas. A cauda (≥1600 velas) só escolhe a
+  estratégia. Cada tick: 1 leitura Redis + 1 pedido pequeno à Bybit (antes: 2 páginas de 1000 velas).
+- **Sem esperar 12 velas**: o streak inicial deriva de validações passadas as-of (agora, −12, −24 velas). Porta já aberta nas 2 últimas
+  validações abre logo; fecha de imediato à 1.ª reprovação. (Determinístico: não depende do streak "de agora" guardado no Redis.)
+- **As-of**: o veredicto no instante t usa só blocos com fim ≤ t e velas ≤ t → um livro mais novo dá a mesma sequência (testado), logo
+  reconstruir a sessão em ticks diferentes não altera o passado. O livro tem de já ter visto a última fronteira de bloco (senão actualiza-se antes).
+- **Cache indisponível num job `ledger`** → o tick é saltado (aviso `advance_failed:gate_ledger_unavailable`), nunca dados parciais.
+- **Loss zero (1000 OOS)**: deixa de ser impossível por construção (antes: 1500 velas → ~500 OOS). Em dados reais de 90 d continua
+  `INSUFFICIENT` (p.ex. BTC 313/1000 operações): precisa de ~260 dias de 5m ou de outra decisão sobre o mínimo — decisão do utilizador.
+- **Triggers externos** (Hobby só tem crons diários): o arm avança em cada GET de estado (lazy) e nos crons 07:00/19:00 UTC.
+  Para avançar de 5 em 5 min sem a página aberta, usar um agendador externo que chame `GET /api/bybit-arm?tick=1` com
+  `Authorization: Bearer $CRON_SECRET` (cron-job.org, GitHub Actions `schedule`, Upstash QStash) ou subir para Vercel Pro (crons por minuto).

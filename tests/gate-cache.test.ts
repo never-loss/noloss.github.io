@@ -2,7 +2,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 // @ts-expect-error JS sem tipos
-import { getGate, refreshGate, backfillGate, topSymbols, publicGate, FALLBACK_TOP, COLD_BUDGET_PER_HOUR } from "../lib/gate-cache.js";
+import { getGate, refreshGate, backfillGate, topSymbols, publicGate, loadArmGateContext, lastBlockBoundary, FALLBACK_TOP, COLD_BUDGET_PER_HOUR } from "../lib/gate-cache.js";
 // @ts-expect-error JS sem tipos
 import * as store from "../lib/gate-store.js";
 // @ts-expect-error JS sem tipos
@@ -349,4 +349,58 @@ test("Upstash em baixo: erro tratado (sem lançar para o chamador de refreshGate
   const env = { KV_REST_API_URL: "https://redis.example", KV_REST_API_TOKEN: "t" } as unknown as NodeJS.ProcessEnv; // alias KV_*
   const down = (async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
   await assert.rejects(refreshGate("BTCUSDT", { env, fetchImpl: down, history: w.history, now: w.now }));
+});
+
+// ---------- contexto da porta para o arm na nuvem ----------
+test("loadArmGateContext: sem registo → actualiza e devolve livro + velas contíguas até agora", async () => {
+  const w = world();
+  const ctx = await loadArmGateContext("BTCUSDT", "blitz_zero", 300, { env: ENV, history: w.history, now: w.now });
+  assert.ok(ctx);
+  assert.equal(ctx.ledger.folds.length > 10, true);
+  assert.ok(ctx.candles.length >= 2700);
+  const last = lastClosedStart(w.state.now, GRAN);
+  assert.equal(ctx.candles[ctx.candles.length - 1].epoch, last);
+  for (let i = 1; i < ctx.candles.length; i++) assert.equal(ctx.candles[i].epoch - ctx.candles[i - 1].epoch, GRAN);
+  assert.equal(w.state.calls.length, 1, "arranque a frio: 1 descarga profunda");
+});
+
+test("loadArmGateContext: tick seguinte pede só as velas novas (1 janela pequena) e junta à cauda", async () => {
+  const w = world(5);
+  await loadArmGateContext("ETHUSDT", "loss_zero", 300, { env: ENV, history: w.history, now: w.now });
+  w.state.now += 2 * 3600_000; // +24 velas
+  const calls = w.state.calls.length;
+  const ctx = await loadArmGateContext("ETHUSDT", "loss_zero", 300, { env: ENV, history: w.history, now: w.now });
+  assert.ok(ctx);
+  assert.equal(ctx.candles[ctx.candles.length - 1].epoch, lastClosedStart(w.state.now, GRAN));
+  const extra = w.state.calls.slice(calls);
+  assert.ok(extra.length >= 1 && extra.every((c) => (c.count ?? 0) <= 60), JSON.stringify(extra));
+});
+
+test("loadArmGateContext: livro que ainda não viu a última fronteira de bloco é actualizado antes de ser usado", async () => {
+  const w = world(6);
+  await loadArmGateContext("SOLUSDT", "blitz_zero", 300, { env: ENV, history: w.history, now: w.now });
+  // avança o relógio para depois da próxima fronteira de bloco (500 velas)
+  const b0 = lastBlockBoundary(w.state.now);
+  w.state.now = (b0 + 500 * GRAN + 4 * GRAN) * 1000 + 5000;
+  const ctx = await loadArmGateContext("SOLUSDT", "blitz_zero", 300, { env: ENV, history: w.history, now: w.now });
+  assert.ok(ctx);
+  const lastFold = ctx.ledger.folds[ctx.ledger.folds.length - 1];
+  assert.ok(lastFold.end >= lastBlockBoundary(w.state.now) - 0, "livro inclui o bloco que acabou de fechar");
+});
+
+test("loadArmGateContext: null quando não há como garantir livro completo + velas contíguas", async () => {
+  const w = world();
+  // preset/intervalo/símbolo fora da cache
+  assert.equal(await loadArmGateContext("BTCUSDT", "tendencia_diaria", 300, { env: ENV, history: w.history, now: w.now }), null);
+  assert.equal(await loadArmGateContext("BTCUSDT", "blitz_zero", 60, { env: ENV, history: w.history, now: w.now }), null);
+  assert.equal(await loadArmGateContext("bad", "blitz_zero", 300, { env: ENV, history: w.history, now: w.now }), null);
+  // Bybit em baixo e sem registo
+  const boom = async () => { throw new Error("rede"); };
+  assert.equal(await loadArmGateContext("XRPUSDT", "blitz_zero", 300, { env: ENV, history: boom, now: w.now }), null);
+  // registo bom, depois falha ao buscar as velas novas → null (não usa dados parciais)
+  await loadArmGateContext("XRPUSDT", "blitz_zero", 300, { env: ENV, history: w.history, now: w.now });
+  w.state.now += 3600_000;
+  assert.equal(await loadArmGateContext("XRPUSDT", "blitz_zero", 300, { env: ENV, history: boom, now: w.now, freshMs: 1e12 }), null);
+  const partial = async (...a: unknown[]) => ({ ...(await (w.history as (...x: unknown[]) => Promise<Record<string, unknown>>)(...a)), complete: false });
+  assert.equal(await loadArmGateContext("XRPUSDT", "blitz_zero", 300, { env: ENV, history: partial, now: w.now, freshMs: 1e12 }), null);
 });
