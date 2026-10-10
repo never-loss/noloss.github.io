@@ -34,6 +34,56 @@ const FETCH_HEADERS = {
   "User-Agent": "never-loss/0.1 (bybit-linear; paper)",
 };
 
+const GATE_INTERVALS = new Set(["5", "5m", "300"]);
+
+function gateAuthorized(req) {
+  const secret = process.env.CRON_SECRET || process.env.ARM_CRON_SECRET;
+  if (!secret) return true; // sem segredo: aberto, mas limitado por orçamento/bloqueio no Redis
+  const url = new URL(req.url, "http://localhost");
+  const auth = req.headers.authorization || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return url.searchParams.get("secret") === secret || bearer === secret;
+}
+
+/** Porta em cache (mode=gate) e backfill diário (mode=gate-backfill). Só Bybit Linear USDT, 5m. */
+async function handleGate(req, res, url, mode) {
+  const lib = await import("../lib/gate-cache.js");
+  const store = await import("../lib/gate-store.js");
+  const info = store.gateStoreInfo();
+  if (mode === "gate-backfill") {
+    if (!gateAuthorized(req)) return res.status(401).json({ error: "unauthorized" });
+    res.setHeader("Cache-Control", "no-store");
+    const out = await lib.backfillGate({ budgetMs: 40_000 });
+    return res.status(200).json({ ok: true, store: info, ...out });
+  }
+  const interval = String(url.searchParams.get("interval") || "5");
+  if (!GATE_INTERVALS.has(interval)) {
+    return res.status(400).json({ error: "gate_only_5m", error_description: "A porta em cache existe só para velas de 5 minutos." });
+  }
+  const symbolsParam = String(url.searchParams.get("symbols") || "");
+  if (symbolsParam) {
+    // Radar: leitura em massa, 1 comando Redis, sem pedidos à Bybit.
+    const want = symbolsParam === "all" ? null : symbolsParam.toUpperCase().split(",").filter(Boolean).slice(0, 80);
+    if (want && want.some((s) => !lib.GATE_SYMBOL_RE.test(s))) return res.status(400).json({ error: "invalid_symbol" });
+    const all = await store.readAllGateSummaries(300);
+    const now = Date.now();
+    const gates = {};
+    for (const [sym, summary] of Object.entries(all)) {
+      if (want && !want.includes(sym)) continue;
+      gates[sym] = lib.publicGate(summary, now, { source: "cache" });
+    }
+    res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
+    return res.status(200).json({ ok: true, store: info, count: Object.keys(gates).length, gates });
+  }
+  const symbol = String(url.searchParams.get("symbol") || "").toUpperCase();
+  if (!lib.GATE_SYMBOL_RE.test(symbol)) return res.status(400).json({ error: "invalid_symbol" });
+  const refresh = url.searchParams.get("refresh") !== "0";
+  const r = await lib.getGate(symbol, { refresh });
+  if (!r.ok) return res.status(r.status || 400).json({ error: r.error });
+  res.setHeader("Cache-Control", "public, s-maxage=10, stale-while-revalidate=30");
+  return res.status(200).json({ ok: true, store: info, ...r });
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "OPTIONS") {
     res.setHeader("Allow", "GET, OPTIONS");
@@ -45,6 +95,17 @@ export default async function handler(req, res) {
 
   try {
     const url = new URL(req.url, "http://localhost");
+    const mode = String(url.searchParams.get("mode") || "");
+    if (mode === "gate" || mode === "gate-backfill") {
+      try {
+        return await handleGate(req, res, url, mode);
+      } catch (e) {
+        const msg = e && e.message ? String(e.message) : "erro";
+        // Redis indisponível: a UI faz o cálculo local (recurso). Nunca inventa veredicto.
+        if (/upstash/i.test(msg)) return res.status(503).json({ error: "gate_store_unavailable", error_description: msg });
+        throw e;
+      }
+    }
     const symbol = String(url.searchParams.get("symbol") || "").toUpperCase();
     const intervalRaw = String(url.searchParams.get("interval") || "");
     const interval = LABEL_TO_BYBIT[intervalRaw] || null;
