@@ -3,6 +3,7 @@
 // Keep in sync with src/core/bybit-trading.ts — never log secrets.
 
 import { createHmac } from "node:crypto";
+import { measureOrderFill } from "../lib/bybit-place.js";
 
 const MAX_SESSION_MS = 3 * 60 * 60 * 1000;
 const MIN_STAKE = 0.5;
@@ -192,7 +193,23 @@ export default async function handler(req, res) {
         headers,
         body: jsonBody,
       });
-      const text = await upstream.text();
+      let text = await upstream.text();
+      // Medição do custo REAL (só leitura, best-effort): taxa + derrapagem vs preço do sinal enviado pelo painel.
+      // Falhar aqui NUNCA altera a ordem já colocada nem o corpo original da resposta (só se acrescenta um campo).
+      try {
+        const signalPrice = Number(body.signalPrice);
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch { /* raw */ }
+        if (upstream.ok && parsed && (parsed.retCode === 0 || parsed.retCode === "0") && signalPrice > 0) {
+          const m = await measureOrderFill(
+            { ok: true, body: parsed },
+            { symbol, side: String(body.side).toUpperCase(), signalPrice, key: String((parsed.result && parsed.result.orderId) || "manual"), action: reduceOnly ? "close" : "open", at: Date.now() },
+            process.env,
+          );
+          parsed = m.ok ? { ...parsed, nlExecution: m.fill } : { ...parsed, nlExecutionError: m.error };
+          text = JSON.stringify(parsed);
+        }
+      } catch (_e) { /* mantém o corpo original */ }
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Cache-Control", "no-store");
       return res.status(upstream.status).send(text);
