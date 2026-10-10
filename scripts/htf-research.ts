@@ -13,8 +13,14 @@ import type { Candle } from "../src/core/market-data.ts";
 
 const arg = (k: string, d: string): string => { const i = process.argv.indexOf(`--${k}`); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1]! : d; };
 const DIR = arg("dir", "/workspace/tmp/htf");
-const OUT = arg("out", "/workspace/tmp/htf-results.json");
+const OUT = arg("out", OLD_DEFAULT());
+function OLD_DEFAULT(): string { return arg("mode", "main") === "old" ? "/workspace/tmp/htf-results-old.json" : "/workspace/tmp/htf-results.json"; }
 
+const OLD = arg("mode", "main") === "old"; // adendo: 4h em dados anteriores ao estudo principal
+const ONLY_IDS = arg("only", "");
+const END_EPOCH = Date.parse(arg("end", "2023-12-05T00:00:00Z")) / 1000;
+const MIN_START = Date.parse(arg("min-start", "2021-03-01T00:00:00Z")) / 1000;
+const MAIN_JSON = arg("main-json", "/workspace/tmp/htf-results-main.json");
 const WARM = 250;
 const SL_ATR = 3, TP_R = 2, MAX_STOP = 0.08;
 const COST_PRIMARY = 0.0011, COST_MAKERTP = 0.00075, COST_SLIP = 0.0015;
@@ -72,7 +78,7 @@ const CANDS: Cand[] = [
   { id: "E2", tf: "1h", kind: "xs", xs: { lookback: 24, reversal: true, maxBars: 24 } },
   { id: "E3", tf: "4h", kind: "xs", xs: { lookback: 180, reversal: false, maxBars: 18 } },
 ];
-const M = CANDS.length; // 17 testes (pré-registo)
+const M = CANDS.length; // no adendo m=5 (BH) e m=22 (conjunto) // 17 testes (pré-registo)
 
 interface Series { symbol: string; candles: Candle[] }
 function load(tf: string): { used: Series[]; dropped: string[] } {
@@ -85,6 +91,12 @@ function load(tf: string): { used: Series[]; dropped: string[] } {
     const f = `${DIR}/${sym}_${tf}.json`;
     if (!existsSync(f)) { dropped.push(`${sym} (sem ficheiro)`); continue; }
     const j = JSON.parse(readFileSync(f, "utf8"));
+    if (OLD) {
+      const cs = (j.candles as Candle[]).filter((c) => c.epoch < END_EPOCH);
+      if (cs.length < 1000 || cs[0]!.epoch > MIN_START) { dropped.push(`${sym} (começa ${cs[0] ? new Date(cs[0].epoch * 1000).toISOString().slice(0, 10) : "-"})`); continue; }
+      used.push({ symbol: sym, candles: cs });
+      continue;
+    }
     if (!j.coversStart || j.n < 0.97 * expected) { dropped.push(`${sym} (${j.n}/${expected}, cobre=${j.coversStart})`); continue; }
     used.push({ symbol: sym, candles: j.candles });
   }
@@ -194,8 +206,9 @@ function evaluate(cand: Cand, series: Series[], dropped: string[], ctlSig?: SigF
 function main(): void {
   const results: Res[] = [];
   const loaded: Record<string, ReturnType<typeof load>> = {};
-  for (const tf of Object.keys(TF)) { loaded[tf] = load(tf); console.error(`${tf}: ${loaded[tf]!.used.length} símbolos usados; excluídos: ${loaded[tf]!.dropped.join(", ") || "nenhum"}`); }
-  for (const cand of CANDS) {
+  const tfs = OLD ? ["4h"] : Object.keys(TF);
+  for (const tf of tfs) { loaded[tf] = load(tf); console.error(`${tf}: ${loaded[tf]!.used.length} símbolos usados; excluídos: ${loaded[tf]!.dropped.join(", ") || "nenhum"}`); }
+  for (const cand of CANDS.filter((c) => !OLD || ONLY_IDS.split(",").includes(c.id))) {
     const L = loaded[cand.tf]!;
     const r = evaluate(cand, L.used, L.dropped);
     results.push(r);
@@ -218,15 +231,21 @@ function main(): void {
     r.stage = r.pass ? "PASSA" : "falha: " + Object.entries(checks).filter(([, v]) => !v).map(([k2]) => k2).join(",");
   }
   // controlo aleatório (fora do FDR)
-  const ctl = evaluate({ id: "CTL", tf: "1h", kind: "single" }, loaded["1h"]!.used, loaded["1h"]!.dropped, randomDir(12345));
+  const ctl = OLD ? evaluate({ id: "CTL", tf: "4h", kind: "single" }, loaded["4h"]!.used, loaded["4h"]!.dropped, randomDir(12345)) : evaluate({ id: "CTL", tf: "1h", kind: "single" }, loaded["1h"]!.used, loaded["1h"]!.dropped, randomDir(12345));
   writeFileSync(OUT, JSON.stringify({ generatedAt: new Date().toISOString(), m: M, bhPassed: k, results, control: ctl }, null, 1));
   const f = (x: number | null, d = 3): string => (x === null ? "-" : x.toFixed(d));
   console.log("id  tf   nSym  nOp(d/c)      R/op net  R/op bruto  R/op disc  R/op conf  pDisc  adjP   pConf  blocos+  ult30d  sym+   R@0.075  R@0.15  op/sim/mês  veredicto");
   for (const r of results) {
     console.log(`${r.id.padEnd(3)} ${r.tf.padEnd(4)} ${String(r.nSym).padStart(3)}  ${String(r.nDisc).padStart(6)}/${String(r.nConf).padEnd(6)} ${f(r.meanRFull).padStart(9)} ${f(r.meanRFullGross).padStart(10)} ${f(r.meanRDisc).padStart(10)} ${f(r.meanRConf).padStart(10)} ${f(r.pDisc).padStart(6)} ${f(r.adjPDisc ?? null).padStart(6)} ${f(r.pConf).padStart(6)}  ${r.blocksPos}/${r.blocks}`.padEnd(5) + `   ${f(r.lastBlockMean, 4).padStart(8)}  ${(r.symPosShare * 100).toFixed(0).padStart(3)}%  ${f(r.meanR_makerTP).padStart(7)} ${f(r.meanR_slip).padStart(7)}  ${r.tradesPerSymPerMonth.toFixed(1).padStart(6)}   ${r.stage}`);
   }
-  console.log(`\nm=${M} testes; passam BH(q=0,10) na descoberta: ${k}; passam TODAS as regras: ${results.filter((r) => r.pass).length}`);
+  if (OLD) {
+    const main = JSON.parse(readFileSync(MAIN_JSON, "utf8")).results as Res[];
+    const all = [...main.map((r) => r.pDisc), ...results.map((r) => r.pDisc)];
+    const b22 = benjaminiHochberg(all, 0.1);
+    console.log("BH conjunto (17 principais + adendo, m=22), p ajustado na descoberta do adendo:", results.map((r, i) => `${r.id}=${f(b22.adjP[main.length + i] ?? null)}`).join(" "), "| m =", b22.m);
+  }
+  console.log(`\nm=${OLD ? results.length : M} testes; passam BH(q=0,10) na descoberta: ${k}; passam TODAS as regras: ${results.filter((r) => r.pass).length}`);
   console.log(`Controlo aleatório (1h, fora do FDR): n=${ctl.nDisc + ctl.nConf}, R/op net ${f(ctl.meanRFull)}, bruto ${f(ctl.meanRFullGross)}`);
-  for (const tf of Object.keys(TF)) console.log(`${tf}: ${results.find((r) => r.tf === tf)!.nSym} símbolos; período ${results.find((r) => r.tf === tf)!.from} → ${results.find((r) => r.tf === tf)!.to} (divisão ${results.find((r) => r.tf === tf)!.split}); excluídos: ${loaded[tf]!.dropped.join("; ") || "nenhum"}`);
+  for (const tf of tfs) console.log(`${tf}: ${results.find((r) => r.tf === tf)!.nSym} símbolos; período ${results.find((r) => r.tf === tf)!.from} → ${results.find((r) => r.tf === tf)!.to} (divisão ${results.find((r) => r.tf === tf)!.split}); excluídos: ${loaded[tf]!.dropped.join("; ") || "nenhum"}`);
 }
 main();

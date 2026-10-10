@@ -5,7 +5,10 @@ const arg = (k, d) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 
 const OUT = arg("out", "/workspace/tmp/htf");
 const PROXY = arg("proxy", "https://noloss-zeta.vercel.app");
 export const UNIVERSE = "BTC ETH SOL XRP DOGE BNB ADA AVAX LINK LTC DOT TRX BCH ATOM NEAR APT ARB OP SUI INJ FIL ETC UNI AAVE XLM HBAR ICP ALGO RUNE CRV".split(" ").map((s) => s + "USDT");
-const TFS = [{ id: "15m", interval: "15", sec: 900, days: 180 }, { id: "1h", interval: "60", sec: 3600, days: 540 }, { id: "4h", interval: "240", sec: 14400, days: 1080 }];
+const ALLTFS = [{ id: "15m", interval: "15", sec: 900, days: 180 }, { id: "1h", interval: "60", sec: 3600, days: 540 }, { id: "4h", interval: "240", sec: 14400, days: 1080 }];
+const TFSEL = arg("tfs", "");
+const DAYS = Number(arg("days", "0"));
+const TFS = ALLTFS.filter((t) => !TFSEL || TFSEL.split(",").includes(t.id)).map((t) => ({ ...t, days: DAYS || t.days }));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function page(sym, interval, end) {
   for (let a = 0; a < 6; a++) {
