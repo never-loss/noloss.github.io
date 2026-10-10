@@ -24,6 +24,11 @@
   var RADAR_KLINES = 120;
   var RADAR_IDLE_MS = 80;
   var RADAR_GATE_CACHE_TTL_MS = 5 * 60 * 1000;
+  // Porta em cache no servidor (histórico profundo): usada se existir e não for velha; senão cálculo local.
+  var GATE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+  var GATE_CACHE_BULK_TTL_MS = 5 * 60 * 1000;
+  var GATE_CACHE_POLL_MS = 2 * 60 * 1000;
+  var GATE_CACHE_TIMEOUT_MS = 9000;
 
   var NL = window.NL;
   if (!NL) {
@@ -53,6 +58,8 @@
     chartCandles: [],
     gateCandles: [],
     liveGates: { lucro_rapido: null, loss_zero: null, blitz_zero: null },
+    gateSource: "local", // "cache" = veredicto do servidor (histórico profundo) · "local" = cálculo no browser
+    gateCache: { single: {}, bulk: {}, bulkAt: 0, bulkLoading: false, lastFetchAt: 0 },
     liveProx: { lucro_rapido: null, loss_zero: null, blitz_zero: null },
     armState: "disarmed",
     feedMode: "idle",
@@ -727,6 +734,18 @@
       startGateTimer();
       scheduleLiveProximity();
 
+      // Porta em cache do servidor (histórico profundo): se existir, dispensa as páginas + cálculo pesado.
+      if (gateCacheUsable() && cacheCoversStrategy()) {
+        var cg = await fetchGateCache(sym);
+        if (gen !== state.loadGen || state.symbol !== sym || state.granularity !== gran) return;
+        if (cg && applyGateCacheToState(sym, cg)) {
+          state.gateCandles = recent.slice();
+          afterGateUpdate();
+          return;
+        }
+      }
+      state.gateSource = "local";
+
       var hist = recent.slice();
       try {
         hist = await fetchBybitHistory(sym, gran, GATE_HISTORY);
@@ -1051,8 +1070,11 @@
       if (state.liveProx[preset]) live = state.liveProx[preset];
     }
     if (!gate) gate = getRadarGateCached(sym, preset);
+    if (!gate) gate = getBulkGateResult(sym, preset);
     var gateKnown = !!gate;
-    return combineReadinessUI(gate, live, preset, gateKnown);
+    var combinedR = combineReadinessUI(gate, live, preset, gateKnown);
+    if (gate && typeof NL.gateProvenanceLabel === "function") combinedR.gateInfo = NL.gateProvenanceLabel(gate);
+    return combinedR;
   }
 
   /**
@@ -1101,6 +1123,122 @@
     }
   }
 
+  // ---------- Porta em cache (servidor) ----------
+  /** A cache cobre os 3 presets do painel; Tendência diária / Biblioteca só têm cálculo local. */
+  function cacheCoversStrategy() {
+    return !state.strategySet || state.strategySet === "lucro_rapido" || state.strategySet === "loss_zero" || state.strategySet === "blitz_zero";
+  }
+
+  function gateCacheUsable() {
+    return state.granularity === 300 && state.minMultiplier === 100 &&
+      typeof NL.cachedVerdictToResult === "function" && typeof NL.isCacheUsable === "function";
+  }
+
+  async function fetchGateJson(url) {
+    var ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, GATE_CACHE_TIMEOUT_MS) : null;
+    try {
+      var res = await fetch(url, ctrl ? { signal: ctrl.signal } : undefined);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_e) {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function fetchGateCache(sym) {
+    var j = await fetchGateJson(BYBIT_KLINES_URL + "?mode=gate&interval=5&symbol=" + encodeURIComponent(sym));
+    return j && j.ok && j.known && j.gate ? j.gate : null;
+  }
+
+  /** Aplica o veredicto em cache aos 3 presets do símbolo. true se os 3 são utilizáveis (senão, cálculo local). */
+  function applyGateCacheToState(sym, gate) {
+    var ids = ["lucro_rapido", "loss_zero", "blitz_zero"];
+    for (var i = 0; i < ids.length; i++) {
+      if (!NL.isCacheUsable(gate, ids[i], GATE_CACHE_MAX_AGE_MS)) return false;
+    }
+    for (var j = 0; j < ids.length; j++) {
+      var r = NL.cachedVerdictToResult(gate, ids[j]);
+      state.liveGates[ids[j]] = r;
+      putRadarGateCache(sym, ids[j], r);
+      renderStratCard(ids[j], r, null);
+    }
+    state.gateSource = "cache";
+    state.gateCache.single[sym] = { gate: gate, at: Date.now() };
+    state.gateCache.lastFetchAt = Date.now();
+    return true;
+  }
+
+  function afterGateUpdate() {
+    scheduleLiveProximity();
+    syncPlayReadyFromSelection();
+    syncArmUi();
+    updateButtons();
+  }
+
+  /** Vai buscar (ou reaproveita, se recente) o veredicto em cache do símbolo actual. */
+  async function refreshGateFromCache(force) {
+    var sym = state.symbol;
+    if (!sym || !gateCacheUsable()) return false;
+    var hit = state.gateCache.single[sym];
+    if (!force && hit && Date.now() - hit.at < GATE_CACHE_POLL_MS) {
+      return applyGateCacheToState(sym, Object.assign({}, hit.gate, { ageMs: hit.gate.ageMs + (Date.now() - hit.at) }));
+    }
+    var gate = await fetchGateCache(sym);
+    if (state.symbol !== sym) return false;
+    if (!gate) return false;
+    var ok = applyGateCacheToState(sym, gate);
+    if (ok) afterGateUpdate();
+    return ok;
+  }
+
+  function getBulkGateResult(sym, preset) {
+    var g = state.gateCache.bulk[sym];
+    if (!g || !gateCacheUsable()) return null;
+    var aged = Object.assign({}, g, { ageMs: (g.ageMs || 0) + (Date.now() - state.gateCache.bulkAt) });
+    if (!NL.isCacheUsable(aged, preset, GATE_CACHE_MAX_AGE_MS)) return null;
+    return NL.cachedVerdictToResult(aged, preset);
+  }
+
+  /** Radar: porta de TODOS os símbolos em 1 pedido (leitura da cache; sem pedidos à Bybit). */
+  async function loadBulkGates() {
+    if (state.gateCache.bulkLoading || !gateCacheUsable()) return;
+    state.gateCache.bulkLoading = true;
+    try {
+      var j = await fetchGateJson(BYBIT_KLINES_URL + "?mode=gate&interval=5&symbols=all");
+      if (j && j.ok && j.gates) {
+        state.gateCache.bulk = j.gates;
+        state.gateCache.bulkAt = Date.now();
+        refreshRadarRowsFromBulk();
+      }
+    } finally {
+      state.gateCache.bulkLoading = false;
+    }
+  }
+
+  function refreshRadarRowsFromBulk() {
+    var preset = activeRadarPreset();
+    var rows = state.radar.rows;
+    var changed = false;
+    Object.keys(rows).forEach(function (sym) {
+      var r = rows[sym];
+      if (!r || r.preset !== preset) return;
+      if (sym === state.symbol && state.liveGates[preset]) return; // seleccionado: manda o arm
+      var live = { proximityPct: r.signalPct || 0, bias: r.bias || "neutral", atTarget: !!r.atTarget, detail: r.detail || "" };
+      var c = readinessForRadarSymbol(sym, live, preset);
+      if (c.kind === "signal_only") return;
+      r.proximityPct = c.score;
+      r.readinessLabel = c.label;
+      r.readinessKind = c.kind;
+      r.gateKnown = true;
+      r.gateInfo = c.gateInfo || "";
+      changed = true;
+    });
+    if (changed) renderRadarList();
+  }
+
   function gateOptsForPreset(presetId, costFraction, trainSize, testSize) {
     var preset = typeof NL.strategyPreset === "function" ? NL.strategyPreset(presetId) : null;
     var g = (preset && preset.preferredGate) || {};
@@ -1139,10 +1277,27 @@
     var testSize = Math.min(500, Math.floor(n * 0.2));
     var strategies = strategiesFor(presetId);
     var gate = gateOptsForPreset(presetId, costFraction, trainSize, testSize);
-    return NL.evaluateCandleGate(candles, strategies, gate);
+    var localRes = NL.evaluateCandleGate(candles, strategies, gate);
+    if (localRes && typeof localRes === "object") {
+      localRes.source = "local";
+      localRes.candlesUsed = n;
+      localRes.gran = state.granularity;
+    }
+    return localRes;
   }
 
   async function reevaluateBothGates() {
+    if (state.gateSource === "cache" && gateCacheUsable()) {
+      var viaCache = await refreshGateFromCache(false);
+      if (viaCache && cacheCoversStrategy()) return;
+      // Cache falhou/velha: cálculo local (carrega o histórico profundo uma vez).
+      state.gateSource = "local";
+      var symG = state.symbol;
+      try {
+        var deep = await fetchBybitHistory(symG, state.granularity, GATE_HISTORY);
+        if (state.symbol === symG) state.gateCandles = deep;
+      } catch (_deep) {}
+    }
     var candles = state.gateCandles;
     if (!candles || candles.length < 100) {
       setStratError("à espera de mais velas reais…");
@@ -1258,7 +1413,8 @@
         ? (typeof NL.formatCandleGate === "function" ? NL.formatCandleGate(result) : result.reason)
         : "porta pendente";
       var liveTxt = live ? live.detail : "";
-      reason.textContent = gateTxt + (liveTxt ? " · " + liveTxt : "");
+      var provCard = result && typeof NL.gateProvenanceLabel === "function" ? NL.gateProvenanceLabel(result) : "";
+      reason.textContent = gateTxt + (liveTxt ? " · " + liveTxt : "") + (provCard ? " · [" + provCard + "]" : "");
     }
   }
 
@@ -1340,6 +1496,8 @@
         : "A aguardar…";
     }
     var set = function (id, v) { var n = el(id); if (n) n.textContent = v; };
+    var provTxt = result && typeof NL.gateProvenanceLabel === "function" ? NL.gateProvenanceLabel(result) : "";
+    set("gateProv", provTxt);
     set("gateLabel", result && result.label ? result.label : "—");
     set("gateOos", result && typeof result.oosTrades === "number" ? String(result.oosTrades) : "—");
     set("gateMeanR", result && typeof result.meanR === "number"
@@ -1935,14 +2093,21 @@
     if (btnA) btnA.disabled = true;
     pushHistory("A reavaliar porta · " + state.strategySet + " · " + state.symbol + "…", "");
     try {
-      if (!state.gateCandles.length || state.gateCandles.length < 1500) {
-        state.gateCandles = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+      var viaCacheA = false;
+      if (gateCacheUsable() && cacheCoversStrategy()) viaCacheA = await refreshGateFromCache(true);
+      if (!viaCacheA) {
+        state.gateSource = "local";
+        if (!state.gateCandles.length || state.gateCandles.length < 1500) {
+          state.gateCandles = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+        }
+        await reevaluateBothGates();
       }
-      await reevaluateBothGates();
       var result = state.liveGates[state.strategySet];
       pushHistory("Análise · " + state.strategySet + " · " +
         (result && result.allowed ? "PORTA ABERTA" : "NO TRADE") + " · " +
-        (result ? result.reason : "sem resultado"),
+        (result ? result.reason : "sem resultado") +
+        (result && typeof NL.gateProvenanceLabel === "function" && NL.gateProvenanceLabel(result)
+          ? " · " + NL.gateProvenanceLabel(result) : ""),
         result && result.allowed ? "open" : "stop");
       return result;
     } catch (e) {
@@ -1980,6 +2145,14 @@
     }
     if (state.running) return;
 
+    // Sessão local usa o controlador local: passa a cálculo local (coerente com quem decide as entradas).
+    if (state.gateSource === "cache") {
+      try {
+        state.gateCandles = await fetchBybitHistory(state.symbol, state.granularity, GATE_HISTORY);
+      } catch (_arm) {}
+      state.gateSource = "local";
+      state.liveGates = { lucro_rapido: null, loss_zero: null, blitz_zero: null };
+    }
     // Ensure selected preset has a fresh gate (wiring: strategy → evaluateCandleGate → arm).
     if (!state.liveGates[state.strategySet] || state.gateCandles.length < 1500) {
       await reevaluateBothGates();
@@ -2305,7 +2478,7 @@
           ? ("porta+sinal · " + stratName)
           : ("sinal · " + stratName + " · porta pendente");
         return '<div class="radar-row ' + hot + active + '" role="listitem" data-symbol="' + escapeHtml(r.symbol) +
-          '" title="' + escapeHtml((r.readinessLabel || "prontidão") + " · " + stratName) + '">' +
+          '" title="' + escapeHtml((r.readinessLabel || "prontidão") + " · " + stratName + (r.gateInfo ? " · porta — " + r.gateInfo : "")) + '">' +
           '<span class="sym">' + escapeHtml(r.symbol.replace(/USDT$/, "")) +
           '<small style="opacity:.55">USDT</small>' + kindTag + "</span>" +
           '<span class="bias ' + bias + '">' + biasLabel + "</span>" +
@@ -2358,6 +2531,7 @@
         state.radar.timer = setTimeout(tick, 2000);
         return;
       }
+      if (Date.now() - state.gateCache.bulkAt > GATE_CACHE_BULK_TTL_MS) loadBulkGates();
       var batch = [];
       for (var n = 0; n < RADAR_BATCH && n < all.length; n++) {
         var idx = (state.radar.cursor + n) % all.length;
@@ -2393,6 +2567,7 @@
             readinessLabel: readyRadar.label,
             readinessKind: readyRadar.kind,
             gateKnown: gateKnown,
+            gateInfo: readyRadar.gateInfo || "",
             bias: (it.symbol === state.symbol && state.liveProx[preset] && state.liveProx[preset].bias)
               ? state.liveProx[preset].bias
               : (live.bias || "neutral"),
