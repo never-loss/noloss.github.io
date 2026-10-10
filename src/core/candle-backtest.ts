@@ -4,8 +4,9 @@
 
 import { gammaQ } from "./stats.ts";
 import { atr } from "./indicators.ts";
+import type { Series } from "./indicators.ts";
 import type { Candle } from "./market-data.ts";
-import type { Strategy } from "./strategies.ts";
+import type { Strategy, Signal } from "./strategies.ts";
 
 export type ExitReason = "sl" | "tp" | "time";
 
@@ -115,10 +116,28 @@ export interface CandleBacktestResult {
   metrics: RMetrics;
 }
 
+/**
+ * Sinais e ATR de uma estratégia sobre o array COMPLETO de velas. Calculam-se uma só vez e reutilizam-se
+ * em todos os blocos do walk-forward (o resultado é idêntico a recalcular em cada bloco: mesma entrada, mesma saída).
+ */
+export interface PreparedBacktest {
+  signals: readonly Signal[];
+  atrs: Series;
+}
+
+export function prepareBacktest(
+  candles: readonly Candle[],
+  strategy: Strategy,
+  atrPeriod = 14,
+): PreparedBacktest {
+  return { signals: strategy.signals(candles), atrs: atr(candles, atrPeriod) };
+}
+
 export function runCandleBacktest(
   candles: readonly Candle[],
   strategy: Strategy,
   opts: CandleBacktestOptions,
+  prepared?: PreparedBacktest,
 ): CandleBacktestResult {
   assertOpts(opts);
   const n = candles.length;
@@ -128,9 +147,10 @@ export function runCandleBacktest(
     throw new RangeError(`Intervalo inválido: ${start}..${end}`);
   }
   const dirs = opts.directions ?? "both";
-  const signals = strategy.signals(candles);
+  const signals = prepared ? prepared.signals : strategy.signals(candles);
   if (signals.length !== n) throw new RangeError("A estratégia devolveu um número errado de sinais");
-  const atrs = atr(candles, opts.atrPeriod ?? 14);
+  const atrs = prepared ? prepared.atrs : atr(candles, opts.atrPeriod ?? 14);
+  if (atrs.length !== n) throw new RangeError("ATR com tamanho errado");
   const trades: CandleTrade[] = [];
 
   let i = start;
@@ -225,6 +245,19 @@ export function walkForwardCandles(
   const { trainSize, testSize, minTrainTrades: _ignored, ...base } = opts;
   void _ignored;
 
+  // Sinais e ATR calculados UMA vez por estratégia (antes: por bloco x estratégia, custo quadrático).
+  const atrPeriod = base.atrPeriod ?? 14;
+  const atrs = atr(candles, atrPeriod);
+  const prepared = new Map<Strategy, PreparedBacktest>();
+  const prep = (s: Strategy): PreparedBacktest => {
+    let p = prepared.get(s);
+    if (!p) {
+      p = { signals: s.signals(candles), atrs };
+      prepared.set(s, p);
+    }
+    return p;
+  };
+
   const folds: CandleFold[] = [];
   const oosR: number[] = [];
   let start = 0;
@@ -236,7 +269,7 @@ export function walkForwardCandles(
     let chosen: Strategy | null = null;
     let chosenTrain: RMetrics | null = null;
     for (const s of strategies) {
-      const m = runCandleBacktest(candles, s, { ...base, start, end: testStart }).metrics;
+      const m = runCandleBacktest(candles, s, { ...base, start, end: testStart }, prep(s)).metrics;
       if (m.trades < minTrades) continue;
       if (chosenTrain === null || m.netR > chosenTrain.netR) {
         chosen = s;
@@ -246,7 +279,7 @@ export function walkForwardCandles(
 
     let test: RMetrics | null = null;
     if (chosen !== null) {
-      const r = runCandleBacktest(candles, chosen, { ...base, start: testStart, end: testEnd });
+      const r = runCandleBacktest(candles, chosen, { ...base, start: testStart, end: testEnd }, prep(chosen));
       oosR.push(...r.trades.map((t) => t.r));
       test = r.metrics;
     }
