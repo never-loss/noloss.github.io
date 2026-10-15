@@ -846,3 +846,6 @@ export function publicCloudArmJob(job: CloudArmJob): Record<string, unknown> {
     realFills: job.realFills ?? [],
   };
 }
+
+// Teste 4 h pré-registado (só PAPER) — exportado para o bundle do servidor (lib/nl-cloud.mjs).
+export * from "./forward-4h.ts";

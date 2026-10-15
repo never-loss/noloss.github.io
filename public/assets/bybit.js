@@ -2381,6 +2381,67 @@
   }
 
 
+  // ---- Teste 4 h pré-registado em PAPER (só leitura + iniciar uma vez). Nunca coloca ordens; não há opção REAL. ----
+  var F4H_URL = "/api/bybit-arm?forward=4h";
+  var f4hTimer = null;
+
+  function fmtDateUtc1(epochSec) {
+    try {
+      return new Date(epochSec * 1000).toLocaleString("pt-PT", { timeZone: "Africa/Luanda", dateStyle: "short", timeStyle: "short" }) + " (Luanda)";
+    } catch (_e) { return new Date(epochSec * 1000).toISOString(); }
+  }
+
+  function renderForward4h(f) {
+    try {
+      var box = el("f4hPanel");
+      if (!box || !f) return;
+      box.hidden = false;
+      var t = el("f4hTitle"), m = el("f4hMeta"), b = el("btnF4hStart"), list = el("f4hList");
+      if (t) t.textContent = "Teste 4 h · PAPER · " + (f.label || "sem evidência ainda");
+      if (!f.started) {
+        if (m) m.textContent = "Não iniciado. 5 candidatos de tendência 4 h pré-registados, 30 símbolos, custo 0,13 %. Só PAPER, 90 dias, sem ordens reais.";
+        if (b) b.hidden = false;
+        if (list) list.textContent = "";
+        return;
+      }
+      if (b) b.hidden = true;
+      var tot = f.totals || { closed: 0, open: 0, netR: 0 };
+      if (m) {
+        m.textContent = "Início " + fmtDateUtc1(f.startEpoch) + " · dia " + f.daysElapsed + "/" + f.durationDays +
+          " · " + tot.closed + " operações fechadas (" + tot.open + " abertas) · R líquido " + (tot.netR >= 0 ? "+" : "") + tot.netR.toFixed(2) +
+          "R · simulado, sem dinheiro" + (f.lastErrors && f.lastErrors.length ? " · " + f.lastErrors.length + " símbolos sem dados no último tick" : "");
+      }
+      if (list) {
+        var rows = (f.candidates || []).map(function (c) {
+          return c.id + " " + c.label + ": n=" + c.closed + (c.open ? " (+" + c.open + " abertas)" : "") + ", R/op " +
+            (c.closed ? (c.meanR >= 0 ? "+" : "") + c.meanR.toFixed(3) : "—");
+        });
+        list.textContent = rows.join(" · ");
+      }
+    } catch (_e) { /* só informação */ }
+  }
+
+  async function refreshForward4h() {
+    try {
+      var r = await fetch(F4H_URL);
+      var d = await r.json();
+      if (r.ok && d && d.forward4h) renderForward4h(d.forward4h);
+    } catch (_e) { /* painel informativo: falhas silenciosas */ }
+    if (f4hTimer) clearTimeout(f4hTimer);
+    f4hTimer = setTimeout(refreshForward4h, 10 * 60 * 1000);
+  }
+
+  async function startForward4hUi() {
+    if (!window.confirm("Iniciar o teste 4 h em PAPER (90 dias, sem dinheiro, sem ordens reais)? O início fica fixo e não pode ser reposto.")) return;
+    try {
+      var r = await fetch(F4H_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "start", confirmPaper: true }) });
+      var d = await r.json();
+      if (d && d.forward4h) renderForward4h(d.forward4h);
+    } catch (e) {
+      pushHistory("Teste 4 h: " + (e.message || String(e)), "stop");
+    }
+  }
+
   function syncArmUi() {
     var box = el("armBox");
     var title = el("armTitle");
@@ -2963,6 +3024,9 @@
     if (btnP) btnP.addEventListener("click", function () { startSession(); });
     var btnCloud = el("btnCloudArm");
     if (btnCloud) btnCloud.addEventListener("click", function () { startCloudArm(); });
+    var btnF4h = el("btnF4hStart");
+    if (btnF4h) btnF4h.addEventListener("click", function () { startForward4hUi(); });
+    refreshForward4h();
     var btnCloudStop = el("btnCloudStop");
     if (btnCloudStop) btnCloudStop.addEventListener("click", function () { stopCloudArm(); });
     var btnPause = el("btnBybitPause");

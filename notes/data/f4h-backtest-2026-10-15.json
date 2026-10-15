@@ -1,0 +1,141 @@
+{
+ "generatedAt": "2026-10-15T13:03:42.140Z",
+ "symbols": [
+  "1000PEPEUSDT",
+  "WIFUSDT",
+  "SHIB1000USDT",
+  "1000BONKUSDT",
+  "TIAUSDT",
+  "SEIUSDT",
+  "WLDUSDT",
+  "ORDIUSDT",
+  "LDOUSDT",
+  "IMXUSDT",
+  "GALAUSDT",
+  "SANDUSDT",
+  "MANAUSDT",
+  "AXSUSDT",
+  "KASUSDT",
+  "ONDOUSDT",
+  "ENAUSDT"
+ ],
+ "dropped": [
+  "FETUSDT (começa -)",
+  "EOSUSDT (começa -)",
+  "MKRUSDT (começa -)"
+ ],
+ "from": "2024-06-01T00:00:00.000Z",
+ "to": "2026-10-15T12:00:00.000Z",
+ "results": [
+  {
+   "id": "A3",
+   "label": "Donchian 20",
+   "n": 871,
+   "meanR": 0.10744032096766026,
+   "meanRGross": 0.12694065026760873,
+   "meanR017": 0.10144021964459966,
+   "dailyMean": 0.006221798729876336,
+   "p": 0.07982968676878505,
+   "blocksPos": 19,
+   "blocks": 28,
+   "lastBlock": 0.01339596933379451,
+   "symPos": 0.7058823529411765,
+   "adjP": 0.1957054207304471,
+   "checks": {
+    "1_BH": false,
+    "2_blocos": true,
+    "3_largura": true,
+    "4_custo017": true
+   },
+   "pass": false
+  },
+  {
+   "id": "A4",
+   "label": "Donchian 55",
+   "n": 563,
+   "meanR": 0.060536836646574596,
+   "meanRGross": 0.08047292238219386,
+   "meanR017": 0.0544026564202301,
+   "dailyMean": 0.0023150549539479323,
+   "p": 0.27504664524636596,
+   "blocksPos": 17,
+   "blocks": 28,
+   "lastBlock": 0.015961009876792463,
+   "symPos": 0.5294117647058824,
+   "adjP": 0.27504664524636596,
+   "checks": {
+    "1_BH": false,
+    "2_blocos": true,
+    "3_largura": false,
+    "4_custo017": true
+   },
+   "pass": false
+  },
+  {
+   "id": "B2",
+   "label": "EMA 20/50",
+   "n": 450,
+   "meanR": 0.12381005309270264,
+   "meanRGross": 0.14342704450681182,
+   "meanR017": 0.11777405573451528,
+   "dailyMean": 0.0036498186927536465,
+   "p": 0.13804130933415504,
+   "blocksPos": 16,
+   "blocks": 28,
+   "lastBlock": 0.023451434264706545,
+   "symPos": 0.6470588235294118,
+   "adjP": 0.1957054207304471,
+   "checks": {
+    "1_BH": false,
+    "2_blocos": false,
+    "3_largura": true,
+    "4_custo017": true
+   },
+   "pass": false
+  },
+  {
+   "id": "C2",
+   "label": "Donchian 20 + volatilidade",
+   "n": 264,
+   "meanR": 0.1337089665899916,
+   "meanRGross": 0.15244684551240023,
+   "meanR017": 0.1279434653830965,
+   "dailyMean": 0.0023977154720661465,
+   "p": 0.13731744516108702,
+   "blocksPos": 11,
+   "blocks": 28,
+   "lastBlock": 0.002580673401108093,
+   "symPos": 0.7647058823529411,
+   "adjP": 0.1957054207304471,
+   "checks": {
+    "1_BH": false,
+    "2_blocos": false,
+    "3_largura": true,
+    "4_custo017": true
+   },
+   "pass": false
+  },
+  {
+   "id": "D2",
+   "label": "Momentum 90 velas",
+   "n": 1196,
+   "meanR": 0.07366453517581188,
+   "meanRGross": 0.09229770529039003,
+   "meanR017": 0.06793125206363375,
+   "dailyMean": 0.005988275385723211,
+   "p": 0.1565643365843577,
+   "blocksPos": 17,
+   "blocks": 28,
+   "lastBlock": -0.0010384916207092005,
+   "symPos": 0.6470588235294118,
+   "adjP": 0.1957054207304471,
+   "checks": {
+    "1_BH": false,
+    "2_blocos": false,
+    "3_largura": true,
+    "4_custo017": true
+   },
+   "pass": false
+  }
+ ]
+}
