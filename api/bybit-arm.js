@@ -38,6 +38,7 @@ import {
   quantityFromFixedStake,
 } from "../lib/bybit-place.js";
 import { recordRealFill } from "../lib/arm-real-fill.js";
+import { advanceForward4h, startForward4h, publicForward4h } from "../lib/forward-4h-service.js";
 
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -390,9 +391,18 @@ async function handleTick(req, res, store) {
       });
     }
   }
+  // Teste 4 h pré-registado (só PAPER): best-effort, nunca parte o tick do arm.
+  let forward4h = null;
+  try {
+    const f = await advanceForward4h(Date.now(), { force: true });
+    forward4h = f.state ? { advanced: f.advanced, trades: (f.state.trades || []).length, errors: (f.state.lastErrors || []).length } : { started: false };
+  } catch (e) {
+    forward4h = { error: e && e.message ? String(e.message) : "erro" };
+  }
   return res.status(200).json({
     ok: true,
     store,
+    forward4h,
     ticked: results.length,
     results,
     schedules: scheduleResults,
@@ -414,6 +424,28 @@ export default async function handler(req, res) {
   try {
     if (isTick && (req.method === "GET" || req.method === "POST")) {
       return handleTick(req, res, store);
+    }
+
+    // Teste 4 h em PAPER (opt-in): GET = ver (+ avanço preguiçoso, limitado a 1x/15 min); POST action=start = iniciar uma vez.
+    // Não há nenhum caminho REAL aqui: não lê "mode", não chama a Bybit privada, não coloca ordens.
+    if (url.searchParams.get("forward") === "4h") {
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        if (String(body.action || url.searchParams.get("action") || "") !== "start" || body.confirmPaper !== true) {
+          return res.status(400).json({ error: "start_requires_confirmPaper", error_description: "Iniciar o teste 4 h exige action=start e confirmPaper: true (só PAPER)." });
+        }
+        const r = await startForward4h(Date.now());
+        return res.status(200).json({ ok: true, store, created: r.created, forward4h: publicForward4h(r.state) });
+      }
+      if (req.method !== "GET") return res.status(405).json({ error: "method_not_allowed" });
+      let f;
+      try {
+        f = await advanceForward4h(Date.now());
+      } catch (_e) {
+        f = { state: null };
+      }
+      const st = f.state || (await (await import("../lib/arm-store.js")).getForward4hState());
+      return res.status(200).json({ ok: true, store, forward4h: publicForward4h(st) });
     }
 
     if (req.method === "POST") {
