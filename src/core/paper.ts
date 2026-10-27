@@ -19,7 +19,11 @@ export type StopReason =
   | "max_trades"
   | "max_duration"
   | "max_consecutive_losses"
-  | "max_drawdown";
+  | "max_drawdown"
+  /** Giro Diário: meta do dia (+3R) atingida. */
+  | "daily_target"
+  /** Giro Diário: limite de perda do dia (−3R) atingido. */
+  | "daily_loss_limit";
 
 export interface PaperConfig {
   rule: Rule;

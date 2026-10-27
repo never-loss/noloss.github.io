@@ -1,0 +1,141 @@
+{
+  "at": "2026-10-27T14:41:47.648Z",
+  "gran": 300,
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "DOGEUSDT"
+  ],
+  "window": "dias 60→30 antes de hoje",
+  "rule": "top-4 média R, >=100 ops, custo 0,1%",
+  "rows": [
+    {
+      "name": "tendência-diária breakout-ATR 48×0.75 adx25",
+      "trades": 343,
+      "meanR": -0.31080214094423386,
+      "p": 0.9999982316526466
+    },
+    {
+      "name": "rsi-reversao 14 25/75",
+      "trades": 400,
+      "meanR": -0.33474893285409296,
+      "p": 0.9999999908217101
+    },
+    {
+      "name": "bollinger-reversao 20 k2.5",
+      "trades": 1130,
+      "meanR": -0.34523194165245574,
+      "p": 1
+    },
+    {
+      "name": "confluencia(estocastico 14/3 20/80 + rsi-reversao 14 30/70) >=2 h3",
+      "trades": 901,
+      "meanR": -0.3601170086029791,
+      "p": 1
+    },
+    {
+      "name": "confluencia(rsi-reversao 14 30/70 + bollinger-reversao 20 k2) >=2 h3",
+      "trades": 742,
+      "meanR": -0.3905720659404333,
+      "p": 1
+    },
+    {
+      "name": "rsi-reversao 7 20/80",
+      "trades": 1036,
+      "meanR": -0.3996610127657388,
+      "p": 1
+    },
+    {
+      "name": "tendência-diária breakout-ATR 24×0.5 adx20",
+      "trades": 867,
+      "meanR": -0.40632392534408973,
+      "p": 1
+    },
+    {
+      "name": "bollinger-reversao 20 k2",
+      "trades": 2370,
+      "meanR": -0.41113201789219367,
+      "p": 1
+    },
+    {
+      "name": "rsi-reversao 14 30/70",
+      "trades": 913,
+      "meanR": -0.4240669971682745,
+      "p": 1
+    },
+    {
+      "name": "macd-cruza 8/17/9",
+      "trades": 3449,
+      "meanR": -0.4286222752540633,
+      "p": 1
+    },
+    {
+      "name": "estocastico 14/3 20/80",
+      "trades": 4621,
+      "meanR": -0.43272765147129866,
+      "p": 1
+    },
+    {
+      "name": "macd-cruza 12/26/9",
+      "trades": 2945,
+      "meanR": -0.45219560718921104,
+      "p": 1
+    },
+    {
+      "name": "confluencia(macd-cruza 12/26/9 + adx-tendencia 14 min20) >=2 h3",
+      "trades": 399,
+      "meanR": -0.4622852735046434,
+      "p": 0.9999999999999509
+    },
+    {
+      "name": "ema-cruza 9/21",
+      "trades": 1932,
+      "meanR": -0.5089318345164738,
+      "p": 1
+    },
+    {
+      "name": "adx-tendencia 14 min25",
+      "trades": 427,
+      "meanR": -0.5207217581903967,
+      "p": 1
+    },
+    {
+      "name": "ema-cruza 20/50",
+      "trades": 833,
+      "meanR": -0.5234568233452359,
+      "p": 1
+    },
+    {
+      "name": "adx-tendencia 14 min20",
+      "trades": 961,
+      "meanR": -0.540958903078869,
+      "p": 1
+    },
+    {
+      "name": "bollinger-rompe 20 k2",
+      "trades": 2164,
+      "meanR": -0.5460280362073744,
+      "p": 1
+    },
+    {
+      "name": "ema-cruza 12/26",
+      "trades": 1539,
+      "meanR": -0.5670658933385724,
+      "p": 1
+    },
+    {
+      "name": "confluencia(ema-cruza 12/26 + adx-tendencia 14 min25) >=2 h3",
+      "trades": 133,
+      "meanR": -0.5997285001858302,
+      "p": 0.9999999997434887
+    }
+  ],
+  "chosen": [
+    "tendência-diária breakout-ATR 48×0.75 adx25",
+    "rsi-reversao 14 25/75",
+    "bollinger-reversao 20 k2.5",
+    "confluencia(estocastico 14/3 20/80 + rsi-reversao 14 30/70) >=2 h3"
+  ]
+}

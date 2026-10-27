@@ -40,7 +40,7 @@ test("pré-registo: 5 candidatos fixos, 30 símbolos, custo 0,13 %, 90 dias; pre
   assert.equal(F4H_DURATION_DAYS, 90);
   assert.match(F4H_LABEL, /PAPER, sem evidência ainda/);
   assert.equal(MARKETS.crypto.assumedCostFraction, 0.001);
-  assert.deepEqual(STRATEGY_PRESETS.map((p) => p.id), ["lucro_rapido", "loss_zero", "blitz_zero", "tendencia_diaria", "biblioteca"]);
+  assert.deepEqual(STRATEGY_PRESETS.map((p) => p.id), ["lucro_rapido", "loss_zero", "blitz_zero", "tendencia_diaria", "biblioteca", "giro_diario"]);
   assert.deepEqual([...GATE_PRESET_IDS], ["lucro_rapido", "loss_zero", "blitz_zero"]);
   const pre = readFileSync(join(root, "notes/preregistro-4h-forward-2026-10-15.md"), "utf8");
   assert.match(pre, /ANTES de descarregar/);
