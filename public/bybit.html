@@ -116,9 +116,25 @@
                   <header class="strat-live-head">
                     <span class="sem-dot amber" id="dotLossZero"></span>
                     <strong>Loss zero</strong>
-                    <span class="strat-live-gate-chip" title="Porta mínima: 1000 OOS">porta 1000</span>
+                    <span class="lz-chips" id="chipsLossZero"><span class="strat-live-gate-chip" title="Porta mínima: 1000 OOS">porta 1000</span></span>
                     <span class="strat-live-badge" id="badgeLossZero">…</span>
                   </header>
+                  <div class="lz-mode-toggle" id="lzModeToggle" role="group" aria-label="Modo do Loss zero (só com STOP)">
+                    <button type="button" class="lz-mode-btn active" id="lzModePadrao" data-lz-mode="padrao" aria-pressed="true" title="Loss zero padrão · porta 1000 OOS">Loss zero padrão</button>
+                    <button type="button" class="lz-mode-btn" id="lzModeGiro" data-lz-mode="giro_diario" aria-pressed="false" title="Giro Diário · porta própria 100 OOS · p &lt; 0,01 · 5m (1m opcional)">Giro Diário</button>
+                  </div>
+                  <div class="lz-giro-panel" id="lzGiroPanel" hidden>
+                    <p class="strat-live-reason giro-disclaimer" id="lzGiroDisclaimer"><strong>Giro Diário: sem garantia de lucro diário — mais oportunidades testadas, não mais certezas</strong></p>
+                    <p class="strat-live-reason" id="lzGiroGate">Porta Giro Diário: por avaliar · 100 OOS · p &lt; 0,01</p>
+                    <p class="strat-live-prox" id="lzGiroR">R de hoje: +0,00R · meta +3R · limite −3R</p>
+                    <div class="lz-goal"><span class="lz-goal-lbl">Meta do dia +3R</span>
+                      <div class="proximity-bar" role="progressbar" aria-label="Progresso para a meta +3R" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="lzGoalTargetBar"><div class="proximity-fill ok" id="lzGoalTargetFill" style="width:0%"></div></div>
+                      <span class="lz-goal-val" id="lzGoalTargetVal">0%</span></div>
+                    <div class="lz-goal"><span class="lz-goal-lbl">Limite de perda −3R</span>
+                      <div class="proximity-bar" role="progressbar" aria-label="Progresso para o limite −3R" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="lzGoalLossBar"><div class="proximity-fill bad" id="lzGoalLossFill" style="width:0%"></div></div>
+                      <span class="lz-goal-val" id="lzGoalLossVal">0%</span></div>
+                    <p class="strat-live-prox" id="lzGiroStop">Paragem: — (para ao atingir +3R ou −3R, o que vier primeiro)</p>
+                  </div>
                   <div class="proximity-wrap">
                     <div class="proximity-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barLossZero">
                       <div class="proximity-fill" id="fillLossZero" style="width:0%"></div>

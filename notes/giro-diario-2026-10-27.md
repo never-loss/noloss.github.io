@@ -64,3 +64,16 @@ vistos pela selecção. Porta inalterada: ≥ 100 OOS e p < 0,01.
 
 Já há operações de sobra (> 100); a porta fecha porque a média é **negativa** — mais histórico/dias não a abrem. 1m (só informativo,
 25 d via proxy): BTC 840 OOS −2,65R, ETH 782 −1,46R, SOL 842 −1,06R → NO_EVIDENCE. Conclusão honesta: NO TRADE.
+
+## Modo Giro Diário dentro do cartão Loss zero (PR seguinte, 2026-10-27)
+Desenho escolhido (o mais seguro): o cartão **Loss zero** tem um selector `Loss zero padrão | Giro Diário` que apenas escolhe
+um preset **já existente** no selector de estratégia (`loss_zero` ou `giro_diario`). Tudo o resto (porta, arm local, PLAY na
+nuvem, agenda 08–20 Luanda, stake fixa, PAPER por omissão) segue o mesmo caminho do preset — sem lógica nova de porta.
+- Padrão → `loss_zero`, porta **1000 OOS** (inalterada). Giro Diário → `giro_diario`, porta própria **100 OOS e p < 0,01**,
+  5m por omissão / 1m opcional, para a **+3R** ("Meta +3R atingida") ou **−3R** ("Limite de perda −3R atingido"), o que vier primeiro.
+  A nuvem já impõe ambos (`dailyTargetR/dailyLossR` só para `giro_diario` em `cloud-arm.ts`).
+- Chips, semáforo, badge e estado do cartão reflectem a porta do modo activo. No modo Giro Diário o cartão mostra o texto
+  exacto, "R de hoje", duas barras (progresso para +3R e para −3R) e a razão de paragem.
+- Mudar de modo só com tudo parado (sessão local parada/sem pausa e nuvem sem job/agenda); os botões ficam desactivados.
+- A opção e o cartão autónomos do Giro Diário mantêm-se (sincronizados: escolher `giro_diario` no selector põe o cartão Loss zero no modo Giro Diário).
+- Código: `src/core/loss-zero-mode.ts`; testes: `tests/loss-zero-mode.test.ts`.

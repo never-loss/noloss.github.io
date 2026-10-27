@@ -572,3 +572,10 @@
   color: #64748b;
   font-variant-numeric: tabular-nums;
 }
+
+.lz-mode-toggle{display:flex;gap:4px;margin:6px 0}
+.lz-mode-btn{flex:1;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.18);background:transparent;color:inherit;cursor:pointer}
+.lz-mode-btn.active{background:rgba(80,160,255,.22);border-color:rgba(80,160,255,.6);font-weight:600}
+.lz-mode-btn:disabled{opacity:.5;cursor:not-allowed}
+.lz-goal{display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;font-size:12px;margin:3px 0}
+.lz-goal .proximity-bar{margin:0}
