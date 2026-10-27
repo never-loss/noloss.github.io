@@ -111,7 +111,7 @@ test("Giro Diário: preset registado, só estratégias da biblioteca, porta 100 
   assert.equal(strategiesForPreset("giro_diario").length, 4);
   assert.match(p.description, /Giro Diário: sem garantia de lucro diário/);
   assert.equal(STRATEGY_PRESETS.at(-1)!.id, "giro_diario");
-  assert.deepEqual([...GATE_PRESET_IDS], ["lucro_rapido", "loss_zero", "blitz_zero"]);
+  assert.deepEqual([...GATE_PRESET_IDS], ["lucro_rapido", "loss_zero", "blitz_zero", "giro_diario"]);
   // selecção documentada e reproduzível
   const sel = JSON.parse(readFileSync(join(root, "notes/data/giro-select-2026-10-27.json"), "utf8"));
   assert.deepEqual(sel.chosen, giroDiarioStrategySet().map((s) => s.name));

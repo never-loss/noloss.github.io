@@ -415,6 +415,12 @@ export const GIRO_DIARIO_LOSS_R = 3;
 /** Giro Diário: velas permitidas (5 min por omissão; 1 min opcional). */
 export const GIRO_DIARIO_GRANULARITIES: readonly number[] = [300, 60];
 export const GIRO_DIARIO_DEFAULT_GRANULARITY = 300;
+/**
+ * Giro Diário: janela (épocas em s, [start, end)) usada para ESCOLHER as 4 estratégias (scripts/giro-select.ts,
+ * corrida de 2026-10-27T14:41:47Z: dias 60→30 antes, + 13 velas de 5m de folga para operações abertas no fim).
+ * Os blocos fora da amostra que tocam nesta janela são EXCLUÍDOS da porta (sem fuga selecção→avaliação).
+ */
+export const GIRO_DIARIO_SELECTION_WINDOW: Readonly<{ start: number; end: number }> = { start: 1787928107, end: 1790524008 };
 export const GIRO_DIARIO_DISCLAIMER =
   "Giro Diário: sem garantia de lucro diário — mais oportunidades testadas, não mais certezas";
 

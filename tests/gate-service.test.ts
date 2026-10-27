@@ -51,14 +51,15 @@ test("tamanho da cauda guardada cobre aquecimento + treino + 2 blocos (≈2600)"
   assert.ok(GATE_TAIL_KEEP >= 2600);
 });
 
-test("os 3 presets têm configuração coerente com a porta do painel (mult. 100, custo 0,1 %, treino 1000)", () => {
+test("os presets em cache têm configuração coerente com a porta do painel (mult. 100, custo 0,1 %, treino 1000)", () => {
   const info = configInfo(GATE_PRESET_IDS.map((id) => gateSetup(id)));
   assert.equal(info.minMultiplier, 100);
   assert.equal(info.costFraction, 0.001);
   assert.equal(info.trainSize, 1000);
   assert.equal(info.gran, GATE_GRAN);
   assert.deepEqual(Object.keys(info.hashes).sort(), [...GATE_PRESET_IDS].sort());
-  assert.equal(new Set(Object.values(info.hashes)).size, 3);
+  assert.equal(new Set(Object.values(info.hashes)).size, GATE_PRESET_IDS.length);
+  assert.equal(gateSetup("giro_diario").minLabel, "PRELIMINARY");
   assert.equal(gateSetup("loss_zero").minLabel, "EVIDENCE");
   assert.equal(gateSetup("lucro_rapido").minLabel, "PRELIMINARY");
   assert.equal(gateSetup("blitz_zero").minLabel, "AGILE");

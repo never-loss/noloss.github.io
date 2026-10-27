@@ -8,13 +8,15 @@ import { ledgerAsOf, GATE_VERDICT_FOLDS } from "./ledger-gate-controller.ts";
 import { legacyVerdict } from "./gate-shadow.ts";
 import type { LegacyVerdict } from "./gate-shadow.ts";
 import type { GateLedger, LedgerParams } from "./gate-ledger.ts";
-import { strategiesForPreset, strategyPreset } from "./strategies.ts";
+import { strategiesForPreset, strategyPreset, GIRO_DIARIO_SELECTION_WINDOW } from "./strategies.ts";
+import type { ExcludeWindow } from "./ledger-gate-controller.ts";
 import type { Strategy } from "./strategies.ts";
 import { feasible } from "./feasible.ts";
 import { MARKETS } from "./markets.ts";
 import type { Candle } from "./market-data.ts";
 
-export const GATE_PRESET_IDS = ["lucro_rapido", "loss_zero", "blitz_zero"] as const;
+// giro_diario: livro-razão no histórico profundo (90 d de 5m), SEM os blocos da janela de selecção das estratégias.
+export const GATE_PRESET_IDS = ["lucro_rapido", "loss_zero", "blitz_zero", "giro_diario"] as const;
 export type GatePresetId = (typeof GATE_PRESET_IDS)[number];
 
 /** Única granularidade em cache: 5 min (a do gráfico). */
@@ -43,6 +45,8 @@ export interface GateSetup {
   strategies: Strategy[];
   params: LedgerParams;
   minLabel: "AGILE" | "PRELIMINARY" | "EVIDENCE";
+  /** Blocos OOS excluídos da porta (janela onde as estratégias do preset foram escolhidas). */
+  exclude: ExcludeWindow | null;
 }
 
 export function gateCostFraction(): number {
@@ -61,7 +65,7 @@ export function gateSetup(presetId: GatePresetId, gran: number = GATE_GRAN, cost
     gran,
     { blockCandles: GATE_BLOCK, warmup: GATE_WARMUP },
   );
-  return { presetId, strategies, params, minLabel: g.minLabel || "PRELIMINARY" };
+  return { presetId, strategies, params, minLabel: g.minLabel || "PRELIMINARY", exclude: presetId === "giro_diario" ? GIRO_DIARIO_SELECTION_WINDOW : null };
 }
 
 export interface GateVerdict {
@@ -201,11 +205,11 @@ export function computeGateEntry(
       : computeLedger(candles, s.strategies, s.params, { keepFolds: GATE_KEEP_FOLDS });
     ledgers[s.presetId] = ledger;
     // Mesma regra do arm: só os blocos mais recentes (GATE_VERDICT_FOLDS) contam.
-    const r = evaluateLedgerGate(ledgerAsOf(ledger, Number.POSITIVE_INFINITY, GATE_VERDICT_FOLDS), tailForGate, s.strategies, { minLabel: s.minLabel });
+    const r = evaluateLedgerGate(ledgerAsOf(ledger, Number.POSITIVE_INFINITY, GATE_VERDICT_FOLDS, s.exclude), tailForGate, s.strategies, { minLabel: s.minLabel });
     const sameCfg = prevLedger !== null && prevLedger.paramsHash === ledger.paramsHash;
     const pv = sameCfg && prev ? prev.verdicts[s.presetId] ?? null : null;
     const st = nextStreak(pv ? { streak: pv.streak, streakAt: pv.streakAt } : null, r.allowed, lastEpoch, GATE_GRAN);
-    const oosAgg = ledgerOos(ledgerAsOf(ledger, Number.POSITIVE_INFINITY, GATE_VERDICT_FOLDS));
+    const oosAgg = ledgerOos(ledgerAsOf(ledger, Number.POSITIVE_INFINITY, GATE_VERDICT_FOLDS, s.exclude));
     const legacy = legacyVerdict(tailForGate, s.strategies, {
       slAtr: s.params.slAtr, tpR: s.params.tpR, maxBars: s.params.maxBars, costFraction: s.params.costFraction, minLabel: s.minLabel,
     });
