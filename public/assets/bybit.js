@@ -1079,6 +1079,124 @@
     if (badge) badge.textContent = open ? "porta aberta" : "NO TRADE";
     if (dot) dot.className = "sem-dot " + (open ? "green" : "amber");
     card.className = "strat-live-card " + (open ? "open" : "closed");
+  try { renderLossZeroMode(); } catch (_lz) {}
+  }
+
+  // --- Cartão Loss zero: modo "Loss zero padrão" (porta 1000) | "Giro Diário" (porta própria 100 OOS, p<0,01) ---
+  // O modo só escolhe um preset existente (loss_zero | giro_diario) no selector de estratégia; arm/nuvem/agenda/stake
+  // seguem o mesmo caminho. Mudar só com STOP (local e nuvem parados).
+  function lzSpec(mode) {
+    if (typeof NL.lossZeroModeSpec === "function") return NL.lossZeroModeSpec(mode);
+    return mode === "giro_diario"
+      ? { mode: "giro_diario", preset: "giro_diario", chips: ["5m/1m", "porta 100 · p<0,01", "meta +3R", "limite −3R"] }
+      : { mode: "padrao", preset: "loss_zero", chips: ["porta 1000"] };
+  }
+  function lzCanSwitch() {
+    var st = state.session && state.session.status;
+    var s = {
+      running: !!state.running || st === "RUNNING", paused: st === "PAUSED",
+      cloudRunning: !!(state.cloudJob && state.cloudJob.status === "RUNNING"),
+      cloudScheduled: !!(state.cloudSchedule && state.cloudSchedule.enabled),
+    };
+    return typeof NL.canSwitchLossZeroMode === "function" ? NL.canSwitchLossZeroMode(s)
+      : !(s.running || s.paused || s.cloudRunning || s.cloudScheduled);
+  }
+  function setLossZeroMode(mode) {
+    if (mode !== "giro_diario") mode = "padrao";
+    if (!lzCanSwitch()) {
+      pushHistory("Para a sessão (STOP, também na nuvem) antes de mudar o modo do Loss zero.", "stop");
+      renderLossZeroMode();
+      return;
+    }
+    var spec = lzSpec(mode);
+    state.lzMode = spec.mode;
+    var sel = el("bybitStrategy");
+    if (sel) sel.value = spec.preset;
+    onStrategyChange(spec.preset);
+    renderLossZeroMode();
+  }
+  function renderLossZeroMode() {
+    var card = el("cardLossZero");
+    if (!card) return;
+    if (state.strategySet === "giro_diario") state.lzMode = "giro_diario";
+    else if (state.strategySet === "loss_zero") state.lzMode = "padrao";
+    var mode = state.lzMode === "giro_diario" ? "giro_diario" : "padrao";
+    var spec = lzSpec(mode);
+    card.setAttribute("data-preset", spec.preset);
+    card.setAttribute("data-lz-mode", mode);
+    var can = lzCanSwitch();
+    [["lzModePadrao", "padrao"], ["lzModeGiro", "giro_diario"]].forEach(function (b) {
+      var btn = el(b[0]);
+      if (!btn) return;
+      btn.classList.toggle("active", mode === b[1]);
+      btn.setAttribute("aria-pressed", mode === b[1] ? "true" : "false");
+      btn.disabled = !can;
+      btn.title = can ? btn.title.replace(/ · bloqueado.*$/, "") : btn.title.replace(/ · bloqueado.*$/, "") + " · bloqueado: STOP primeiro";
+    });
+    var chips = el("chipsLossZero");
+    if (chips) {
+      var want = spec.chips.join("|");
+      if (chips.getAttribute("data-chips") !== want) {
+        chips.setAttribute("data-chips", want);
+        chips.innerHTML = "";
+        spec.chips.forEach(function (c) {
+          var sp = document.createElement("span");
+          sp.className = "strat-live-gate-chip";
+          sp.textContent = c;
+          sp.title = c.indexOf("porta") === 0 ? (mode === "giro_diario" ? "Porta própria do Giro Diário: ≥ 100 OOS e p < 0,01" : "Porta mínima: 1000 OOS") : c;
+          chips.appendChild(sp);
+        });
+      }
+    }
+    var panel = el("lzGiroPanel");
+    if (panel) panel.hidden = mode !== "giro_diario";
+    if (mode !== "giro_diario") return;
+    // Semáforo/estado do cartão = porta do Giro Diário (não a do Loss zero 1000).
+    var job = state.cloudJob && state.cloudJob.strategyPreset === "giro_diario" ? state.cloudJob : null;
+    var local = state.strategySet === "giro_diario" && state.session ? state.session.summary() : null;
+    var gate = job && job.gate ? job.gate : (state.liveGates && state.liveGates.giro_diario) || null;
+    var open = !!(gate && gate.allowed);
+    var disc = el("lzGiroDisclaimer");
+    if (disc && disc.textContent.indexOf(GIRO_TEXT) < 0) disc.textContent = GIRO_TEXT;
+    var gEl = el("lzGiroGate");
+    if (gEl) {
+      gEl.textContent = gate
+        ? ("Porta Giro Diário: " + (open ? "ABERTA" : "FECHADA · NO TRADE") + " — " + (gate.reason || "") +
+          " · n OOS " + (gate.oosTrades != null ? gate.oosTrades : 0) + "/100 · p < 0,01")
+        : "Porta Giro Diário: por avaliar · 100 OOS · p < 0,01";
+    }
+    var netR = job && job.summary && typeof job.summary.netR === "number" ? job.summary.netR
+      : local && local.metrics ? local.metrics.netR : 0;
+    var reason = job ? (job.stopReason || (job.summary && job.summary.stopReason)) : (local ? local.stopReason : null);
+    var prog = typeof NL.giroDailyProgress === "function" ? NL.giroDailyProgress(Number(netR) || 0, reason)
+      : { netR: Number(netR) || 0, targetPct: 0, lossPct: 0, stop: null, stopText: null };
+    var rEl = el("lzGiroR");
+    if (rEl) rEl.textContent = "R de hoje: " + (prog.netR >= 0 ? "+" : "") + prog.netR.toFixed(2) + "R · meta +3R · limite −3R · " +
+      (job ? (job.mode === "REAL" ? "REAL" : "PAPER, simulado") : "PAPER, simulado");
+    [["lzGoalTarget", prog.targetPct], ["lzGoalLoss", prog.lossPct]].forEach(function (g) {
+      var f = el(g[0] + "Fill"), b = el(g[0] + "Bar"), v = el(g[0] + "Val");
+      if (f) f.style.width = g[1] + "%";
+      if (b) b.setAttribute("aria-valuenow", String(g[1]));
+      if (v) v.textContent = g[1] + "%";
+    });
+    var sEl = el("lzGiroStop");
+    if (sEl) sEl.textContent = "Paragem: " + (prog.stopText ? prog.stopText
+      : reason ? (GIRO_STOP_TEXT[reason] || reason) : "— (para ao atingir +3R ou −3R, o que vier primeiro)");
+    var stopped = !!(prog.stop || reason);
+    var dot = el("dotLossZero"), badge = el("badgeLossZero"), status = el("statusLossZero"), rs = el("reasonLossZero"), px = el("proxLossZero");
+    if (dot) dot.className = "sem-dot " + (open && !stopped ? "green" : "amber");
+    if (badge) badge.textContent = stopped ? "PARADO" : open ? "PORTA" : "NO TRADE";
+    if (status) status.textContent = stopped ? "Giro Diário: PARADO · " + (prog.stopText || GIRO_STOP_TEXT[reason] || reason)
+      : open ? "Giro Diário: porta aberta (100 OOS · p<0,01) · à espera do sinal" : "Giro Diário: NO TRADE · porta 100 · p<0,01";
+    if (rs) rs.textContent = gate ? (gate.reason || "") : "A aguardar a porta do Giro Diário…";
+    if (px) px.textContent = "Velas " + (state.granularity === 60 ? "1m" : "5m") + " · stake fixa · sem martingale";
+    var fill = el("fillLossZero"), bar = el("barLossZero");
+    var sc = open ? 100 : gate && gate.oosTrades ? Math.min(99, Math.round(gate.oosTrades)) : 0;
+    if (open && fill) fill.style.width = "100%"; else if (fill) fill.style.width = (gate ? Math.min(40, sc) : 0) + "%";
+    if (bar) bar.setAttribute("aria-valuenow", fill ? String(parseInt(fill.style.width, 10) || 0) : "0");
+    card.classList.toggle("open", open && !stopped);
+    card.classList.toggle("closed", !(open && !stopped));
+    card.classList.toggle("active-pick", state.strategySet === "giro_diario");
   }
 
   function presetLabelPt(presetId) {
@@ -1406,6 +1524,7 @@
     var labelMapCard = { lucro_rapido: "Lucro rápido", loss_zero: "Loss zero", blitz_zero: "Agressivo" };
     var key = keyMap[presetId] || "LossZero";
     var label = labelMapCard[presetId] || presetId;
+    if (presetId === "loss_zero" && state.lzMode === "giro_diario") { renderLossZeroMode(); return; }
     var card = el("card" + key);
     var dot = el("dot" + key);
     var badge = el("badge" + key);
@@ -1881,6 +2000,7 @@
   }
 
   function updateButtons() {
+    try { renderLossZeroMode(); } catch (_lzb) {}
     var hasStrategy = !!(el("bybitStrategy") && el("bybitStrategy").value);
     var running = state.session && state.session.status === "RUNNING";
     var paused = state.session && state.session.status === "PAUSED";
@@ -3078,7 +3198,8 @@
       var card = el(id);
       if (!card) return;
       card.style.cursor = "pointer";
-      card.addEventListener("click", function () {
+      card.addEventListener("click", function (ev) {
+        if (ev && ev.target && ev.target.closest && ev.target.closest("#lzModeToggle")) return;
         var preset = card.getAttribute("data-preset");
         var sel = el("bybitStrategy");
         if (sel && preset) {
@@ -3086,6 +3207,10 @@
           onStrategyChange(preset);
         }
       });
+    });
+    ["lzModePadrao", "lzModeGiro"].forEach(function (id) {
+      var b = el(id);
+      if (b) b.addEventListener("click", function (ev) { ev.stopPropagation(); setLossZeroMode(b.getAttribute("data-lz-mode")); });
     });
     var bybitStake = el("bybitStake");
     if (bybitStake) bybitStake.addEventListener("change", function () { state.stake = Number(bybitStake.value) || 1; });

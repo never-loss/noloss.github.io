@@ -174,3 +174,4 @@ export {
   formatModeledCostLine,
 } from "../core/trade-cost.ts";
 export type { ModeledFill, RealFill, ModeledCostSummary, RealCostSummary } from "../core/trade-cost.ts";
+export { lossZeroModeSpec, lossZeroModeForPreset, canSwitchLossZeroMode, giroDailyProgress, GIRO_STOP_LABELS } from "../core/loss-zero-mode.ts";

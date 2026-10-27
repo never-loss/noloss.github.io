@@ -43,6 +43,7 @@ var NL = (() => {
     GIRO_DIARIO_GRANULARITIES: () => GIRO_DIARIO_GRANULARITIES,
     GIRO_DIARIO_LOSS_R: () => GIRO_DIARIO_LOSS_R,
     GIRO_DIARIO_TARGET_R: () => GIRO_DIARIO_TARGET_R,
+    GIRO_STOP_LABELS: () => GIRO_STOP_LABELS,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
     LIVE_ENTRY_MAX_CANDLES: () => LIVE_ENTRY_MAX_CANDLES,
     MARKETS: () => MARKETS,
@@ -63,6 +64,7 @@ var NL = (() => {
     bybitFetch: () => bybitFetch,
     bybitIntervalToSeconds: () => bybitIntervalToSeconds,
     cachedVerdictToResult: () => cachedVerdictToResult,
+    canSwitchLossZeroMode: () => canSwitchLossZeroMode,
     candleLabelPermitted: () => candleLabelPermitted,
     clampBybitLeverage: () => clampBybitLeverage,
     classify: () => classify,
@@ -93,6 +95,7 @@ var NL = (() => {
     formatRealCostLine: () => formatRealCostLine,
     gateProgressPct: () => gateProgressPct,
     gateProvenanceLabel: () => gateProvenanceLabel,
+    giroDailyProgress: () => giroDailyProgress,
     giroDiarioStrategySet: () => giroDiarioStrategySet,
     granularityToBinanceInterval: () => granularityToBinanceInterval,
     granularityToBybitInterval: () => granularityToBybitInterval,
@@ -106,6 +109,8 @@ var NL = (() => {
     isUsdtmPerpetual: () => isUsdtmPerpetual,
     lastDigit: () => lastDigit,
     listAllCryptoUsd: () => listAllCryptoUsd,
+    lossZeroModeForPreset: () => lossZeroModeForPreset,
+    lossZeroModeSpec: () => lossZeroModeSpec,
     lossZeroStrategySet: () => lossZeroStrategySet,
     lucroRapidoStrategySet: () => lucroRapidoStrategySet,
     marketOf: () => marketOf,
@@ -2899,6 +2904,66 @@ var NL = (() => {
       return `c\xE1lculo local: ${r.candlesUsed} velas (\u2248${days(r.candlesUsed * g / 86400)}d)${n} \xB7 sem cache`;
     }
     return "";
+  }
+
+  // src/core/loss-zero-mode.ts
+  function lossZeroModeSpec(mode) {
+    if (mode === "giro_diario") {
+      return {
+        mode,
+        preset: "giro_diario",
+        label: "Giro Di\xE1rio",
+        minOos: oosMinForPreset("giro_diario"),
+        alpha: GATE_ALPHA,
+        granularities: [300, 60],
+        dailyTargetR: GIRO_DIARIO_TARGET_R,
+        dailyLossR: GIRO_DIARIO_LOSS_R,
+        chips: ["5m/1m", "porta 100 \xB7 p<0,01", "meta +" + GIRO_DIARIO_TARGET_R + "R", "limite \u2212" + GIRO_DIARIO_LOSS_R + "R"],
+        disclaimer: GIRO_DIARIO_DISCLAIMER
+      };
+    }
+    return {
+      mode: "padrao",
+      preset: "loss_zero",
+      label: "Loss zero padr\xE3o",
+      minOos: oosMinForPreset("loss_zero"),
+      alpha: GATE_ALPHA,
+      granularities: null,
+      dailyTargetR: null,
+      dailyLossR: null,
+      chips: ["porta " + oosMinForPreset("loss_zero")],
+      disclaimer: null
+    };
+  }
+  function lossZeroModeForPreset(preset) {
+    if (preset === "loss_zero") return "padrao";
+    if (preset === "giro_diario") return "giro_diario";
+    return null;
+  }
+  function canSwitchLossZeroMode(s) {
+    return !(s.running || s.paused || s.cloudRunning || s.cloudScheduled);
+  }
+  var GIRO_STOP_LABELS = {
+    daily_target: "Meta +" + GIRO_DIARIO_TARGET_R + "R atingida",
+    daily_loss_limit: "Limite de perda \u2212" + GIRO_DIARIO_LOSS_R + "R atingido"
+  };
+  function giroDailyProgress(netR, stopReason) {
+    const r = Number.isFinite(netR) ? netR : 0;
+    const t = GIRO_DIARIO_TARGET_R, l = GIRO_DIARIO_LOSS_R;
+    const clamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
+    let stop = null;
+    if (stopReason === "daily_target" || stopReason === "daily_loss_limit") stop = stopReason;
+    else if (r <= -l) stop = "daily_loss_limit";
+    else if (r >= t) stop = "daily_target";
+    return {
+      netR: r,
+      targetR: t,
+      lossR: l,
+      targetPct: clamp(Math.max(0, r) / t * 100),
+      lossPct: clamp(Math.max(0, -r) / l * 100),
+      stop,
+      stopText: stop ? GIRO_STOP_LABELS[stop] : null
+    };
   }
   return __toCommonJS(nl_core_entry_exports);
 })();
