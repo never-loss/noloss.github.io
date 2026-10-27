@@ -39,6 +39,10 @@ var NL = (() => {
     DEFAULT_FILL_MODEL: () => DEFAULT_FILL_MODEL,
     EVIDENCE_MIN_OBS: () => EVIDENCE_MIN_OBS,
     EXPECTED_PCT: () => EXPECTED_PCT,
+    GIRO_DIARIO_DISCLAIMER: () => GIRO_DIARIO_DISCLAIMER,
+    GIRO_DIARIO_GRANULARITIES: () => GIRO_DIARIO_GRANULARITIES,
+    GIRO_DIARIO_LOSS_R: () => GIRO_DIARIO_LOSS_R,
+    GIRO_DIARIO_TARGET_R: () => GIRO_DIARIO_TARGET_R,
     KNOWN_OPTIONS_CRYPTO_FEED: () => KNOWN_OPTIONS_CRYPTO_FEED,
     LIVE_ENTRY_MAX_CANDLES: () => LIVE_ENTRY_MAX_CANDLES,
     MARKETS: () => MARKETS,
@@ -89,6 +93,7 @@ var NL = (() => {
     formatRealCostLine: () => formatRealCostLine,
     gateProgressPct: () => gateProgressPct,
     gateProvenanceLabel: () => gateProvenanceLabel,
+    giroDiarioStrategySet: () => giroDiarioStrategySet,
     granularityToBinanceInterval: () => granularityToBinanceInterval,
     granularityToBybitInterval: () => granularityToBybitInterval,
     isBinanceUsdtSymbol: () => isBinanceUsdtSymbol,
@@ -1503,6 +1508,22 @@ var NL = (() => {
       dailyTrendAtrBreakout({ lookback: 20, atrPeriod: 14, atrMult: 0.85 })
     ];
   }
+  var GIRO_DIARIO_TARGET_R = 3;
+  var GIRO_DIARIO_LOSS_R = 3;
+  var GIRO_DIARIO_GRANULARITIES = [300, 60];
+  var GIRO_DIARIO_DISCLAIMER = "Giro Di\xE1rio: sem garantia de lucro di\xE1rio \u2014 mais oportunidades testadas, n\xE3o mais certezas";
+  function giroDiarioStrategySet() {
+    return [
+      dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
+      rsiReversion({ period: 14, low: 25, high: 75 }),
+      bollingerReversion({ period: 20, k: 2.5 }),
+      confluence({
+        strategies: [stochasticCross({ k: 14, d: 3, low: 20, high: 80 }), rsiReversion({ period: 14, low: 30, high: 70 })],
+        minAgree: 2,
+        hold: 3
+      })
+    ];
+  }
   var STRATEGY_PRESETS = [
     {
       id: "lucro_rapido",
@@ -1538,6 +1559,13 @@ var NL = (() => {
       description: "Toda a biblioteca: a porta escolhe a que passa fora da amostra. Sem martingale \xB7 stake fixa \xB7 paper.",
       preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "PRELIMINARY" },
       strategies: strategyLibrary
+    },
+    {
+      id: "giro_diario",
+      label: "Giro Di\xE1rio",
+      description: "Velas de 5 min (ou 1 min). S\xF3 estrat\xE9gias da biblioteca \xB7 porta 100 OOS com p < 0,01 \xB7 para no dia a +3R ou \u22123R \xB7 NO TRADE sem sinal v\xE1lido \xB7 stake fixa \xB7 sem martingale. " + GIRO_DIARIO_DISCLAIMER + ".",
+      preferredGate: { tpR: 1.5, maxBars: 12, slAtr: 1.2, minLabel: "PRELIMINARY" },
+      strategies: giroDiarioStrategySet
     }
   ];
   function strategyPreset(id) {
@@ -2155,7 +2183,9 @@ var NL = (() => {
     "maxDurationMs",
     "maxConsecutiveLosses",
     "cooldownCandles",
-    "fillModel"
+    "fillModel",
+    "dailyTargetR",
+    "dailyLossR"
   ]);
   function positive(v, label) {
     if (!Number.isFinite(v) || v <= 0) throw new RangeError(`${label} inv\xE1lido: ${v}`);
@@ -2182,6 +2212,8 @@ var NL = (() => {
     if (!Number.isInteger(cfg.cooldownCandles) || cfg.cooldownCandles < 0) throw new RangeError(`cooldownCandles inv\xE1lido: ${cfg.cooldownCandles}`);
     if (cfg.maxBuffer !== void 0) positiveInt(cfg.maxBuffer, "maxBuffer");
     resolveFillModel(cfg.fillModel);
+    if (cfg.dailyTargetR !== void 0) positive(cfg.dailyTargetR, "dailyTargetR");
+    if (cfg.dailyLossR !== void 0) positive(cfg.dailyLossR, "dailyLossR");
   }
   var CandlePaperSession = class {
     #cfg;
@@ -2360,6 +2392,9 @@ var NL = (() => {
     }
     #limitReached() {
       const c = this.#cfg;
+      const sumR = this.#rs.reduce((a, b) => a + b, 0);
+      if (c.dailyLossR !== void 0 && sumR <= -c.dailyLossR) return "daily_loss_limit";
+      if (c.dailyTargetR !== void 0 && sumR >= c.dailyTargetR) return "daily_target";
       if (this.#pnl <= -c.maxLoss) return "max_loss";
       if (this.#consecutiveLosses >= c.maxConsecutiveLosses) return "max_consecutive_losses";
       if (this.#rs.length >= c.maxTrades) return "max_trades";
@@ -2386,7 +2421,9 @@ var NL = (() => {
     max_trades: "n\xFAmero m\xE1ximo de opera\xE7\xF5es atingido",
     max_duration: "dura\xE7\xE3o m\xE1xima atingida",
     max_consecutive_losses: "perdas seguidas m\xE1ximas atingidas",
-    max_drawdown: "queda m\xE1xima atingida"
+    max_drawdown: "queda m\xE1xima atingida",
+    daily_target: "meta do dia atingida (+3R) \u2014 Giro Di\xE1rio",
+    daily_loss_limit: "limite de perda do dia atingido (\u22123R) \u2014 Giro Di\xE1rio"
   };
   var EXIT_TEXT = { sl: "stop", tp: "alvo", time: "tempo" };
   var clock = (ms) => new Date(ms).toISOString().slice(11, 19);

@@ -34,11 +34,16 @@ export interface CandlePaperConfig {
   cooldownCandles: number;
   /** Só informativo: taxas/derrapagem do preenchimento simulado (não altera r, pnl, entradas nem saídas). */
   fillModel?: Partial<FillModelConfig>;
+  /** Opcional (Giro Diário): para a sessão quando a soma de R fechados >= dailyTargetR (ex.: 3). */
+  dailyTargetR?: number;
+  /** Opcional (Giro Diário): para a sessão quando a soma de R fechados <= −dailyLossR (ex.: 3). */
+  dailyLossR?: number;
 }
 
 const ALLOWED_KEYS = new Set([
   "strategy", "stake", "slAtr", "tpR", "maxBars", "costFraction", "atrPeriod", "directions", "maxBuffer",
   "maxLoss", "maxTrades", "maxDurationMs", "maxConsecutiveLosses", "cooldownCandles", "fillModel",
+  "dailyTargetR", "dailyLossR",
 ]);
 
 export type CandlePaperEvent =
@@ -100,6 +105,8 @@ function validate(cfg: CandlePaperConfig): void {
   if (!Number.isInteger(cfg.cooldownCandles) || cfg.cooldownCandles < 0) throw new RangeError(`cooldownCandles inválido: ${cfg.cooldownCandles}`);
   if (cfg.maxBuffer !== undefined) positiveInt(cfg.maxBuffer, "maxBuffer");
   resolveFillModel(cfg.fillModel);
+  if (cfg.dailyTargetR !== undefined) positive(cfg.dailyTargetR, "dailyTargetR");
+  if (cfg.dailyLossR !== undefined) positive(cfg.dailyLossR, "dailyLossR");
 }
 
 interface Pending {
@@ -315,6 +322,9 @@ export class CandlePaperSession {
 
   #limitReached(): StopReason | null {
     const c = this.#cfg;
+    const sumR = this.#rs.reduce((a, b) => a + b, 0);
+    if (c.dailyLossR !== undefined && sumR <= -c.dailyLossR) return "daily_loss_limit";
+    if (c.dailyTargetR !== undefined && sumR >= c.dailyTargetR) return "daily_target";
     if (this.#pnl <= -c.maxLoss) return "max_loss";
     if (this.#consecutiveLosses >= c.maxConsecutiveLosses) return "max_consecutive_losses";
     if (this.#rs.length >= c.maxTrades) return "max_trades";
@@ -346,6 +356,8 @@ const REASONS: Record<StopReason, string> = {
   max_duration: "duração máxima atingida",
   max_consecutive_losses: "perdas seguidas máximas atingidas",
   max_drawdown: "queda máxima atingida",
+  daily_target: "meta do dia atingida (+3R) — Giro Diário",
+  daily_loss_limit: "limite de perda do dia atingido (−3R) — Giro Diário",
 };
 
 const EXIT_TEXT: Record<ExitReason, string> = { sl: "stop", tp: "alvo", time: "tempo" };

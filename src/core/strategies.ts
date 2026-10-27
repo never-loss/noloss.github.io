@@ -295,7 +295,7 @@ export function dailyTrendStrategySet(): Strategy[] {
 }
 
 /** IDs dos presets do seletor obrigatório no painel. */
-export type StrategyPresetId = "lucro_rapido" | "loss_zero" | "blitz_zero" | "tendencia_diaria" | "biblioteca";
+export type StrategyPresetId = "lucro_rapido" | "loss_zero" | "blitz_zero" | "tendencia_diaria" | "biblioteca" | "giro_diario";
 
 export interface StrategyPresetGateHints {
   /** Take-profit em múltiplos de R (ainda stake fixa — sem martingale). */
@@ -408,6 +408,36 @@ export function blitzZeroStrategySet(): Strategy[] {
   ];
 }
 
+/** Giro Diário: meta do dia em R (para a sessão ao atingir +3R fechados). */
+export const GIRO_DIARIO_TARGET_R = 3;
+/** Giro Diário: limite de perda do dia em R (para a sessão ao atingir −3R fechados). Simétrico à meta. */
+export const GIRO_DIARIO_LOSS_R = 3;
+/** Giro Diário: velas permitidas (5 min por omissão; 1 min opcional). */
+export const GIRO_DIARIO_GRANULARITIES: readonly number[] = [300, 60];
+export const GIRO_DIARIO_DEFAULT_GRANULARITY = 300;
+export const GIRO_DIARIO_DISCLAIMER =
+  "Giro Diário: sem garantia de lucro diário — mais oportunidades testadas, não mais certezas";
+
+/**
+ * Giro Diário: SÓ estratégias da biblioteca existente (strategyLibrary), sem parâmetros novos.
+ * Escolhidas pela regra reprodutível de scripts/giro-select.ts (dados reais Bybit 5m via proxy, 5 símbolos,
+ * janela dias 60→30, custo 0,1 %, top-4 por média R com >= 100 ops) — ver notes/giro-diario-2026-10-27.md e
+ * notes/data/giro-select-2026-10-27.json. Todas tinham média R NEGATIVA: são as "menos más", não lucrativas.
+ * A porta (walk-forward, >= 100 OOS, p < 0,01) decide; sem sinal válido → NO TRADE.
+ */
+export function giroDiarioStrategySet(): Strategy[] {
+  return [
+    dailyTrendAtrBreakout({ lookback: 48, atrPeriod: 14, atrMult: 0.75, minAdx: 25 }),
+    rsiReversion({ period: 14, low: 25, high: 75 }),
+    bollingerReversion({ period: 20, k: 2.5 }),
+    confluence({
+      strategies: [stochasticCross({ k: 14, d: 3, low: 20, high: 80 }), rsiReversion({ period: 14, low: 30, high: 70 })],
+      minAgree: 2,
+      hold: 3,
+    }),
+  ];
+}
+
 /** Catálogo do seletor do painel (obrigatório antes de PLAY). */
 export const STRATEGY_PRESETS: readonly StrategyPreset[] = [
   {
@@ -449,6 +479,15 @@ export const STRATEGY_PRESETS: readonly StrategyPreset[] = [
       "Toda a biblioteca: a porta escolhe a que passa fora da amostra. Sem martingale · stake fixa · paper.",
     preferredGate: { tpR: 2, maxBars: 24, slAtr: 1.5, minLabel: "PRELIMINARY" },
     strategies: strategyLibrary,
+  },
+  {
+    id: "giro_diario",
+    label: "Giro Diário",
+    description:
+      "Velas de 5 min (ou 1 min). Só estratégias da biblioteca · porta 100 OOS com p < 0,01 · para no dia a +3R ou −3R · NO TRADE sem sinal válido · stake fixa · sem martingale. " +
+      GIRO_DIARIO_DISCLAIMER + ".",
+    preferredGate: { tpR: 1.5, maxBars: 12, slAtr: 1.2, minLabel: "PRELIMINARY" },
+    strategies: giroDiarioStrategySet,
   },
 ];
 

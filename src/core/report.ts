@@ -9,6 +9,8 @@ const REASONS: Record<StopReason, string> = {
   max_duration: "duração máxima atingida",
   max_consecutive_losses: "perdas seguidas máximas atingidas",
   max_drawdown: "queda máxima atingida",
+  daily_target: "meta do dia atingida (+3R) — Giro Diário",
+  daily_loss_limit: "limite de perda do dia atingido (−3R) — Giro Diário",
 };
 
 export function describeContract(c: DigitContract): string {

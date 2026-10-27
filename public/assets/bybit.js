@@ -1026,12 +1026,67 @@
     return state.radar.preset || "lucro_rapido";
   }
 
+
+  // --- Giro Diário (meta do dia +3R / limite −3R; porta 100 OOS p<0,01; NO TRADE sem sinal) ---
+  var GIRO_TEXT = "Giro Diário: sem garantia de lucro diário — mais oportunidades testadas, não mais certezas";
+  function giroDailyLimits() {
+    return {
+      dailyTargetR: typeof NL.GIRO_DIARIO_TARGET_R === "number" ? NL.GIRO_DIARIO_TARGET_R : 3,
+      dailyLossR: typeof NL.GIRO_DIARIO_LOSS_R === "number" ? NL.GIRO_DIARIO_LOSS_R : 3,
+    };
+  }
+  var GIRO_STOP_TEXT = {
+    daily_target: "meta do dia +3R atingida",
+    daily_loss_limit: "limite de perda do dia −3R atingido",
+    max_duration: "fim da janela/duração",
+    manual: "STOP manual",
+    max_loss: "perda máxima da sessão",
+    max_trades: "máximo de operações",
+    max_consecutive_losses: "perdas seguidas máximas",
+  };
+  function renderGiroDiarioCard() {
+    var card = el("cardGiroDiario");
+    if (!card) return;
+    var disc = el("giroDisclaimer");
+    if (disc && disc.textContent.indexOf(GIRO_TEXT) < 0) disc.textContent = GIRO_TEXT;
+    var job = state.cloudJob && state.cloudJob.strategyPreset === "giro_diario" ? state.cloudJob : null;
+    var local = state.strategySet === "giro_diario" && state.session ? state.session.summary() : null;
+    var gate = job && job.gate ? job.gate : (state.liveGates && state.liveGates.giro_diario) || null;
+    var open = !!(gate && gate.allowed);
+    var gEl = el("gateGiroDiario");
+    if (gEl) {
+      gEl.textContent = gate
+        ? ("Porta: " + (open ? "ABERTA" : "FECHADA · NO TRADE") + " — " + (gate.reason || "") +
+          " · n OOS " + (gate.oosTrades != null ? gate.oosTrades : 0) + "/100 · p < 0,01")
+        : "Porta: por avaliar (escolhe Giro Diário) · 100 OOS · p < 0,01";
+    }
+    var netR = job && job.summary && typeof job.summary.netR === "number" ? job.summary.netR
+      : local && local.metrics ? local.metrics.netR : 0;
+    var rEl = el("rGiroDiario");
+    if (rEl) {
+      rEl.textContent = "R de hoje: " + (netR >= 0 ? "+" : "") + Number(netR || 0).toFixed(2) +
+        "R · meta +3R · limite −3R · " + (job ? (job.mode === "REAL" ? "REAL" : "PAPER, simulado") : "PAPER, simulado");
+    }
+    var reason = job ? (job.stopReason || (job.summary && job.summary.stopReason)) : (local ? local.stopReason : null);
+    var sEl = el("stopGiroDiario");
+    if (sEl) sEl.textContent = "Paragem: " + (reason ? (GIRO_STOP_TEXT[reason] || reason) : "—");
+    var stEl = el("statusGiroDiario");
+    var badge = el("badgeGiroDiario");
+    var dot = el("dotGiroDiario");
+    var txt = reason ? "PARADO" : open ? "PORTA ABERTA · à espera de sinal" : "NO TRADE";
+    if (stEl) stEl.textContent = txt;
+    if (badge) badge.textContent = open ? "porta aberta" : "NO TRADE";
+    if (dot) dot.className = "sem-dot " + (open ? "green" : "amber");
+    card.className = "strat-live-card " + (open ? "open" : "closed");
+  }
+
   function presetLabelPt(presetId) {
     if (presetId === "loss_zero") return "Loss zero";
     if (presetId === "lucro_rapido") return "Lucro rápido";
     if (presetId === "blitz_zero") return "Agressivo";
     if (presetId === "tendencia_diaria") return "Tendência diária";
     if (presetId === "biblioteca") return "Biblioteca";
+    if (presetId === "giro_diario") return "Giro Diário";
     return presetId || "—";
   }
 
@@ -1332,6 +1387,7 @@
       }
       if (j < ids.length - 1) await yieldToUi(30);
     }
+    renderGiroDiarioCard();
     scheduleLiveProximity();
     syncPlayReadyFromSelection();
     syncArmUi();
@@ -1433,6 +1489,7 @@
       blitz_zero: "Agressivo",
       tendencia_diaria: "Tendência diária",
       biblioteca: "Biblioteca",
+      giro_diario: "Giro Diário",
     };
     var label = preset && labelMap[preset] ? labelMap[preset] : null;
     var result = preset && state.liveGates[preset] ? state.liveGates[preset] : null;
@@ -1873,6 +1930,7 @@
 
   function setStats(summary) {
     var set = function (id, v) { var n = el(id); if (n) n.textContent = v; };
+    try { renderGiroDiarioCard(); } catch (_giro) {}
     set("statStatus", summary ? summary.status : "—");
     set("statPnl", summary ? signed(summary.totalPnl) + (isRealTradingMode() ? " (REAL)" : " (sim)") : "—");
     var maxTrades = summary && summary.maxTrades != null ? summary.maxTrades : maxTradesForPreset(state.strategySet);
@@ -1990,6 +2048,13 @@
     if (preset === "lucro_rapido" || preset === "loss_zero" || preset === "blitz_zero") {
       syncRadarPresetFromStrategy(); // rescana só se o preset efectivo mudou
     }
+    // Giro Diário: só 5m (padrão) ou 1m.
+    if (preset === "giro_diario" && state.granularity !== 300 && state.granularity !== 60 && !state.running) {
+      var ivGiro = el("bybitInterval");
+      if (ivGiro) ivGiro.value = "300";
+      switchInterval(300);
+    }
+    renderGiroDiarioCard();
     // Agressivo: prefer 5m (300s) on select — do not fight user if they change after.
     if (preset === "blitz_zero" && state.granularity !== 300 && !state.running) {
       var ivSel = el("bybitInterval");
@@ -2281,14 +2346,14 @@
       });
       setGateUI(state.controller.result, state.controller.isOpen);
 
-      state.session = new NL.CandlePaperSession({
+      state.session = new NL.CandlePaperSession(Object.assign({
         strategy: state.controller.asStrategy(),
         stake: state.stake, slAtr: gate.slAtr, tpR: gate.tpR, maxBars: gate.maxBars,
         costFraction: costFraction, maxLoss: state.stake * 10,
         maxTrades: maxTradesForPreset(state.strategySet),
         maxDurationMs: Math.min(state.minutes, 720) * 60 * 1000,
         maxConsecutiveLosses: 6, cooldownCandles: 0,
-      });
+      }, state.strategySet === "giro_diario" ? giroDailyLimits() : {}));
       state.lastEpoch = last.epoch;
       state.running = true;
       var startEvs = state.session.start(last.epoch * 1000);
@@ -2471,7 +2536,7 @@
       state.armState = "entered";
     } else if (running) {
       mode = "armed";
-      var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "blitz_zero" ? "Agressivo" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : (preset || "");
+      var stratLabel = preset === "lucro_rapido" ? "Lucro rápido" : preset === "loss_zero" ? "Loss zero" : preset === "blitz_zero" ? "Agressivo" : preset === "tendencia_diaria" ? "Tendência diária" : preset === "biblioteca" ? "Biblioteca" : preset === "giro_diario" ? "Giro Diário" : (preset || "");
       var armPair = tradeSymbol() || state.symbol || "";
       titleTxt = "ARMADO · " + armPair + " · " + stratLabel + " — à espera do alvo";
       syncSymbolSelectToState();
@@ -2756,6 +2821,7 @@
     if (!box) return;
     state.cloudJob = job || null;
     renderCostLine();
+    renderGiroDiarioCard();
     state.cloudSchedule = schedule || state.cloudSchedule || null;
     if (schedule) state.cloudSchedule = schedule;
     var schedOn = state.cloudSchedule && state.cloudSchedule.enabled;

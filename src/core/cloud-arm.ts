@@ -12,7 +12,7 @@ import { gateSetup, GATE_PRESET_IDS } from "./gate-service.ts";
 import { paramsHash } from "./gate-ledger.ts";
 import type { GateLedger } from "./gate-ledger.ts";
 import type { CandleGateOptions, CandleGateResult } from "./candle-gate.ts";
-import { strategiesForPreset, strategyPreset } from "./strategies.ts";
+import { strategiesForPreset, strategyPreset, GIRO_DIARIO_TARGET_R, GIRO_DIARIO_LOSS_R, GIRO_DIARIO_GRANULARITIES } from "./strategies.ts";
 import type { StrategyPresetId } from "./strategies.ts";
 import { feasible } from "./feasible.ts";
 import { MARKETS, marketOf } from "./markets.ts";
@@ -105,6 +105,8 @@ export interface CloudArmSummarySnap {
   hasOpenPosition: boolean;
   totalPnl: number;
   maxDrawdown: number;
+  /** Soma de R das operações fechadas na sessão (Giro Diário: "R de hoje"). */
+  netR?: number;
 }
 
 export interface CloudArmJob {
@@ -151,7 +153,7 @@ export interface CloudArmRealMirror {
   evidenceAllowed: boolean;
 }
 
-const PRESET_IDS = new Set(["lucro_rapido", "loss_zero", "blitz_zero", "tendencia_diaria", "biblioteca"]);
+const PRESET_IDS = new Set(["lucro_rapido", "loss_zero", "blitz_zero", "tendencia_diaria", "biblioteca", "giro_diario"]);
 
 function positiveInt(v: number, label: string): void {
   if (!Number.isInteger(v) || v < 1) throw new RangeError(`${label} inválido`);
@@ -183,6 +185,9 @@ export function validateCloudArmCreate(input: CloudArmCreateInput): {
   if (!Number.isFinite(leverage) || leverage < 1 || leverage > 100) throw new RangeError("alavancagem inválida");
   const granularity = Number(input.granularity);
   if (![60, 300, 900, 3600].includes(granularity)) throw new RangeError("intervalo de vela inválido");
+  if (strategyPreset === "giro_diario" && !GIRO_DIARIO_GRANULARITIES.includes(granularity)) {
+    throw new RangeError("Giro Diário só usa velas de 5 min ou 1 min");
+  }
   const durationMinutes = Math.floor(Number(input.durationMinutes));
   positiveInt(durationMinutes, "duração");
   if (durationMinutes > CLOUD_ARM_MAX_DURATION_MINUTES) {
@@ -307,6 +312,7 @@ function snapSummary(s: CandlePaperSummary): CloudArmSummarySnap {
     hasOpenPosition: s.hasOpenPosition,
     totalPnl: s.totalPnl,
     maxDrawdown: s.maxDrawdown,
+    netR: s.metrics.netR,
   };
 }
 
@@ -508,6 +514,8 @@ export function advanceCloudArmJob(
     maxDurationMs: job.durationMs,
     maxConsecutiveLosses: 6,
     cooldownCandles: 0,
+    // Giro Diário: 1 sessão por dia (agenda 08–20 Luanda) → R da sessão = R do dia. Para a +3R ou −3R.
+    ...(job.strategyPreset === "giro_diario" ? { dailyTargetR: GIRO_DIARIO_TARGET_R, dailyLossR: GIRO_DIARIO_LOSS_R } : {}),
   });
 
   const events: CloudArmEventSnap[] = [];

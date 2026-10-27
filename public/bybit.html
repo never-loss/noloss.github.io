@@ -146,6 +146,21 @@
                   <p class="strat-live-reason" id="reasonBlitzZero">A carregar…</p>
                   <p class="strat-live-prox" id="proxBlitzZero">Prox —</p>
                 </article>
+                <article class="strat-live-card closed" id="cardGiroDiario" data-preset="giro_diario">
+                  <header class="strat-live-head">
+                    <span class="sem-dot amber" id="dotGiroDiario"></span>
+                    <strong>Giro Diário</strong>
+                    <span class="strat-live-gate-chip" title="Velas de 5 minutos (1 minuto opcional)">5m/1m</span>
+                    <span class="strat-live-gate-chip" title="Porta mínima: 100 operações fora da amostra com p &lt; 0,01">porta 100 · p&lt;0,01</span>
+                    <span class="strat-live-ops-chip" title="Para no dia ao atingir +3R ou −3R (o que vier primeiro)">dia +3R / −3R</span>
+                    <span class="strat-live-badge" id="badgeGiroDiario">NO TRADE</span>
+                  </header>
+                  <p class="strat-live-reason giro-disclaimer" id="giroDisclaimer"><strong>Giro Diário: sem garantia de lucro diário — mais oportunidades testadas, não mais certezas</strong></p>
+                  <p class="strat-live-status" id="statusGiroDiario">NO TRADE</p>
+                  <p class="strat-live-reason" id="gateGiroDiario">Porta: por avaliar (escolhe Giro Diário) · 100 OOS · p &lt; 0,01</p>
+                  <p class="strat-live-prox" id="rGiroDiario">R de hoje: 0,00R · meta +3R · limite −3R (PAPER, simulado)</p>
+                  <p class="strat-live-prox" id="stopGiroDiario">Paragem: —</p>
+                </article>
               </div>
 
               <div id="armBox" class="arm-box disarmed" role="status" aria-live="polite">
@@ -274,6 +289,7 @@
                     <option value="blitz_zero">Agressivo</option>
                     <option value="tendencia_diaria">Tendência diária</option>
                     <option value="biblioteca">Biblioteca</option>
+                    <option value="giro_diario">Giro Diário</option>
                   </select>
                 </div>
                 <div class="field">
