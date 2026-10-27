@@ -74,7 +74,7 @@ test("mode=gate&symbol: arranque a frio devolve os 3 presets com os campos pedid
   assert.equal(b.known, true);
   assert.equal(b.store.backend, "memory");
   assert.equal(b.gate.symbol, "BTCUSDT");
-  assert.deepEqual(Object.keys(b.gate.presets).sort(), ["blitz_zero", "loss_zero", "lucro_rapido"]);
+  assert.deepEqual(Object.keys(b.gate.presets).sort(), ["blitz_zero", "giro_diario", "loss_zero", "lucro_rapido"]);
   for (const p of Object.values(b.gate.presets)) for (const k of ["allowed", "nOOS", "meanR", "p", "folds", "asOf", "depthDays", "streak"]) assert.ok(k in p, k);
   assert.ok(b.gate.historyDays > 85);
   assert.match(r.headers["cache-control"]!, /s-maxage/);
@@ -158,7 +158,7 @@ test("modo sombra + FDR: gate-shadow compara nova vs antiga; bulk traz fdr infor
   const b = sh.body as { symbols: number; q: number; presets: Record<string, { tested: number; bothClosed: number; newOpenFdrPass: number; newOpen: number }>; note: string };
   assert.equal(b.symbols, 2);
   assert.equal(b.q, 0.1);
-  assert.deepEqual(Object.keys(b.presets).sort(), ["blitz_zero", "loss_zero", "lucro_rapido"]);
+  assert.deepEqual(Object.keys(b.presets).sort(), ["blitz_zero", "giro_diario", "loss_zero", "lucro_rapido"]);
   for (const p of Object.values(b.presets)) {
     assert.equal(p.tested, 2);
     assert.ok(p.newOpenFdrPass <= p.newOpen);

@@ -1057,7 +1057,8 @@
     if (gEl) {
       gEl.textContent = gate
         ? ("Porta: " + (open ? "ABERTA" : "FECHADA · NO TRADE") + " — " + (gate.reason || "") +
-          " · n OOS " + (gate.oosTrades != null ? gate.oosTrades : 0) + "/100 · p < 0,01")
+          " · n OOS " + (gate.oosTrades != null ? gate.oosTrades : 0) + "/100 · p < 0,01" +
+          (gate.depthDays ? " · histórico OOS " + Math.round(gate.depthDays) + "d" : ""))
         : "Porta: por avaliar (escolhe Giro Diário) · 100 OOS · p < 0,01";
     }
     var netR = job && job.summary && typeof job.summary.netR === "number" ? job.summary.netR
@@ -1219,6 +1220,12 @@
       state.liveGates[ids[j]] = r;
       putRadarGateCache(sym, ids[j], r);
       renderStratCard(ids[j], r, null);
+    }
+    // Giro Diário (5m): veredicto do livro-razão em cache (90 d, sem a janela de selecção) — opcional.
+    if (NL.isCacheUsable(gate, "giro_diario", GATE_CACHE_MAX_AGE_MS)) {
+      state.liveGates.giro_diario = NL.cachedVerdictToResult(gate, "giro_diario");
+      putRadarGateCache(sym, "giro_diario", state.liveGates.giro_diario);
+      renderGiroDiarioCard();
     }
     state.gateSource = "cache";
     state.gateCache.single[sym] = { gate: gate, at: Date.now() };

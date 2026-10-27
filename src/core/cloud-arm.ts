@@ -297,7 +297,7 @@ function snapGate(res: CandleGateResult, open: boolean): CloudArmGateSnap {
   };
 }
 
-/** O arm só usa o livro para os 3 presets em cache e velas de 5 min. */
+/** O arm só usa o livro para os presets em cache (inclui Giro Diário) e velas de 5 min. */
 export function cloudArmLedgerEligible(presetId: string, granularity: number): boolean {
   return granularity === 300 && (GATE_PRESET_IDS as readonly string[]).includes(presetId);
 }
@@ -486,6 +486,7 @@ export function advanceCloudArmJob(
       ledger: opts.ledger!,
       strategies: setup.strategies,
       minLabel: setup.minLabel,
+      exclude: setup.exclude,
       revalidateEvery: CLOUD_ARM_REVALIDATE_EVERY,
       initial: warmup,
     });

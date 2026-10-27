@@ -28,13 +28,20 @@ export interface LedgerGateControllerOptions {
   /** Validações positivas seguidas para abrir (por omissão 2, como o CandleGateController). */
   confirmations?: number;
   maxFolds?: number;
+  /** Blocos a excluir da evidência (janela de selecção das estratégias do preset). */
+  exclude?: ExcludeWindow | null;
   /** Velas FECHADAS até ao arranque, ordem crescente. */
   initial: readonly Candle[];
 }
 
-/** Livro "como era" no instante `endSec` (fim da última vela fechada), limitado aos blocos mais recentes. */
-export function ledgerAsOf(ledger: GateLedger, endSec: number, maxFolds: number = GATE_VERDICT_FOLDS): GateLedger {
-  const folds = ledger.folds.filter((f) => f.end <= endSec);
+export interface ExcludeWindow { start: number; end: number }
+
+/**
+ * Livro "como era" no instante `endSec`, limitado aos blocos mais recentes. `exclude`: blocos que se sobrepõem a esta
+ * janela [start, end) são retirados (ex.: a janela onde as estratégias do preset foram escolhidas — sem fuga).
+ */
+export function ledgerAsOf(ledger: GateLedger, endSec: number, maxFolds: number = GATE_VERDICT_FOLDS, exclude?: ExcludeWindow | null): GateLedger {
+  const folds = ledger.folds.filter((f) => f.end <= endSec && !(exclude && f.end > exclude.start && f.start < exclude.end));
   return { ...ledger, folds: folds.length > maxFolds ? folds.slice(folds.length - maxFolds) : folds };
 }
 
@@ -86,7 +93,7 @@ export class LedgerGateController {
     const slice = this.#buffer.slice(0, endIdx);
     const gran = this.#opts.ledger.params.gran;
     const last = slice[slice.length - 1];
-    const asOf = ledgerAsOf(this.#opts.ledger, last ? last.epoch + gran : 0, this.#opts.maxFolds ?? GATE_VERDICT_FOLDS);
+    const asOf = ledgerAsOf(this.#opts.ledger, last ? last.epoch + gran : 0, this.#opts.maxFolds ?? GATE_VERDICT_FOLDS, this.#opts.exclude);
     return evaluateLedgerGate(asOf, slice, this.#opts.strategies, { minLabel: this.#opts.minLabel, alpha: this.#opts.alpha });
   }
 
