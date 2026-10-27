@@ -1114,6 +1114,9 @@
     if (sel) sel.value = spec.preset;
     onStrategyChange(spec.preset);
     renderLossZeroMode();
+    if (spec.mode === "padrao") {
+      try { renderStratCard("loss_zero", state.liveGates ? state.liveGates.loss_zero : null); } catch (_rs) {}
+    }
   }
   function renderLossZeroMode() {
     var card = el("cardLossZero");
